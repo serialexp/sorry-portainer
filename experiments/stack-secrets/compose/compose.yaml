@@ -1,0 +1,9 @@
+services:
+  app:
+    image: quay.io/libpod/busybox:latest
+    restart: on-failure
+    annotations:
+      io.sorry-portainer.secrets: token
+    tmpfs:
+      - /run/secrets:rw,size=1m,mode=0700
+    command: ["sh", "-c", "echo \"app saw: $$(head -c 16 /run/secrets/token 2>&1)\"; sleep 600"]

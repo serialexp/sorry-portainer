@@ -1,4 +1,17 @@
-# Current task: relay hardening (done), next: stack-secret experiment
+# Current task: stack secrets — experiment done, waiting on Bart's decisions
+
+## Stack-secret experiment (2026-09-24)
+
+Bart's requirement: secrets not kept on agent disks; only in container memory or on the master.
+
+- Results and design: `docs/design/stack-secrets.md`. Reproducible scripts: `experiments/stack-secrets/` (see its README).
+- Podman native secrets are ruled out: any driver, the value is copied to `graphroot/overlay-containers/<id>/userdata/secrets/` (mount) or `userdata/config.json` (env). `--transient-store` does not help.
+- Working mechanism: OCI `createRuntime` hook (agent binary) writes into the container's own `/run/secrets` tmpfs via `/proc/<pid>/root/<rootfs>/run/secrets`. Works on first start, manual start, podman-compose up, and Podman restart-policy restarts, but only when `hooks_dir` is in `containers.conf` (the `--hooks-dir` flag is not passed on to the restart process in Podman 4.9.3/5.0/5.4). Hook refuses when `/run/secrets` is not a tmpfs, and the container then fails to start.
+- Verified only on Pop!_OS 24.04, Podman 4.9.3, runc, podman-compose 1.0.6, as Bart's user. crun, Ubuntu 26.04/Podman 5.x, and the dedicated agent user still to verify.
+- Bart's decisions (all recorded in the design doc): passphrase-unlocked master store; push-and-keep delivery (agents keep secrets across relay disconnects); standard compose `secrets:` rewritten by the agent; no swap requirement, but a UI warning for hosts with swap; per-stack secrets; keep `env.json` for non-secret settings, labelled; automatic restart on rotation.
+- Next: implementation phases listed under "Outstanding" in `docs/design/stack-secrets.md`.
+
+Wheat change: "Stack-secret experiment and design".
 
 ## Relay hardening (2026-09-24)
 

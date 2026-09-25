@@ -1,8 +1,8 @@
 # Podman Agent — Design
 
-Status: partial — rootless development Compose smoke verified on Ubuntu-compatible 24.04; dedicated-user deployment and secrets outstanding
+Status: partial — rootless development Compose smoke verified on Ubuntu-compatible 24.04; secret experiment done; dedicated-user deployment and secret implementation outstanding
 Owner: Bart
-Last updated: 2026-09-23
+Last updated: 2026-09-24
 
 ## Implementation status
 
@@ -17,12 +17,13 @@ items as they land and move them to Done.
 - [x] **Phase 1 — Podman runtime boundary.** The agent uses bounded direct Podman CLI calls, enforces Podman 4.7 or later, and validates lifecycle ownership by resolved container name.
 - [x] **Phase 1 — Compose companion.** Stack execution invokes `podman compose` with the configured distro `podman-compose` provider pinned explicitly for each operation.
 - [x] **Phase 1 — development Compose smoke.** On Pop!_OS 24.04 under Bart's rootless user, Podman 4.9.3 and podman-compose 1.0.6 ran a disposable OCI sleeper service and `down` removed it. The automated rootless integration test exercises the same stack manager path.
+- [x] **Open question — secret workflow experiment.** Run 2026-09-24. Podman native secrets always put values on disk. An OCI `createRuntime` hook that writes into a per-container tmpfs does not, and survives restarts when `hooks_dir` is in `containers.conf`. The design and remaining decisions are in `docs/design/stack-secrets.md`.
 
 ### Outstanding
 
 - [ ] **Phase 1 — deployment verification.** Test lifecycle under the dedicated service user and on Ubuntu 26.04; the development services currently run as Bart, not the newly provisioned service user.
 - [ ] **Phase 1 — authenticated development API stack smoke.** Exercise save/up/down through the running development agents and master; the local test account/password is not available to the agent in this session.
-- [ ] **Open question — secret workflow experiment.** Run the approved experiment before selecting, documenting, or implementing the workflow for stack secrets. Secret handling remains unimplemented.
+- [ ] **Stack secrets — setup integration.** The setup planner must write the agent user's `containers.conf` `hooks_dir` and the secret hook JSON (see `docs/design/stack-secrets.md`). Secret handling itself is still unimplemented.
 
 ## Why this exists
 
@@ -93,6 +94,15 @@ configuration must not treat plaintext files, environment values, or a
 rootful-runtime workaround as an approved secret mechanism. The pending
 experiment must establish the storage, injection, rotation, access-control, and
 backup model before implementation is planned.
+
+Follow-up (2026-09-24): the experiment ran. Podman's own secrets are ruled out
+because they always write the value into the container's `userdata` on disk.
+The chosen mechanism is an OCI hook, run by the agent binary, that writes
+secrets into a per-container tmpfs before the app starts. The master stores the
+values and the agent keeps them only in memory. See
+`docs/design/stack-secrets.md`. For this document it means the agent user's
+`containers.conf` must set `hooks_dir`, because a `--hooks-dir` flag is not
+passed on to Podman's restart-policy process.
 
 ## Failure and performance behavior
 
