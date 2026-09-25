@@ -1,4 +1,24 @@
-# Current task: stack secrets — implemented; two decisions open
+# Current task: survive agent restarts and host reboots — implemented; next is deploying to hel1/jp1
+
+## Agent restart and reboot (2026-09-25)
+
+Wheat change: "Survive agent restarts and host reboots". Bart's choices: clear `INVOCATION_ID`; digest in the tmpfs; the agent remembers desired state. Details: `docs/design/stack-secrets.md` "Follow-up (2026-09-25)".
+
+- Agent: `cmd/sorry-portainer-agent/main.go` (`detachFromServiceUnit`, `readBootID`, `SetBootID`, `go manager.Resume(ctx)`).
+- Digest: `internal/secrets/digest.go` (`Digest`, `ReadDigest`, `DigestFile`), written by the hook (`hook.go` `inject`), `Vault.Digest`.
+- Stacks: `internal/stacks/desired.go` (`state.json`, pending/waiting, `Resume`), `stacks.go` (`operateLocked` records desired state; `List`/`Inspect` fill `desired`/`waiting`), `secrets.go` (`restartOutdated` compares digests, `bringUpIfWaiting`).
+- Protocol: `Stack.Desired`, `Stack.Waiting`, `SecretSyncResult.Started` (additive, still v4).
+- UI: stack list shows "starts after reboot" / "stays stopped after reboot" and the waiting reason; new Stop button (confirm); delivery line mentions a start.
+- Tests: `go test -race ./...`, `node --test tests/*.mjs` (15), live `SORRY_PORTAINER_TEST_PODMAN=1 ... -run TestRealPodman ./internal/stacks/` (3× green, ~72 s), mutation checks on the new tests, benchmarks at 1000 stacks.
+- Dev check: restarted `sorry-portainer-agent-a` with `secret-demo` running: container kept running, not restarted, conmon in its own scope, push delivered 3 s later.
+- Open: one-off services start again after a reboot (Docker wouldn't); decision item in the design doc and TODO.md.
+
+### Deploy context (hel1 / jp1)
+
+- Bart wants sorry-portainer on the two hosts that run Portainer today (hel1, jp1). The master goes on jp1; Bart is upgrading jp1's Ubuntu first (Podman 4.7+ needs 24.04 or later).
+- Both hosts run their apps on Docker behind `caddy-docker-proxy`, which only sees Docker containers. Moving to rootless Podman means copying volumes and a new way to route web traffic to Podman apps.
+- The host inventory (OS, apps, access) was gathered over SSH on 2026-09-25 and is deliberately not recorded here: this repository is pushed to a public GitHub repo. Inspect the hosts again before migrating.
+- Remaining gaps before production: production agent layout, image pull/redeploy, logs, stack deletion, certificate allowlist, Ubuntu 26.04/dedicated-user verification.
 
 ## Stack-secret implementation (2026-09-24)
 

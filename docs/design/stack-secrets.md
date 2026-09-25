@@ -1,8 +1,8 @@
 # Stack Secrets — Design
 
-Status: partial — phase 1 and rotation implemented and tested end to end on rootless Podman 4.9.3/runc; agent-restart behaviour, crun and Ubuntu 26.04 outstanding (two open decisions below)
+Status: partial — phases 1 and 2 (rotation, agent restart, host reboot) implemented and tested end to end on rootless Podman 4.9.3/runc; production layout, stack deletion, crun and Ubuntu 26.04 outstanding
 Owner: Bart
-Last updated: 2026-09-24
+Last updated: 2026-09-25
 
 ## Implementation status
 
@@ -33,12 +33,14 @@ items as they land and move them to Done.
 - [x] **Phase 2 — rotation.** A new value is pushed at once; the agent restarts running containers of the services that use a changed secret and checks the new files are in place. Removing a secret does not restart anything.
 - [x] **Tests.** Unit tests for the store (including no plaintext on disk and tampering), vault, socket, hook (end to end in a user namespace), compose rewrite, stack flow, relay and server routes; a live rootless Podman test (`SORRY_PORTAINER_TEST_PODMAN=1 go test ./internal/stacks -run TestRealPodmanStackSecrets`) that covers up, owner/mode, rotation, a restart by Podman's restart policy, refusal without values, and a scan of Podman storage and `inspect` for the canary values.
 - [x] **Fix — annotation encoding (extended beyond the original plan).** `podman run --annotation` parses its value as CSV, so the mount list is `source:target:uid:gid:mode;…` rather than JSON. Found by the live test.
+- [x] **Decision — agent restart restarts every secret container.** Bart (2026-09-25): option (a), a digest in the tmpfs. A freshly started agent's vault is empty, so the reconnect push reports every value as changed. The hook now also writes `/run/secrets/.sorry-portainer-digest` (SHA-256 over each file's source, target, owner, mode and value, length-prefixed; mode 0400, owned by the container's root). On a push the agent reads it through `/proc/<pid>/root` and restarts only containers whose digest differs from the vault's, or that have none. See [Follow-up](#follow-up-2026-09-25-agent-restart-and-reboot).
+- [x] **Decision — agent stop kills stack containers (not secret-specific).** Bart (2026-09-25): option (a). The agent unsets `INVOCATION_ID` at startup, before it runs any Podman command, so each conmon gets its own `libpod-conmon-<id>.scope`. Verified live: with the variable set, stopping the calling unit kills conmon and the container is stuck in "stopping"; without it, conmon survives and `podman stop` works. The dev agent restarted with `secret-demo` running: the container kept running and was not restarted.
+- [x] **Phase 2 — host reboot and agent restart.** Bart (2026-09-25): the agent remembers. `Up` and `Down` record the desired state in `<stack>/state.json` (no secrets), with the host's boot ID when an `up` succeeded. At start the agent brings up, one at a time, every stack that should be up but has not been up since this boot; a stack whose secrets have not arrived waits, and the master's push starts it (`SecretSyncResult.started`). The stack list shows "starts after reboot" / "stays stopped after reboot" and why a stack is waiting; the list got a Stop button (with confirmation) so the desired state can be set to down from the UI.
+- [x] **Tests — restart and reboot (extended beyond the original plan).** Unit tests for desired state, resume after reboot vs agent restart, waiting for and starting on the push, a broken state file, and digest comparisons (`internal/stacks/desired_test.go`, `internal/secrets`); benchmarks for listing and resuming 1000 stacks; the live Podman test now also covers an agent restart (push restarts nothing) and a simulated reboot (plain stack back at once, secret stack started by the push).
 
 ### Outstanding
 
-- [ ] **Decision needed — agent restart restarts every secret container.** A freshly started agent's vault is empty, so the reconnect push reports every value as changed and the agent restarts all running containers that use secrets, although nothing changed. Options: (a) the hook also writes a digest file next to the values inside the container tmpfs, and the agent restarts only containers whose digest differs; (b) the master sends a per-secret generation, the hook records it the same way, and the agent compares generations; (c) skip restarts when the agent had no previous value for the stack, which misses a rotation that happened while the agent was down.
-- [ ] **Decision needed — agent stop kills stack containers (not secret-specific).** Podman leaves `conmon` in the calling systemd unit's cgroup when `INVOCATION_ID` is set (`libpod/oci_conmon_linux.go`), so stopping or restarting the agent service kills every container it started, leaving them in a broken "stopping" state. Podman's own API service clears `INVOCATION_ID` for this reason. Options: (a) the agent clears `INVOCATION_ID` for itself and its Podman children; (b) `KillMode=process` in the agent units; (c) talk to the Podman API service instead of the CLI.
-- [ ] **Phase 2 — host reboot and agent restart.** Containers that start before the agent has its secrets already fail loudly (the hook refuses). Still missing: the agent bringing them up once the secrets arrive, and the UI showing why they are down.
+- [ ] **Decision needed — one-off services after a reboot (not secret-specific).** Bringing a stack back runs `up`, which starts every stopped container of the stack, including one-off services that had exited on purpose (for example an init container that fixes volume permissions). Docker after a reboot only restarts containers with a restart policy. Options: (a) keep it: everything in the stack starts, as after a manual Start; (b) after a reboot, only start containers whose `restart:` policy is `always`, `unless-stopped` or `on-failure`, like Docker; (c) (a), plus a per-service opt-out label.
 - [ ] **Production agent layout.** The default hooks directory is `~/.local/share/sorry-portainer/oci-hooks` while `state_dir` is configured separately; settle where each lives for the dedicated agent user.
 - [ ] **Stack deletion.** No stack delete exists yet; when it does, it must delete the stack's secrets on the master and tell the agent to forget them.
 - [ ] **Verification — crun.** Tested on runc only; Ubuntu hosts may use crun, whose hook-time paths could differ.
@@ -194,6 +196,37 @@ is left as it was planned.
   is out of scope. Merge keys and aliases are restricted in stacks that use
   secrets. `podman-compose` 1.0.6 `down` leaves the project network behind
   (not secret-specific; in `TODO.md`).
+
+## Follow-up (2026-09-25): agent restart and reboot
+
+Bart chose (a) for both open decisions and "the agent remembers" for reboots.
+
+- **Telling a reboot from an agent restart.** The agent reads
+  `/proc/sys/kernel/random/boot_id` at start. A stack whose `state.json` says
+  `up` with an older boot ID has not come up since the host booted. In the
+  same boot the containers are still running (conmon no longer dies with the
+  agent), so nothing is started again.
+- **Bring-up.** `Resume` runs in the background, one stack at a time, and
+  uses the normal `up` path, so the secret check runs too. `podman-compose`
+  1.0.6 `up -d` on existing stopped containers fails `podman run` (name in
+  use) and then runs `podman start`, which is what brings them back. A stack
+  missing secrets gets the reason "waiting for secrets … from the master";
+  the push that completes its set runs `up` while holding the stack lock. A
+  failed `up` still records `up` as desired and shows "start failed: …".
+- **Digest.** The digest discloses nothing new: only the container's root can
+  read it, and that user can read the values themselves. Its name starts
+  with a dot, which a secret target cannot. In a nested user namespace
+  (`--userns=auto`) the agent cannot read a file owned by the container's
+  root, so such containers are restarted on every agent restart, as before.
+- **Cost.** An agent restart reads one small state file per stack: 1000
+  stacks in about 5 ms (`BenchmarkResumeAfterAgentRestart1000`); listing
+  1000 started stacks takes about 7–9 ms. After a reboot the agent runs one
+  `podman-compose up` per stack that should be up, one after another, so a
+  busy host doesn't get every stack starting at once.
+- **Known limits.** A stack started before this change has no `state.json`
+  and stays stopped after a reboot until it is started once. If the master
+  itself rebooted, it is locked until someone unlocks it, and secret stacks
+  on every host wait until then.
 
 ## Open questions for review
 

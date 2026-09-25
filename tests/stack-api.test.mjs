@@ -1,8 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createStack, deployStack, getStack, listStacks, updateStack } from "../src/stack-api.ts";
+import { createStack, deployStack, getStack, listStacks, rebootLabel, stopStack, updateStack } from "../src/stack-api.ts";
 
 const ok = (body) => ({ ok: true, json: async () => body });
+
+test("reboot label follows the stack's desired state", () => {
+  assert.equal(rebootLabel({ desired: "up" }), "starts after reboot");
+  assert.equal(rebootLabel({ desired: "down" }), "stays stopped after reboot");
+  assert.equal(rebootLabel({}), "stays stopped after reboot");
+});
 
 test("listing and detail are host-scoped", async () => {
   const calls = [];
@@ -31,6 +37,15 @@ test("deploy invokes up and rejects non-success operations and transport errors"
   assert.deepEqual(calls, [{ url: "/api/hosts/build%20node/stacks/web/up", options: { method: "POST" } }]);
   await assert.rejects(deployStack("host", "web", async () => ok({ success: false, output: "pull failed" })), /pull failed/);
   await assert.rejects(deployStack("host", "web", async () => ({ ok: false, status: 502, text: async () => "host unavailable" })), /host unavailable/);
+});
+
+test("stop posts down and reports failures", async () => {
+  const calls = [];
+  const request = async (url, options) => { calls.push({ url, options }); return ok({ success: true, operation: "down" }); };
+  await stopStack("build node", "web", request);
+  assert.deepEqual(calls, [{ url: "/api/hosts/build%20node/stacks/web/down", options: { method: "POST" } }]);
+  await assert.rejects(stopStack("host", "web", async () => ok({ success: false })), /Stop failed\./);
+  await assert.rejects(stopStack("host", "web", async () => ({ ok: false, status: 504, text: async () => "" })), /Stop failed \(504\)/);
 });
 
 test("invalid input and failed saves cannot report creation or version update", async () => {

@@ -133,10 +133,16 @@ type Manager struct {
 	// secrets is nil when the agent runs without secret support; stacks that
 	// use secrets then refuse to start.
 	secrets *SecretSupport
+	// bootID (see SetBootID) and waiting are guarded by mu. waiting holds why
+	// a stack that should be up has not come up since boot.
+	bootID  string
+	waiting map[string]string
+	// Logf reports background bring-ups; nil discards them.
+	Logf func(format string, args ...any)
 }
 
 func New(root, prefix string, e Executor) *Manager {
-	return &Manager{root: root, prefix: prefix, executor: e, locks: map[string]*sync.Mutex{}}
+	return &Manager{root: root, prefix: prefix, executor: e, locks: map[string]*sync.Mutex{}, waiting: map[string]string{}}
 }
 func ValidName(n string) bool { return protocol.ValidStackName(n) }
 func (m *Manager) lock(n string) *sync.Mutex {
@@ -151,27 +157,27 @@ func (m *Manager) lock(n string) *sync.Mutex {
 }
 func (m *Manager) dir(n string) string { return filepath.Join(m.root, n) }
 func (m *Manager) List(ctx context.Context) ([]protocol.Stack, error) {
-	ents, e := os.ReadDir(m.root)
-	if os.IsNotExist(e) {
-		return []protocol.Stack{}, nil
-	}
+	names, e := m.stackNames()
 	if e != nil {
 		return nil, e
 	}
-	out := make([]protocol.Stack, 0, len(ents))
-	for _, x := range ents {
-		if !x.IsDir() || !ValidName(x.Name()) {
-			continue
-		}
-		l := m.lock(x.Name())
+	out := make([]protocol.Stack, 0, len(names))
+	for _, n := range names {
+		l := m.lock(n)
 		l.Lock()
-		version, e := m.version(x.Name())
+		stack := protocol.Stack{Name: n, Project: m.project(n), Status: "saved"}
+		stack.Version, e = m.version(n)
 		if e == nil {
-			_, e = os.Stat(filepath.Join(m.dir(x.Name()), "compose.yaml"))
+			_, e = os.Stat(filepath.Join(m.dir(n), "compose.yaml"))
+		}
+		if e == nil {
+			if stateErr := m.describeState(&stack); stateErr != nil {
+				stack.Waiting = stateErr.Error()
+			}
 		}
 		l.Unlock()
 		if e == nil {
-			out = append(out, protocol.Stack{Name: x.Name(), Project: m.project(x.Name()), Status: "saved", Version: version})
+			out = append(out, stack)
 		}
 	}
 	return out, nil
@@ -200,6 +206,9 @@ func (m *Manager) inspect(n string) (protocol.Stack, error) {
 	// A stack saved before secret validation may not parse; it still inspects.
 	if doc, e := parseCompose(b); e == nil {
 		stack.Secrets = doc.plan.Names
+	}
+	if e := m.describeState(&stack); e != nil {
+		stack.Waiting = e.Error()
 	}
 	return stack, nil
 }
@@ -400,11 +409,36 @@ func (m *Manager) operate(ctx context.Context, n, op string) (protocol.StackOper
 	l := m.lock(n)
 	l.Lock()
 	defer l.Unlock()
+	return m.operateLocked(ctx, n, op)
+}
+
+// operateLocked runs a Compose operation with the stack lock held. Up and
+// Down record the desired state first, so a reboot brings the stack back to
+// what was last asked even when the operation itself failed.
+func (m *Manager) operateLocked(ctx context.Context, n, op string) (protocol.StackOperation, error) {
 	if _, e := m.inspect(n); e != nil {
 		return protocol.StackOperation{}, e
 	}
+	var state stackState
+	if op == "up" || op == "down" {
+		var e error
+		if state, e = m.readState(n); e != nil {
+			return protocol.StackOperation{}, e
+		}
+		state.Desired = desiredUp
+		if op == "down" {
+			state.Desired = desiredDown
+		}
+		if e := m.writeState(n, state); e != nil {
+			return protocol.StackOperation{}, fmt.Errorf("record desired state: %w", e)
+		}
+		m.setWaiting(n, "")
+	}
 	plan, e := m.prepareRuntime(n, op != "down")
 	if e != nil {
+		if op == "up" {
+			m.setWaiting(n, waitingReason(e))
+		}
 		return protocol.StackOperation{Name: n, Operation: op, Output: e.Error()}, e
 	}
 	// podman-compose 1.0.6 accepts -p/-f, but not Docker Compose's
@@ -424,6 +458,17 @@ func (m *Manager) operate(ctx context.Context, n, op string) (protocol.StackOper
 	if e == nil && op != "down" && !plan.empty() {
 		if e = m.checkInjected(runCtx, n, plan.Services); e != nil {
 			out += "\n" + e.Error()
+		}
+	}
+	if op == "up" {
+		if e != nil {
+			m.setWaiting(n, waitingReason(e))
+		} else if boot := m.currentBoot(); boot != "" {
+			state.UpBoot = boot
+			if e = m.writeState(n, state); e != nil {
+				e = fmt.Errorf("record bring-up: %w", e)
+				out += "\n" + e.Error()
+			}
 		}
 	}
 	return protocol.StackOperation{Name: n, Operation: op, Output: out, Success: e == nil}, e

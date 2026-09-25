@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -434,6 +435,24 @@ func TestHookInjectsIntoContainerTmpfs(t *testing.T) {
 		t.Fatalf("verify missing: %v", err)
 	}
 
+	// The hook leaves a digest the agent can read back and compare with the
+	// vault's, owned by the container's root and readable only by it.
+	digestInfo, err := os.Stat(filepath.Join(secretsDir, DigestFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if digestInfo.Mode().Perm() != 0o400 || digestInfo.Sys().(*syscall.Stat_t).Uid != 0 {
+		t.Errorf("digest file mode %04o uid %d", digestInfo.Mode().Perm(), digestInfo.Sys().(*syscall.Stat_t).Uid)
+	}
+	got, err := ReadDigest(pivoted, 43)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := vault.Digest("web", mounts)
+	if err != nil || got != want || !strings.HasPrefix(got, "sha256:") {
+		t.Fatalf("digest in container %q, vault %q (%v)", got, want, err)
+	}
+
 	// A second run would overwrite nothing: files are created exclusively.
 	if err := RunHook(hookCtx, strings.NewReader(state), HookOptions{HostID: "h1", Socket: socket, ProcRoot: proc}); err == nil {
 		t.Fatal("hook overwrote existing files")
@@ -458,6 +477,88 @@ func TestHookInjectsIntoContainerTmpfs(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(filepath.Join(emptyRootfs, "run", "secrets")); len(entries) != 0 {
 		t.Fatalf("wrote %d files without values", len(entries))
+	}
+}
+
+func TestDigestChangesWithEveryFileDetail(t *testing.T) {
+	base := []Mount{{Source: "db", Target: "db", Mode: 0o444}, {Source: "key", Target: "key", UID: 1, GID: 2, Mode: 0o400}}
+	values := map[string][]byte{"db": []byte("pw"), "key": []byte("k")}
+	digest := func(mounts []Mount, values map[string][]byte) string {
+		t.Helper()
+		d, err := Digest(mounts, values)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+	reference := digest(base, values)
+	if again := digest(base, map[string][]byte{"db": []byte("pw"), "key": []byte("k"), "unused": []byte("x")}); again != reference {
+		t.Fatal("values the mounts do not use changed the digest")
+	}
+	changed := func(edit func(m []Mount)) []Mount {
+		m := append([]Mount(nil), base...)
+		edit(m)
+		return m
+	}
+	variants := []struct {
+		name   string
+		mounts []Mount
+		values map[string][]byte
+	}{
+		{"base", base, values},
+		{"value", base, map[string][]byte{"db": []byte("pw2"), "key": []byte("k")}},
+		{"target", changed(func(m []Mount) { m[0].Target = "db2" }), values},
+		{"uid", changed(func(m []Mount) { m[1].UID = 3 }), values},
+		{"gid", changed(func(m []Mount) { m[1].GID = 3 }), values},
+		{"mode", changed(func(m []Mount) { m[0].Mode = 0o440 }), values},
+		{"order", []Mount{base[1], base[0]}, values},
+		{"fewer", base[:1], values},
+		// Length prefixes keep a moved boundary between fields apart.
+		{"boundary", []Mount{{Source: "a", Target: "bc", Mode: 0o444}}, map[string][]byte{"a": []byte("x")}},
+		{"boundary twin", []Mount{{Source: "a", Target: "b", Mode: 0o444}}, map[string][]byte{"a": []byte("cx")}},
+	}
+	seen := map[string]string{}
+	for _, v := range variants {
+		d := digest(v.mounts, v.values)
+		if other, ok := seen[d]; ok {
+			t.Errorf("%s has the same digest as %s", v.name, other)
+		}
+		seen[d] = v.name
+	}
+	if seen[reference] != "base" {
+		t.Fatal("digest is not deterministic")
+	}
+	if _, err := Digest(base, map[string][]byte{"db": []byte("pw")}); err == nil {
+		t.Fatal("digest without every value succeeded")
+	}
+}
+
+// TestReadDigestWithoutFile covers containers started before digests existed.
+func TestReadDigestWithoutFile(t *testing.T) {
+	if !inUserNamespace(t) {
+		return
+	}
+	root := t.TempDir()
+	mountTmpfs(t, filepath.Join(root, "run", "secrets"))
+	proc := fakeProc(t, root, 9)
+	if got, err := ReadDigest(proc, 9); err != nil || got != "" {
+		t.Fatalf("got %q, %v", got, err)
+	}
+	// A directory or an oversized file under the digest's name is refused.
+	if err := os.Mkdir(filepath.Join(root, "run", "secrets", DigestFile), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadDigest(proc, 9); err == nil {
+		t.Fatal("read a directory as the digest")
+	}
+	if err := os.Remove(filepath.Join(root, "run", "secrets", DigestFile)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "run", "secrets", DigestFile), bytes.Repeat([]byte("x"), maxDigestSize+1), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadDigest(proc, 9); err == nil {
+		t.Fatal("read an oversized digest")
 	}
 }
 

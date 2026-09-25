@@ -3,7 +3,16 @@ import { createEffect, createSignal, For, Show } from "solid-js";
 import { editStackPath, hostPath, newStackPath } from "./host-route";
 import { StackSecretsPanel } from "./secrets-ui";
 import { setReferencedSecrets } from "./secrets-store";
-import { createStack, deployStack, getStack, stackNamePattern, updateStack, type Stack } from "./stack-api";
+import {
+  createStack,
+  deployStack,
+  getStack,
+  rebootLabel,
+  stackNamePattern,
+  stopStack,
+  updateStack,
+  type Stack,
+} from "./stack-api";
 
 type StackListProps = {
   hostID: string;
@@ -20,22 +29,31 @@ export function StackList(props: StackListProps) {
   const [operationOutput, setOperationOutput] = createSignal("");
   const filtered = () =>
     props.stacks.filter((stack) => `${stack.name} ${stack.project}`.toLowerCase().includes(props.query));
-  async function start(name: string) {
+  const [busyOperation, setBusyOperation] = createSignal<"up" | "down">("up");
+  async function run(name: string, operation: "up" | "down") {
+    const verb = operation === "up" ? "start" : "stop";
+    const question = `Stop ${name}? Its containers are removed (volumes are kept) and it stays stopped after a reboot.`;
+    if (operation === "down" && !window.confirm(question)) return;
     setBusy(name);
+    setBusyOperation(operation);
     setOperationError("");
     setOperationOutput("");
     const hostID = props.hostID;
     try {
-      const result = await deployStack(hostID, name);
+      const result = operation === "up" ? await deployStack(hostID, name) : await stopStack(hostID, name);
       if (props.hostID !== hostID) return;
-      setOperationOutput(result.output || `${name}: deployment command completed.`);
-      props.refresh();
+      setOperationOutput(result.output || `${name}: ${verb} command completed.`);
     } catch (cause) {
-      if (props.hostID === hostID) setOperationError(cause instanceof Error ? cause.message : "Could not start stack.");
+      if (props.hostID === hostID)
+        setOperationError(cause instanceof Error ? cause.message : `Could not ${verb} stack.`);
     } finally {
       setBusy("");
+      // A failed start still changes what the stack comes back to after a reboot.
+      if (props.hostID === hostID) props.refresh();
     }
   }
+  const busyLabel = (name: string, operation: "up" | "down", idle: string, active: string) =>
+    busy() === name && busyOperation() === operation ? active : idle;
   return (
     <section class="panel resource-page">
       <div class="panel-heading">
@@ -79,15 +97,21 @@ export function StackList(props: StackListProps) {
                     <span class="resource-copy">
                       <strong>{stack.name}</strong>
                       <small>{stack.project}</small>
+                      <Show when={stack.waiting}>
+                        <small class="stack-waiting">{stack.waiting}</small>
+                      </Show>
                     </span>
                     <span class="resource-count">
-                      v{stack.version || 1} · {stack.status}
+                      v{stack.version || 1} · {rebootLabel(stack)}
                     </span>
                     <A class="add-button" href={editStackPath(props.hostID, stack.name)}>
                       Edit
                     </A>
-                    <button class="start" type="button" disabled={!!busy()} onClick={() => start(stack.name)}>
-                      {busy() === stack.name ? "Starting…" : "Start"}
+                    <button class="start" type="button" disabled={!!busy()} onClick={() => run(stack.name, "up")}>
+                      {busyLabel(stack.name, "up", "Start", "Starting…")}
+                    </button>
+                    <button class="stop" type="button" disabled={!!busy()} onClick={() => run(stack.name, "down")}>
+                      {busyLabel(stack.name, "down", "Stop", "Stopping…")}
                     </button>
                   </div>
                 )}
@@ -99,7 +123,8 @@ export function StackList(props: StackListProps) {
         <div class="resource-empty">Loading stacks…</div>
       </Show>
       <p class="stack-note">
-        Saved status does not indicate whether containers are running. Start runs Podman Compose on this host.
+        This list does not show whether containers are running. Start runs Podman Compose on this host, and the agent
+        starts the stack again after the host reboots until you stop it.
       </p>
     </section>
   );

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -36,6 +37,9 @@ func main() {
 	}
 	if len(os.Args) > 1 && os.Args[1] == "oci-hook" {
 		os.Exit(runOCIHook(os.Args[2:]))
+	}
+	if err := detachFromServiceUnit(); err != nil {
+		log.Fatal(err)
 	}
 	configPath := flag.String("config", "", "JSON agent configuration file")
 	flag.Parse()
@@ -65,8 +69,17 @@ func main() {
 	if err != nil {
 		log.Fatalf("stack secrets: %v", err)
 	}
+	bootID, err := readBootID()
+	if err != nil {
+		log.Fatalf("read host boot ID: %v", err)
+	}
 	manager := stacks.New(cfg.StateDir+"/stacks", cfg.Prefix, stacks.NewComposeExecutor(cfg.ComposeProvider))
 	manager.EnableSecrets(stacks.SecretSupport{HostID: cfg.HostID, Vault: vault, Containers: client})
+	manager.Logf = log.Printf
+	manager.SetBootID(bootID)
+	// After a reboot, bring back the stacks that were up. Stacks with secrets
+	// wait for the master's push, which arrives once the relay connects.
+	go manager.Resume(ctx)
 	agent := &relay.Agent{HostID: cfg.HostID, Prefix: cfg.Prefix, Handler: client, Stacks: manager, Describe: describeHost}
 	err = relay.RunAgent(ctx, agent, relay.ReconnectOptions{
 		Dial: func(ctx context.Context) (*websocket.Conn, error) {
@@ -79,6 +92,32 @@ func main() {
 	if !errors.Is(err, context.Canceled) {
 		log.Fatal(err)
 	}
+}
+
+// detachFromServiceUnit removes INVOCATION_ID, which systemd sets for the
+// agent's service. While it is set, Podman leaves each container's conmon in
+// the calling unit's cgroup (libpod/oci_conmon_linux.go) instead of its own
+// scope, so stopping or restarting the agent kills every conmon it started
+// and leaves the containers stuck in "stopping". Podman's own API service
+// unsets it for the same reason. Every Podman command the agent runs inherits
+// its environment, so clearing it here covers all of them.
+func detachFromServiceUnit() error {
+	return os.Unsetenv("INVOCATION_ID")
+}
+
+// readBootID returns the kernel's random ID for this boot. The stack manager
+// compares it with the boot a stack last came up in to tell a host reboot
+// (bring stacks back) from an agent restart (they are still running).
+func readBootID() (string, error) {
+	data, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
+	if err != nil {
+		return "", err
+	}
+	id := strings.TrimSpace(string(data))
+	if id == "" {
+		return "", errors.New("empty boot ID")
+	}
+	return id, nil
 }
 
 // startSecretSupport opens the hook socket and writes the hook JSON. The

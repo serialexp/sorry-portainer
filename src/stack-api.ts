@@ -6,7 +6,20 @@ export type Stack = {
   compose_yaml?: string;
   /** Stack secrets the Compose file uses (single-stack reads only). */
   secrets?: string[];
+  /** What the agent brings the stack back to after a reboot; absent if never started. */
+  desired?: "up" | "down";
+  /** Why a stack that should be up has not come up since the host booted. */
+  waiting?: string;
 };
+
+/**
+ * Short text for what happens to a stack when its host reboots. A stack
+ * without a desired state (never started, or last started before the agent
+ * recorded one) stays stopped, like one that was stopped.
+ */
+export function rebootLabel(stack: Pick<Stack, "desired">): string {
+  return stack.desired === "up" ? "starts after reboot" : "stays stopped after reboot";
+}
 export type StackOperation = { name: string; operation: string; success: boolean; output?: string };
 
 export const stackNamePattern = /^[a-z0-9][a-z0-9_-]{0,62}$/;
@@ -64,14 +77,26 @@ export function updateStack(
   return saveStack(hostID, name, composeYAML, expectedVersion, request);
 }
 
-export async function deployStack(
+async function stackOperation(
   hostID: string,
   name: string,
-  request: typeof fetch = fetch,
+  operation: "up" | "down",
+  failed: string,
+  request: typeof fetch,
 ): Promise<StackOperation> {
-  const response = await request(`${endpoint(hostID, name)}/up`, { method: "POST" });
-  if (!response.ok) throw new Error((await response.text()).trim() || `Deploy failed (${response.status}).`);
+  const response = await request(`${endpoint(hostID, name)}/${operation}`, { method: "POST" });
+  if (!response.ok) throw new Error((await response.text()).trim() || `${failed} (${response.status}).`);
   const result = (await response.json()) as StackOperation;
-  if (!result.success) throw new Error(result.output || "Deploy failed.");
+  if (!result.success) throw new Error(result.output || `${failed}.`);
   return result;
+}
+
+/** Starts the stack; the agent also starts it again after a reboot. */
+export function deployStack(hostID: string, name: string, request: typeof fetch = fetch): Promise<StackOperation> {
+  return stackOperation(hostID, name, "up", "Deploy failed", request);
+}
+
+/** Stops and removes the stack's containers; it stays stopped after a reboot. */
+export function stopStack(hostID: string, name: string, request: typeof fetch = fetch): Promise<StackOperation> {
+  return stackOperation(hostID, name, "down", "Stop failed", request);
 }

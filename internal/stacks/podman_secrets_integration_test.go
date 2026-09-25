@@ -88,8 +88,18 @@ func TestRealPodmanStackSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager := New(filepath.Join(work, "stacks"), prefix, NewComposeExecutor("/usr/bin/podman-compose"))
-	manager.EnableSecrets(SecretSupport{HostID: hostID, Vault: vault, Containers: client})
+	stacksRoot := filepath.Join(work, "stacks")
+	// startAgent builds a manager the way a starting agent does. The socket
+	// server keeps serving vault; emptying vault stands in for the fresh
+	// memory of a restarted agent.
+	startAgent := func(boot string) *Manager {
+		m := New(stacksRoot, prefix, NewComposeExecutor("/usr/bin/podman-compose"))
+		m.EnableSecrets(SecretSupport{HostID: hostID, Vault: vault, Containers: client})
+		m.Logf = t.Logf
+		m.SetBootID(boot)
+		return m
+	}
+	manager := startAgent("boot-1")
 
 	compose := `services:
   app:
@@ -110,21 +120,28 @@ secrets:
   db_password: {}
   api_key: {}
 `
-	if _, err := manager.Save(ctx, "web", compose, nil, nil); err != nil {
-		t.Fatal(err)
+	// solo has no secrets, so it comes back right after a reboot.
+	solo := "services:\n  sleeper:\n    image: " + image + "\n    command: [\"sleep\", \"3600\"]\n"
+	for name, source := range map[string]string{"web": compose, "solo": solo} {
+		if _, err := manager.Save(ctx, name, source, nil, nil); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cleanupCancel()
+			if result, err := manager.Down(cleanupCtx, name); err != nil {
+				t.Errorf("clean up %s: %v: %s", name, err, result.Output)
+			}
+			// podman-compose 1.0.6 `down` leaves the project network behind.
+			if out, err := exec.CommandContext(cleanupCtx, "podman", "network", "rm", manager.project(name)+"_default").CombinedOutput(); err != nil {
+				t.Errorf("remove network: %v: %s", err, out)
+			}
+		})
 	}
 	project := manager.project("web")
-	t.Cleanup(func() {
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), time.Minute)
-		defer cleanupCancel()
-		if result, err := manager.Down(cleanupCtx, "web"); err != nil {
-			t.Errorf("clean up %s: %v: %s", project, err, result.Output)
-		}
-		// podman-compose 1.0.6 `down` leaves the project network behind.
-		if out, err := exec.CommandContext(cleanupCtx, "podman", "network", "rm", project+"_default").CombinedOutput(); err != nil {
-			t.Errorf("remove network: %v: %s", err, out)
-		}
-	})
+	if result, err := manager.Up(ctx, "solo"); err != nil {
+		t.Fatalf("up solo: %v\n%s", err, result.Output)
+	}
 
 	canary := func() []byte {
 		b := make([]byte, 12)
@@ -188,6 +205,86 @@ secrets:
 		t.Fatalf("after policy restart db_password = %q", got)
 	}
 	assertNotStored(ctx, t, app, db, newDB, key)
+	if got := exec1("ls", "-a", "/run/secrets"); !strings.Contains(got, secrets.DigestFile) {
+		t.Fatalf("no digest in the tmpfs: %q", got)
+	}
+
+	inspect := func(container, format string) string {
+		t.Helper()
+		out, err := exec.CommandContext(ctx, "podman", "inspect", "--format", format, container).CombinedOutput()
+		if err != nil {
+			t.Fatalf("inspect %s: %v: %s", container, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	current := map[string][]byte{"db_password": newDB, "api_key": key}
+	push := func(m *Manager) protocol.SecretSyncResult {
+		t.Helper()
+		values := map[string][]byte{}
+		for name, value := range current {
+			values[name] = append([]byte(nil), value...)
+		}
+		result, err := m.SyncSecrets(ctx, protocol.SecretSync{Stack: "web", Secrets: values})
+		if err != nil || len(result.Problems) != 0 {
+			t.Fatalf("push: %+v %v", result, err)
+		}
+		return result
+	}
+
+	// Agent restart in the same boot: its vault starts empty, so the
+	// reconnect push changes every name, but the containers already hold the
+	// values (the digest matches) and keep running untouched.
+	startedAt := inspect(app, "{{.State.StartedAt}}")
+	if _, _, err := vault.Replace("web", nil); err != nil {
+		t.Fatal(err)
+	}
+	restarted := startAgent("boot-1")
+	restarted.Resume(ctx)
+	if result := push(restarted); len(result.Changed) != 2 || len(result.Restarted) != 0 || result.Started {
+		t.Fatalf("push after agent restart: %+v", result)
+	}
+	if again := inspect(app, "{{.State.StartedAt}}"); again != startedAt {
+		t.Fatalf("app restarted after an agent restart: %s -> %s", startedAt, again)
+	}
+
+	// Host reboot: every container is stopped and the agent's vault is
+	// empty. Resume brings solo back at once; web waits for its secrets and
+	// starts when the master pushes them.
+	sleeper := manager.project("solo") + "_sleeper_1"
+	for _, container := range []string{app, project + "_plain_1", sleeper} {
+		if out, err := exec.CommandContext(ctx, "podman", "stop", "-t", "1", container).CombinedOutput(); err != nil {
+			t.Fatalf("stop %s: %v: %s", container, err, out)
+		}
+	}
+	if _, _, err := vault.Replace("web", nil); err != nil {
+		t.Fatal(err)
+	}
+	rebooted := startAgent("boot-2")
+	rebooted.Resume(ctx)
+	if state := inspect(sleeper, "{{.State.Status}}"); state != "running" {
+		t.Fatalf("solo after reboot: %s", state)
+	}
+	if state := inspect(app, "{{.State.Status}}"); state == "running" {
+		t.Fatal("web started without its secrets")
+	}
+	web, err := rebooted.Inspect(ctx, "web")
+	if err != nil || !strings.HasPrefix(web.Waiting, "waiting for secrets api_key, db_password") {
+		t.Fatalf("web while waiting: %+v %v", web, err)
+	}
+	if result := push(rebooted); !result.Started {
+		t.Fatalf("push after reboot did not start web: %+v", result)
+	}
+	for _, container := range []string{app, project + "_plain_1"} {
+		if state := inspect(container, "{{.State.Status}}"); state != "running" {
+			t.Fatalf("%s after the push: %s", container, state)
+		}
+	}
+	if got := exec1("cat", "/run/secrets/db_password"); got != string(newDB) {
+		t.Fatalf("after reboot db_password = %q", got)
+	}
+	if web, _ := rebooted.Inspect(ctx, "web"); web.Waiting != "" || web.Desired != "up" {
+		t.Fatalf("web after start: %+v", web)
+	}
 
 	// Without its values the container must not start at all.
 	if _, _, err := vault.Replace("web", nil); err != nil {

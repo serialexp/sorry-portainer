@@ -143,6 +143,9 @@ type SecretSyncResult struct {
 	Restarted []string `json:"restarted,omitempty"`
 	// Problems lists restarts or checks that failed; the values were stored.
 	Problems []string `json:"problems,omitempty"`
+	// Started is true when the stack was waiting for these secrets to come
+	// back up after a reboot and was brought up.
+	Started bool `json:"started,omitempty"`
 }
 
 // SecretRetain makes the agent forget every stack not listed. The master
@@ -173,6 +176,13 @@ type Stack struct {
 	Version     int    `json:"version"`
 	// Secrets lists the stack secrets the Compose file uses (Inspect only).
 	Secrets []string `json:"secrets,omitempty"`
+	// Desired is "up" or "down": the state the agent brings the stack back to
+	// after the host reboots. Empty for a stack that was never started.
+	Desired string `json:"desired,omitempty"`
+	// Waiting says why a stack whose desired state is up has not been brought
+	// up since the host booted, for example because its secrets have not
+	// arrived.
+	Waiting string `json:"waiting,omitempty"`
 }
 
 type StackVersion struct {

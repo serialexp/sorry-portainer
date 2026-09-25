@@ -10,6 +10,8 @@ export type SecretSyncResult = {
   removed?: string[];
   restarted?: string[];
   problems?: string[];
+  /** The stack was waiting for these secrets to come back after a reboot, and was started. */
+  started?: boolean;
 };
 export type Delivery = {
   state: "delivered" | "pending" | "failed";

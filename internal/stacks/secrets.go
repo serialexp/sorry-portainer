@@ -29,6 +29,9 @@ type SecretSupport struct {
 	// Verify checks a running container's injected files; nil uses
 	// secrets.Verify against /proc.
 	Verify func(pid int, mounts []secrets.Mount) error
+	// ReadDigest reads the digest the hook left in a running container; nil
+	// uses secrets.ReadDigest against /proc.
+	ReadDigest func(pid int) (string, error)
 }
 
 // runtimeComposeFile is the file podman-compose runs: compose.yaml after the
@@ -41,6 +44,9 @@ var errSecretsUnsupported = errors.New("this agent was started without secret su
 func (m *Manager) EnableSecrets(support SecretSupport) {
 	if support.Verify == nil {
 		support.Verify = func(pid int, mounts []secrets.Mount) error { return secrets.Verify("/proc", pid, mounts) }
+	}
+	if support.ReadDigest == nil {
+		support.ReadDigest = func(pid int) (string, error) { return secrets.ReadDigest("/proc", pid) }
 	}
 	m.secrets = &support
 }
@@ -62,7 +68,7 @@ func (m *Manager) prepareRuntime(n string, needValues bool) (secretPlan, error) 
 		}
 		if needValues {
 			if missing := m.secrets.Vault.Missing(n, doc.plan.Names); len(missing) > 0 {
-				return secretPlan{}, fmt.Errorf("secrets %v of stack %s are not available on this agent; set them in sorry-portainer and make sure the master is unlocked", missing, n)
+				return secretPlan{}, &missingSecretsError{stack: n, names: missing}
 			}
 		}
 	}
@@ -118,8 +124,9 @@ func (m *Manager) checkInjected(ctx context.Context, n string, services map[stri
 	return nil
 }
 
-// SyncSecrets stores a stack's secret set from the master and restarts the
-// running containers that use a changed value, so the hook injects it.
+// SyncSecrets stores a stack's secret set from the master, restarts the
+// running containers whose injected values are out of date, so the hook
+// injects the new ones, and brings up a stack that was waiting for them.
 func (m *Manager) SyncSecrets(ctx context.Context, sync protocol.SecretSync) (protocol.SecretSyncResult, error) {
 	if m.secrets == nil {
 		return protocol.SecretSyncResult{}, errSecretsUnsupported
@@ -135,21 +142,31 @@ func (m *Manager) SyncSecrets(ctx context.Context, sync protocol.SecretSync) (pr
 		return protocol.SecretSyncResult{}, err
 	}
 	result := protocol.SecretSyncResult{Stack: sync.Stack, Changed: changed, Removed: removed}
-	if len(changed) == 0 {
-		return result, nil
+	if len(changed) > 0 {
+		m.restartOutdated(ctx, sync.Stack, changed, &result)
 	}
-	runtime, err := os.ReadFile(filepath.Join(m.dir(sync.Stack), runtimeComposeFile))
+	m.bringUpIfWaiting(ctx, sync.Stack, &result)
+	return result, nil
+}
+
+// restartOutdated restarts the running containers of services that use a
+// changed secret, unless the digest the hook left in the container already
+// matches the vault. That is the case after the agent restarts: its vault
+// starts empty, so every pushed value looks changed although the containers
+// already hold it. The caller holds the stack lock.
+func (m *Manager) restartOutdated(ctx context.Context, n string, changed []string, result *protocol.SecretSyncResult) {
+	runtime, err := os.ReadFile(filepath.Join(m.dir(n), runtimeComposeFile))
 	if errors.Is(err, os.ErrNotExist) {
-		return result, nil // never brought up
+		return // never brought up
 	}
 	if err != nil {
 		result.Problems = append(result.Problems, err.Error())
-		return result, nil
+		return
 	}
 	deployed, err := deployedMounts(runtime)
 	if err != nil {
 		result.Problems = append(result.Problems, err.Error())
-		return result, nil
+		return
 	}
 	affected := map[string][]secrets.Mount{}
 	for service, mounts := range deployed {
@@ -158,17 +175,17 @@ func (m *Manager) SyncSecrets(ctx context.Context, sync protocol.SecretSync) (pr
 		}
 	}
 	if len(affected) == 0 {
-		return result, nil
+		return
 	}
-	containers, err := m.secrets.Containers.ProjectContainers(ctx, m.project(sync.Stack))
+	containers, err := m.secrets.Containers.ProjectContainers(ctx, m.project(n))
 	if err != nil {
 		result.Problems = append(result.Problems, fmt.Sprintf("list stack containers: %v", err))
-		return result, nil
+		return
 	}
 	restarted := map[string][]secrets.Mount{}
 	for _, c := range containers {
 		mounts, ok := affected[c.Service]
-		if !ok || c.State != "running" {
+		if !ok || c.State != "running" || m.injectedUpToDate(n, c, mounts) {
 			continue
 		}
 		if err := m.secrets.Containers.Restart(ctx, c.ID); err != nil {
@@ -179,11 +196,60 @@ func (m *Manager) SyncSecrets(ctx context.Context, sync protocol.SecretSync) (pr
 		restarted[c.Service] = mounts
 	}
 	if len(restarted) > 0 {
-		if err := m.checkInjected(ctx, sync.Stack, restarted); err != nil {
+		if err := m.checkInjected(ctx, n, restarted); err != nil {
 			result.Problems = append(result.Problems, err.Error())
 		}
 	}
-	return result, nil
+}
+
+// injectedUpToDate reports whether running container c holds exactly the
+// values the vault has for mounts. Any doubt (no digest, unreadable, a value
+// missing from the vault) means no, so the container is restarted.
+func (m *Manager) injectedUpToDate(n string, c podman.ProjectContainer, mounts []secrets.Mount) bool {
+	if c.Pid <= 0 {
+		return false
+	}
+	want, err := m.secrets.Vault.Digest(n, mounts)
+	if err != nil {
+		return false
+	}
+	got, err := m.secrets.ReadDigest(c.Pid)
+	return err == nil && got == want
+}
+
+// bringUpIfWaiting starts a stack that should be up but has not come up
+// since the host booted, once the vault holds all of its secrets. The caller
+// holds the stack lock.
+func (m *Manager) bringUpIfWaiting(ctx context.Context, n string, result *protocol.SecretSyncResult) {
+	state, err := m.readState(n)
+	if err != nil {
+		result.Problems = append(result.Problems, err.Error())
+		return
+	}
+	if !pending(state, m.currentBoot()) {
+		return
+	}
+	source, err := os.ReadFile(filepath.Join(m.dir(n), "compose.yaml"))
+	if err != nil {
+		result.Problems = append(result.Problems, err.Error())
+		return
+	}
+	doc, err := parseCompose(source)
+	if err != nil {
+		result.Problems = append(result.Problems, err.Error())
+		return
+	}
+	if len(m.secrets.Vault.Missing(n, doc.plan.Names)) > 0 {
+		return // still waiting; prepareRuntime would say the same
+	}
+	op, err := m.operateLocked(ctx, n, "up")
+	if err != nil {
+		result.Problems = append(result.Problems, "start after secrets arrived: "+waitingReason(err))
+		m.logf("stack %s did not start after its secrets arrived: %s", n, waitingReason(err))
+		return
+	}
+	result.Started = op.Success
+	m.logf("stack %s started after its secrets arrived", n)
 }
 
 // RetainSecrets forgets the secrets of every stack not in keep.

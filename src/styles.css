@@ -552,6 +552,21 @@ h2 {
 .start:disabled {
   opacity: 0.5;
 }
+.stop {
+  border: 1px solid #e3c9a7;
+  background: #fbf3e8;
+  color: #9a6a35;
+  border-radius: 5px;
+  padding: 6px 10px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.stop:disabled {
+  opacity: 0.5;
+}
+.stack-waiting {
+  color: #9a6a35;
+}
 .empty {
   text-align: center;
   color: #85948a;

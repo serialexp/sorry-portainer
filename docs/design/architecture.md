@@ -2,7 +2,7 @@
 
 Status: partial — Podman agent/runtime, relay hardening and stack secrets landed; certificate allowlisting outstanding
 Owner: Bart
-Last updated: 2026-09-24
+Last updated: 2026-09-25
 
 ## Implementation status
 
@@ -59,6 +59,12 @@ the approved experiment; it is not a deployment fallback or an implied feature.
 Follow-up (2026-09-24): stack secrets are implemented as designed in
 `docs/design/stack-secrets.md`. Values live encrypted on the master and in
 plain form only in agent memory and container tmpfs.
+
+Follow-up (2026-09-25): agents now survive their own restarts without
+touching containers, and bring stacks back after a host reboot. `Stack` gained
+`desired` and `waiting`, and `SecretSyncResult` gained `started`; the fields
+are additive, so the relay protocol stays at version 4. Details in
+`docs/design/stack-secrets.md`, "Follow-up (2026-09-25)".
 
 ## Goals
 

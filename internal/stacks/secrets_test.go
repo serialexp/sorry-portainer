@@ -21,6 +21,14 @@ type fakeRuntime struct {
 	stopped    []string
 	restarted  []string
 	project    string
+	// digests is what each container pid holds in its secrets tmpfs.
+	digests map[int]string
+}
+
+func (f *fakeRuntime) readDigest(pid int) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.digests[pid], nil
 }
 
 func (f *fakeRuntime) ProjectContainers(_ context.Context, project string) ([]podman.ProjectContainer, error) {
@@ -48,22 +56,30 @@ const managedSecretCompose = "services:\n  app:\n    image: x\n    secrets: [db]
 
 func secretManager(t *testing.T, verify func(int, []secrets.Mount) error) (*Manager, *fakeRuntime, *secrets.Vault, *recordingExecutor) {
 	t.Helper()
-	executor := &recordingExecutor{}
-	m := New(t.TempDir(), "agent-", executor)
 	runtime := &fakeRuntime{containers: []podman.ProjectContainer{
 		{ID: "id-app", Name: "agent-web_app_1", Service: "app", State: "running", Pid: 101},
 		{ID: "id-worker", Name: "agent-web_worker_1", Service: "worker", State: "running", Pid: 102},
 		{ID: "id-plain", Name: "agent-web_plain_1", Service: "plain", State: "running", Pid: 103},
 	}}
-	vault := secrets.NewVault()
-	if verify == nil {
-		verify = func(int, []secrets.Mount) error { return nil }
-	}
-	m.EnableSecrets(SecretSupport{HostID: "h1", Vault: vault, Containers: runtime, Verify: verify})
+	m, vault, executor := secretManagerAt(t, t.TempDir(), runtime, verify)
 	if _, err := m.Save(context.Background(), "web", managedSecretCompose, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	return m, runtime, vault, executor
+}
+
+// secretManagerAt starts a manager, as a freshly started agent would, on
+// existing stack state in root.
+func secretManagerAt(t *testing.T, root string, runtime *fakeRuntime, verify func(int, []secrets.Mount) error) (*Manager, *secrets.Vault, *recordingExecutor) {
+	t.Helper()
+	executor := &recordingExecutor{}
+	m := New(root, "agent-", executor)
+	vault := secrets.NewVault()
+	if verify == nil {
+		verify = func(int, []secrets.Mount) error { return nil }
+	}
+	m.EnableSecrets(SecretSupport{HostID: "h1", Vault: vault, Containers: runtime, Verify: verify, ReadDigest: runtime.readDigest})
+	return m, vault, executor
 }
 
 func TestSaveRejectsSecretsWithoutSupport(t *testing.T) {

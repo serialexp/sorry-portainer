@@ -131,6 +131,14 @@ func (v *Vault) Copy(stack string, names []string) (map[string][]byte, error) {
 	return out, nil
 }
 
+// Digest returns what the hook would record for mounts filled from stack's
+// values (see Digest), without copying the values.
+func (v *Vault) Digest(stack string, mounts []Mount) (string, error) {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	return Digest(mounts, v.stacks[stack])
+}
+
 // Names lists the stored names of stack, sorted.
 func (v *Vault) Names(stack string) []string {
 	v.mu.RLock()

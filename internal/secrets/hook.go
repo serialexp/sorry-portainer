@@ -149,6 +149,13 @@ func inject(procRoot string, pid int, rootfs string, mounts []Mount, values map[
 			return fmt.Errorf("write secret %s: %w", m.Target, err)
 		}
 	}
+	digest, err := Digest(mounts, values)
+	if err != nil {
+		return err
+	}
+	if err := writeDigest(dir, digest, ids); err != nil {
+		return fmt.Errorf("write %s: %w", DigestFile, err)
+	}
 	return nil
 }
 

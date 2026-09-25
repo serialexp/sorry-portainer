@@ -7,9 +7,12 @@
 - Expose actual Compose/Podman stack runtime status instead of the current `saved` metadata status. The stack list explicitly labels this limitation.
 - Verify `podman-compose` successful exit implies the intended workload was created and started; the installed provider has previously printed pull errors while returning exit code 0. Do not equate operation success with running containers until this check exists.
 
+- Found while making agents survive restarts and reboots (2026-09-25):
+  - **Needs Bart's decision:** after a reboot, bringing a stack back also starts one-off services that had exited on purpose (Docker only restarts containers with a restart policy). Options in `docs/design/stack-secrets.md`.
+  - `podman-compose up -d` on existing containers prints a "name already in use" error for each before it falls back to `podman start`; the stack output shown in the UI looks alarming although it worked.
+  - The stack list still cannot tell whether containers are running (see the runtime-status item above); "starts after reboot" is the desired state, not the live one.
+
 - Found while building stack secrets (2026-09-24):
-  - **Needs Bart's decision:** stopping/restarting an agent service kills every container it started. Podman leaves `conmon` in the systemd unit's cgroup when `INVOCATION_ID` is set (`libpod/oci_conmon_linux.go`). Options in `docs/design/stack-secrets.md`.
-  - **Needs Bart's decision:** after an agent restart, the reconnect push restarts every running container that uses secrets, because the agent's empty vault sees every value as changed. Options in `docs/design/stack-secrets.md`.
   - podman-compose 1.0.6 `down` leaves `<project>_default` networks behind. Older test runs left several `sorry-podman-test-*` and `sorry-local-a-podman-smoke-*` networks on Bart's machine (not removed; not mine). The secrets live test removes its own.
   - Production agent layout: `oci_hooks_dir` defaults to `~/.local/share/sorry-portainer/oci-hooks` while `state_dir` is set separately; decide where each lives for the dedicated user.
   - Verify the hook with crun, and on Ubuntu 26.04 / Podman 5.x under the dedicated agent user.

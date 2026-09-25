@@ -127,9 +127,10 @@ export function SecretStoreBanner() {
 function describeDelivery(delivery: Delivery | null): string {
   if (!delivery) return "Not sent to the agent since the server started.";
   const at = new Date(delivery.at).toLocaleString();
-  const restarted = delivery.result?.restarted?.length
-    ? ` Restarted ${delivery.result.restarted.length} container(s) to use new values.`
-    : "";
+  const restarted =
+    (delivery.result?.restarted?.length
+      ? ` Restarted ${delivery.result.restarted.length} container(s) to use new values.`
+      : "") + (delivery.result?.started ? " Started the stack, which was waiting for these secrets." : "");
   switch (delivery.state) {
     case "delivered":
       return `Delivered to the agent at ${at}.${restarted}`;
