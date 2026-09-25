@@ -1,0 +1,13 @@
+[Unit]
+Description=Sorry Portainer development Podman agent __HOST_ID__
+After=sorry-portainer-server.service
+
+[Service]
+Type=simple
+WorkingDirectory=__ROOT__
+ExecStart=__BIN__/sorry-portainer-agent --config __STATE__/agents/__HOST_ID__/agent.json
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

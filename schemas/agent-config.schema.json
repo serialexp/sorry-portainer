@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sorry-portainer.invalid/schemas/agent-config.schema.json",
+  "title": "Sorry Portainer agent configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["server_url", "host_id", "host_prefix", "agent_cert", "agent_key", "agent_ca"],
+  "properties": {
+    "server_url": {
+      "type": "string",
+      "format": "uri",
+      "pattern": "^wss://"
+    },
+    "host_id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    "host_prefix": {
+      "type": "string",
+      "minLength": 1
+    },
+    "agent_cert": { "type": "string", "minLength": 1 },
+    "agent_key": { "type": "string", "minLength": 1 },
+    "agent_ca": { "type": "string", "minLength": 1 },
+    "server_name": { "type": "string", "minLength": 1 },
+    "state_dir": { "type": "string", "minLength": 1 },
+    "compose_provider": { "type": "string", "minLength": 1, "default": "/usr/bin/podman-compose" }
+  }
+}

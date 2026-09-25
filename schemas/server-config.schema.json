@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sorry-portainer.invalid/schemas/server-config.schema.json",
+  "title": "Sorry Portainer server configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["admin_password", "control"],
+  "properties": {
+    "listen_addr": {
+      "type": "string",
+      "default": ":8080",
+      "minLength": 1,
+      "description": "Plain HTTP address for the web API, normally behind a reverse proxy."
+    },
+    "admin_password": {
+      "type": "string",
+      "minLength": 12,
+      "description": "Initial admin password. Keep this file mode 0600."
+    },
+    "session_ttl": {
+      "type": "string",
+      "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)$",
+      "default": "12h"
+    },
+    "control": {
+      "$ref": "#/$defs/control"
+    }
+  },
+  "$defs": {
+    "control": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ca_file", "cert_file", "key_file"],
+      "properties": {
+        "listen_addr": {
+          "type": "string",
+          "default": ":9443",
+          "pattern": "^(?!(.*:)?(80|443)$).+"
+        },
+        "ca_file": { "type": "string", "minLength": 1 },
+        "cert_file": { "type": "string", "minLength": 1 },
+        "key_file": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

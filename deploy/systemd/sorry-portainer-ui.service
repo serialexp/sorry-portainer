@@ -1,0 +1,14 @@
+[Unit]
+Description=Sorry Portainer development UI
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=__ROOT__
+Environment=PATH=/home/bart/.nvm/versions/node/v24.13.0/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=__ROOT__/node_modules/.bin/vite --host 127.0.0.1 --port 6201
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target
