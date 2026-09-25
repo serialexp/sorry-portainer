@@ -3,6 +3,7 @@ package server
 import (
 	"crypto/x509"
 	"errors"
+	"log"
 	"net/http"
 	"strings"
 
@@ -32,13 +33,11 @@ func ControlHandler(registry *relay.Remote) http.Handler {
 		if err != nil {
 			return
 		}
-		info, err := registry.AcceptAgentForCertificate(conn, certificateHostID)
-		if err != nil {
-			_ = conn.Close()
-			return
+		// Serve owns the hijacked connection and returns when it ends, so a
+		// disconnected agent is removed promptly rather than on request cancel.
+		if err := registry.Serve(conn, certificateHostID); err != nil {
+			log.Printf("agent %s disconnected: %v", certificateHostID, err)
 		}
-		defer registry.Remove(info.HostID, conn)
-		<-r.Context().Done()
 	})
 }
 

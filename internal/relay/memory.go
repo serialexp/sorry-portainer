@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/serialexp/sorry-portainer/internal/protocol"
+	"sort"
 	"strings"
 	"sync"
+
+	"github.com/serialexp/sorry-portainer/internal/protocol"
 )
 
+// Handler is one host's local runtime, as the agent sees it.
 type Handler interface {
 	Info(context.Context) (protocol.HostInfo, error)
 	Containers(context.Context) ([]protocol.Container, error)
@@ -17,115 +20,134 @@ type Handler interface {
 	Start(context.Context, string) error
 	Stop(context.Context, string) error
 }
+
+// Memory is an in-process relay that calls handlers directly. It serves tests
+// and single-process development without WebSocket transport.
 type Memory struct {
 	mu    sync.RWMutex
 	hosts map[string]Handler
 	infos map[string]protocol.HostInfo
 }
 
+var errStacksUnsupported = errors.New("stacks unavailable")
+
 func New() *Memory {
 	return &Memory{hosts: map[string]Handler{}, infos: map[string]protocol.HostInfo{}}
 }
+
 func (m *Memory) Register(id string, h Handler) error {
 	return m.RegisterWithPrefix(id, id+"-", h)
 }
+
 func (m *Memory) RegisterWithPrefix(id, prefix string, h Handler) error {
 	if id == "" || prefix == "" || h == nil {
 		return errors.New("invalid agent")
 	}
-	i, e := h.Info(context.Background())
-	if e != nil {
-		return e
+	info, err := h.Info(context.Background())
+	if err != nil {
+		return err
 	}
-	i.HostID = id
-	i.Prefix = prefix
+	info.HostID = id
+	info.Prefix = prefix
 	m.mu.Lock()
 	m.hosts[id] = h
-	m.infos[id] = i
+	m.infos[id] = info
 	m.mu.Unlock()
 	return nil
 }
+
+// Hosts lists registered hosts ordered by host ID.
 func (m *Memory) Hosts() []protocol.HostInfo {
 	m.mu.RLock()
+	out := make([]protocol.HostInfo, 0, len(m.infos))
+	for _, info := range m.infos {
+		out = append(out, info)
+	}
+	m.mu.RUnlock()
+	sort.Slice(out, func(i, j int) bool { return out[i].HostID < out[j].HostID })
+	return out
+}
+
+func (m *Memory) host(id string) (Handler, protocol.HostInfo, error) {
+	m.mu.RLock()
 	defer m.mu.RUnlock()
-	o := make([]protocol.HostInfo, 0, len(m.infos))
-	for _, i := range m.infos {
-		o = append(o, i)
-	}
-	return o
-}
-func (m *Memory) ListStacks(string) ([]protocol.Stack, error) { return []protocol.Stack{}, nil }
-func (m *Memory) InspectStack(string, string) (protocol.Stack, error) {
-	return protocol.Stack{}, errors.New("stacks unavailable")
-}
-func (m *Memory) StackVersions(string, string) ([]protocol.StackVersion, error) {
-	return nil, errors.New("stacks unavailable")
-}
-func (m *Memory) SaveStack(string, protocol.StackSave) (protocol.Stack, error) {
-	return protocol.Stack{}, errors.New("stacks unavailable")
-}
-func (m *Memory) StackOperation(string, string, string) (protocol.StackOperation, error) {
-	return protocol.StackOperation{}, errors.New("stacks unavailable")
-}
-func (m *Memory) Info(id string) (protocol.HostInfo, error) {
-	m.mu.RLock()
-	info, ok := m.infos[id]
-	m.mu.RUnlock()
-	if !ok {
-		return protocol.HostInfo{}, errors.New("host unavailable")
-	}
-	return info, nil
-}
-func (m *Memory) Containers(id string) ([]protocol.Container, error) {
-	m.mu.RLock()
 	h, ok := m.hosts[id]
-	m.mu.RUnlock()
 	if !ok {
-		return nil, errors.New("host unavailable")
+		return nil, protocol.HostInfo{}, ErrHostUnavailable
 	}
-	return h.Containers(context.Background())
+	return h, m.infos[id], nil
 }
-func (m *Memory) Volumes(id string) ([]protocol.Volume, error) {
-	m.mu.RLock()
-	h, ok := m.hosts[id]
-	m.mu.RUnlock()
-	if !ok {
-		return nil, errors.New("host unavailable")
+
+func (m *Memory) Info(_ context.Context, id string) (protocol.HostInfo, error) {
+	_, info, err := m.host(id)
+	return info, err
+}
+
+func (m *Memory) Containers(ctx context.Context, id string) ([]protocol.Container, error) {
+	h, _, err := m.host(id)
+	if err != nil {
+		return nil, err
 	}
-	return h.Volumes(context.Background())
+	return h.Containers(ctx)
 }
-func (m *Memory) Images(id string) ([]protocol.Image, error) {
-	m.mu.RLock()
-	h, ok := m.hosts[id]
-	m.mu.RUnlock()
-	if !ok {
-		return nil, errors.New("host unavailable")
+
+func (m *Memory) Volumes(ctx context.Context, id string) ([]protocol.Volume, error) {
+	h, _, err := m.host(id)
+	if err != nil {
+		return nil, err
 	}
-	return h.Images(context.Background())
+	return h.Volumes(ctx)
 }
-func (m *Memory) Stop(id, containerID string) error {
-	m.mu.RLock()
-	h, ok := m.hosts[id]
-	info := m.infos[id]
-	m.mu.RUnlock()
-	if !ok {
-		return errors.New("host unavailable")
+
+func (m *Memory) Images(ctx context.Context, id string) ([]protocol.Image, error) {
+	h, _, err := m.host(id)
+	if err != nil {
+		return nil, err
+	}
+	return h.Images(ctx)
+}
+
+func (m *Memory) Start(ctx context.Context, id, containerID string) error {
+	h, info, err := m.host(id)
+	if err != nil {
+		return err
 	}
 	if !strings.HasPrefix(containerID, info.Prefix) {
 		return fmt.Errorf("container %q is outside host %s prefix %q", containerID, id, info.Prefix)
 	}
-	return h.Stop(context.Background(), containerID)
+	return h.Start(ctx, containerID)
 }
-func (m *Memory) Start(id, containerID string) error {
-	m.mu.RLock()
-	h, ok := m.hosts[id]
-	info := m.infos[id]
-	m.mu.RUnlock()
-	if !ok {
-		return errors.New("host unavailable")
+
+func (m *Memory) Stop(ctx context.Context, id, containerID string) error {
+	h, info, err := m.host(id)
+	if err != nil {
+		return err
 	}
 	if !strings.HasPrefix(containerID, info.Prefix) {
 		return fmt.Errorf("container %q is outside host %s prefix %q", containerID, id, info.Prefix)
 	}
-	return h.Start(context.Background(), containerID)
+	return h.Stop(ctx, containerID)
+}
+
+func (m *Memory) ListStacks(_ context.Context, id string) ([]protocol.Stack, error) {
+	if _, _, err := m.host(id); err != nil {
+		return nil, err
+	}
+	return []protocol.Stack{}, nil
+}
+
+func (m *Memory) InspectStack(context.Context, string, string) (protocol.Stack, error) {
+	return protocol.Stack{}, errStacksUnsupported
+}
+
+func (m *Memory) StackVersions(context.Context, string, string) ([]protocol.StackVersion, error) {
+	return nil, errStacksUnsupported
+}
+
+func (m *Memory) SaveStack(context.Context, string, protocol.StackSave) (protocol.Stack, error) {
+	return protocol.Stack{}, errStacksUnsupported
+}
+
+func (m *Memory) StackOperation(context.Context, string, string, string) (protocol.StackOperation, error) {
+	return protocol.StackOperation{}, errStacksUnsupported
 }

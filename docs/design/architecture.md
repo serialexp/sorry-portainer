@@ -1,8 +1,8 @@
 # sorry-portainer Architecture — Design
 
-Status: partial — Podman agent/runtime migration landed; relay hardening and secrets outstanding
+Status: partial — Podman agent/runtime and relay hardening landed; certificate allowlisting and secrets outstanding
 Owner: Bart
-Last updated: 2026-09-22
+Last updated: 2026-09-24
 
 ## Implementation status
 
@@ -16,13 +16,14 @@ Last updated: 2026-09-22
 
 ### Outstanding
 
-- [ ] **Phase 1 — mTLS agent transport.** Implement outbound WebSocket sessions, certificate identity mapping, hello/heartbeat, reconnect, and bounded message handling.
+- [x] **Phase 1 — mTLS agent transport.** Outbound WebSocket sessions, certificate identity mapping, hello/heartbeat, reconnect, and bounded message handling. See [Relay](#relay).
 - [x] **Phase 1 — WebSocket relay prototype.** Add versioned agent hello, host registration, request IDs, deadline-bounded inventory/start calls, and in-process round-trip coverage.
 - [x] **Phase 1 — mTLS control listener.** Dedicated control listener defaults to `:9443`, requires client certificates, and derives host identity from a `sorry-host://HOST_ID` URI or `host-HOST_ID` DNS SAN. The web API remains plain HTTP for reverse-proxy TLS termination.
 - [x] **Phase 1 — file configuration.** Server and agent commands accept permission-checked JSON config files via `--config`; environment loading remains a compatibility fallback, and certificate/private-key values are referenced by path.
 - [x] **Phase 1 — config schemas.** JSON Schema documents under `schemas/` describe the server and agent files; Go uses strict decoding and repeats semantic checks at startup.
 - [x] **Phase 1 — local certificate provisioning.** `server init` creates a private control CA, server certificate, server config, and restricted state directory; `server agent --create HOST_ID` creates a host URI-SAN certificate, client key, CA copy, and agent config.
-- [ ] **Phase 1 — live relay hardening.** Add reconnect/heartbeat, configured certificate allowlisting, and complete pending-request cleanup on disconnect.
+- [x] **Phase 1 — live relay hardening.** Protocol v3: multiplexed concurrent requests over one reader per session, server heartbeat on both ends, request cancellation reaching the agent, a 32-request in-flight window, pending-request cleanup and prompt host removal on disconnect, session replacement, and agent reconnect with jittered backoff. Relay failures map to 503/504 separately from operation failures.
+- [ ] **Phase 1 — certificate allowlisting.** Any certificate the control CA signed is accepted today; the server should only accept configured (or enrolled) host IDs, so a leaked CA-signed certificate for an unknown host is refused.
 - [x] **Phase 1 — Podman agent runtime.** Run bounded Podman operations over the live relay, enforce Podman 4.7 or later, and authorize lifecycle actions by resolved container ownership.
 - [x] **Phase 1 — rootless Ubuntu setup.** Add an explicit plan/apply path for Ubuntu-compatible 24.04 and 26.04 native packages under a dedicated rootless user; live cross-release acceptance remains outstanding.
 - [x] **Phase 2 — Podman Compose stacks.** Invoke `podman compose` with an explicitly configured distro `podman-compose` provider while preserving bounded host-scoped stack lifecycle operations. Git sources, templates, UI stack editor, and live provider acceptance remain outstanding.
@@ -103,6 +104,47 @@ error. The server selects the host from authenticated configuration/connection
 identity; it must not trust an arbitrary host ID supplied by an agent as
 authority.
 
+## Relay
+
+One WebSocket per agent carries protocol v3 messages (`hello`, `request`,
+`response`, `cancel`), each at most 4 MiB encoded.
+
+- **Identity.** The control handler hands the hijacked connection and the
+  certificate's host ID to `relay.Remote.Serve`, which blocks for the life of the
+  session. The first frame must be a `hello` naming that same host ID. A new
+  session for a host replaces the old one and fails the old one's pending
+  requests; the old session's exit never unregisters its replacement.
+- **Multiplexing.** Each session has one reader goroutine. Requests carry random
+  128-bit IDs, and the reader hands each response to the caller waiting on that
+  ID. A slow operation never blocks a fast one, and a response arriving after its
+  caller gave up is dropped rather than delivered to the next request.
+- **Deadlines and cancellation.** Every call runs under the HTTP request's
+  context plus an operation budget (10 s, or 6 min for stack up/down/restart).
+  The request carries the remaining budget as a relative `timeout_ms`, so host
+  clock skew does not matter. When the caller's context ends first, the server
+  sends `cancel` and the agent cancels that operation's context.
+- **Back-pressure.** At most 32 requests are in flight per host. The server
+  refuses a 33rd with `ErrHostBusy`; the agent refuses beyond its own 32
+  (possible briefly while abandoned operations wind down) with a retryable
+  `busy` error that maps to the same status.
+- **Liveness.** The server pings every 15 s. Both ends treat three silent
+  intervals as a dead connection. Writes have a 10 s deadline, so a stalled peer
+  cannot hold the write lock.
+- **Disconnect.** When a session ends, every pending request fails with
+  `ErrDisconnected` and the host leaves the registry immediately. On the agent,
+  `Serve` cancels in-flight operations and waits for them before returning, so no
+  Podman child outlives its session.
+- **Reconnect.** `relay.RunAgent` redials with backoff from 1 s doubling to 30 s,
+  jittered to between half and all of the current step, and resets once a
+  session has lasted a minute. SIGTERM/SIGINT stop it cleanly.
+- **Oversize.** An oversized request fails on its own. An oversized response
+  becomes a `response_too_large` error. Neither closes the session.
+
+HTTP status mapping: host unavailable, busy, disconnected, or client gone →
+503; relay timeout → 504; an operation the agent ran and reported failed → the
+route's own status (409 for stack save, 404 for stack inspect/versions, 502
+otherwise); anything else → 502.
+
 ## Security
 
 The first admin password is supplied by `SORRY_PORTAINER_ADMIN_PASSWORD` and is
@@ -110,8 +152,10 @@ never written to disk or logs. Login uses constant-time comparison and creates a
 random opaque in-memory session cookie. Sessions expire and are invalidated on
 server restart until a durable session store is designed.
 
-Agent mTLS uses a configured CA and server/client certificates. The server maps
-the verified client certificate identity to a configured host ID. Certificate
+Agent mTLS uses a configured CA and server/client certificates. The server takes
+the host ID from the verified client certificate and requires the agent's hello
+to claim the same ID. Restricting that to configured host IDs is outstanding
+(see the allowlisting item above). Certificate
 enrollment, rotation, and revocation are later administrative features; no
 agent protocol is allowed to grant an administrative lease.
 
@@ -127,7 +171,13 @@ backpressure instead of collecting output in memory.
 
 Representative initial budget: a 1,000-container inventory should complete as a
 single bounded request without per-container durable synchronization or repeated
-whole-state serialization. Add a benchmark when the live relay lands.
+whole-state serialization, in under 50 ms of relay overhead.
+`BenchmarkContainersInventory1000` in `internal/relay` measures the full
+agent-encode → WebSocket → server-decode round trip over loopback at about
+3 ms and 1.9 MB allocated per call (Ryzen 9 9900X, 2026-09-24). This is
+dominated by JSON encoding of the roughly 250 KB payload.
+`BenchmarkConcurrentSmallRequests` sustains about 8 µs per request (roughly
+120,000 requests/s) with 16 concurrent callers on one session.
 
 ## Phasing
 

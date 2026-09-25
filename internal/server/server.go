@@ -1,13 +1,16 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/serialexp/sorry-portainer/internal/protocol"
+	"github.com/serialexp/sorry-portainer/internal/relay"
 )
 
 func jsonDecode(r *http.Request, v any) error {
@@ -15,20 +18,23 @@ func jsonDecode(r *http.Request, v any) error {
 	return d.Decode(v)
 }
 
+// Relay reaches host agents. Every call takes the HTTP request's context, so a
+// client that goes away stops waiting and the agent is asked to cancel.
 type Relay interface {
 	Hosts() []protocol.HostInfo
-	Containers(string) ([]protocol.Container, error)
-	Volumes(string) ([]protocol.Volume, error)
-	Images(string) ([]protocol.Image, error)
-	Start(string, string) error
-	Stop(string, string) error
-	Info(string) (protocol.HostInfo, error)
-	ListStacks(string) ([]protocol.Stack, error)
-	InspectStack(string, string) (protocol.Stack, error)
-	StackVersions(string, string) ([]protocol.StackVersion, error)
-	SaveStack(string, protocol.StackSave) (protocol.Stack, error)
-	StackOperation(string, string, string) (protocol.StackOperation, error)
+	Info(context.Context, string) (protocol.HostInfo, error)
+	Containers(context.Context, string) ([]protocol.Container, error)
+	Volumes(context.Context, string) ([]protocol.Volume, error)
+	Images(context.Context, string) ([]protocol.Image, error)
+	Start(context.Context, string, string) error
+	Stop(context.Context, string, string) error
+	ListStacks(context.Context, string) ([]protocol.Stack, error)
+	InspectStack(context.Context, string, string) (protocol.Stack, error)
+	StackVersions(context.Context, string, string) ([]protocol.StackVersion, error)
+	SaveStack(context.Context, string, protocol.StackSave) (protocol.Stack, error)
+	StackOperation(context.Context, string, string, string) (protocol.StackOperation, error)
 }
+
 type Server struct {
 	sessions *Sessions
 	relay    Relay
@@ -37,6 +43,7 @@ type Server struct {
 func New(password string, ttl time.Duration, relay Relay) *Server {
 	return &Server{sessions: NewSessions(password, ttl), relay: relay}
 }
+
 func (s *Server) Handler() http.Handler {
 	m := http.NewServeMux()
 	m.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
@@ -45,25 +52,48 @@ func (s *Server) Handler() http.Handler {
 	m.Handle("/api/hosts/", s.sessions.Require(http.HandlerFunc(s.hostOperation)))
 	return m
 }
+
 func (s *Server) hosts(w http.ResponseWriter, r *http.Request) { writeJSON(w, s.relay.Hosts()) }
+
+// relayStatus maps a relay failure to an HTTP status. Transport failures have
+// fixed statuses; an operation the agent ran and reported as failed gets the
+// route's own status (for example 409 for a stack save).
+func relayStatus(err error, operationFailed int) int {
+	var remote *relay.RemoteError
+	switch {
+	case errors.Is(err, relay.ErrHostUnavailable), errors.Is(err, relay.ErrHostBusy),
+		errors.Is(err, relay.ErrDisconnected), errors.Is(err, context.Canceled):
+		return http.StatusServiceUnavailable
+	case errors.Is(err, relay.ErrTimeout), errors.Is(err, context.DeadlineExceeded):
+		return http.StatusGatewayTimeout
+	case errors.As(err, &remote):
+		return operationFailed
+	default:
+		return http.StatusBadGateway
+	}
+}
+
+// respond writes value as JSON, or the error with the status relayStatus picks.
+func respond[T any](w http.ResponseWriter, value T, err error, operationFailed int) {
+	if err != nil {
+		http.Error(w, err.Error(), relayStatus(err, operationFailed))
+		return
+	}
+	writeJSON(w, value)
+}
+
 func (s *Server) hostOperation(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	path := strings.TrimPrefix(r.URL.Path, "/api/hosts/")
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	if len(parts) == 1 && r.Method == http.MethodGet {
-		if info, e := s.relay.Info(parts[0]); e == nil {
-			writeJSON(w, info)
-		} else {
-			http.Error(w, e.Error(), http.StatusBadGateway)
-		}
+		info, err := s.relay.Info(ctx, parts[0])
+		respond(w, info, err, http.StatusBadGateway)
 		return
 	}
 	if len(parts) == 2 && parts[1] == "stacks" && r.Method == http.MethodGet {
-		xs, e := s.relay.ListStacks(parts[0])
-		if e != nil {
-			http.Error(w, e.Error(), 502)
-			return
-		}
-		writeJSON(w, xs)
+		stacks, err := s.relay.ListStacks(ctx, parts[0])
+		respond(w, stacks, err, http.StatusBadGateway)
 		return
 	}
 	if len(parts) == 2 && parts[1] == "stacks" && r.Method == http.MethodPost {
@@ -72,43 +102,26 @@ func (s *Server) hostOperation(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid stack", http.StatusBadRequest)
 			return
 		}
-		stack, e := s.relay.SaveStack(parts[0], req)
-		if e != nil {
-			http.Error(w, e.Error(), http.StatusConflict)
-			return
-		}
-		writeJSON(w, stack)
+		stack, err := s.relay.SaveStack(ctx, parts[0], req)
+		respond(w, stack, err, http.StatusConflict)
 		return
 	}
 	if len(parts) == 3 && parts[1] == "stacks" && r.Method == http.MethodGet {
-		stack, e := s.relay.InspectStack(parts[0], parts[2])
-		if e != nil {
-			http.Error(w, e.Error(), http.StatusNotFound)
-			return
-		}
-		writeJSON(w, stack)
+		stack, err := s.relay.InspectStack(ctx, parts[0], parts[2])
+		respond(w, stack, err, http.StatusNotFound)
 		return
 	}
 	if len(parts) == 4 && parts[1] == "stacks" && parts[3] == "versions" && r.Method == http.MethodGet {
-		versions, e := s.relay.StackVersions(parts[0], parts[2])
-		if e != nil {
-			http.Error(w, e.Error(), http.StatusNotFound)
-			return
-		}
-		writeJSON(w, versions)
+		versions, err := s.relay.StackVersions(ctx, parts[0], parts[2])
+		respond(w, versions, err, http.StatusNotFound)
 		return
 	}
 	if len(parts) == 4 && parts[1] == "stacks" {
 		if r.Method == http.MethodPost && (parts[3] == "up" || parts[3] == "down" || parts[3] == "restart") {
-			op, e := s.relay.StackOperation(parts[0], parts[2], parts[3])
-			if e != nil {
-				http.Error(w, e.Error(), 502)
-				return
-			}
-			writeJSON(w, op)
+			operation, err := s.relay.StackOperation(ctx, parts[0], parts[2], parts[3])
+			respond(w, operation, err, http.StatusBadGateway)
 			return
 		}
-
 		http.NotFound(w, r)
 		return
 	}
@@ -117,64 +130,38 @@ func (s *Server) hostOperation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, operation := parts[0], parts[1]
-	if operation == "info" && r.Method == http.MethodGet {
-		info, e := s.relay.Info(id)
-		if e != nil {
-			http.Error(w, e.Error(), http.StatusBadGateway)
-			return
-		}
-		writeJSON(w, info)
-		return
-	}
-	if operation == "containers" && r.Method == http.MethodGet {
-		xs, e := s.relay.Containers(id)
-		if e != nil {
-			http.Error(w, e.Error(), http.StatusBadGateway)
-			return
-		}
-		writeJSON(w, xs)
-		return
-	}
-	if operation == "volumes" && r.Method == http.MethodGet {
-		xs, e := s.relay.Volumes(id)
-		if e != nil {
-			http.Error(w, e.Error(), http.StatusBadGateway)
-			return
-		}
-		writeJSON(w, xs)
-		return
-	}
-	if operation == "images" && r.Method == http.MethodGet {
-		xs, e := s.relay.Images(id)
-		if e != nil {
-			http.Error(w, e.Error(), http.StatusBadGateway)
-			return
-		}
-		writeJSON(w, xs)
-		return
-	}
-	if (operation == "start" || operation == "stop") && r.Method == http.MethodPost {
+	switch {
+	case operation == "info" && r.Method == http.MethodGet:
+		info, err := s.relay.Info(ctx, id)
+		respond(w, info, err, http.StatusBadGateway)
+	case operation == "containers" && r.Method == http.MethodGet:
+		containers, err := s.relay.Containers(ctx, id)
+		respond(w, containers, err, http.StatusBadGateway)
+	case operation == "volumes" && r.Method == http.MethodGet:
+		volumes, err := s.relay.Volumes(ctx, id)
+		respond(w, volumes, err, http.StatusBadGateway)
+	case operation == "images" && r.Method == http.MethodGet:
+		images, err := s.relay.Images(ctx, id)
+		respond(w, images, err, http.StatusBadGateway)
+	case (operation == "start" || operation == "stop") && r.Method == http.MethodPost:
 		var request protocol.StartRequest
 		if jsonDecode(r, &request) != nil || request.ContainerID == "" {
 			http.Error(w, "container_id is required", http.StatusBadRequest)
 			return
 		}
-		var e error
+		var err error
 		if operation == "start" {
-			e = s.relay.Start(id, request.ContainerID)
+			err = s.relay.Start(ctx, id, request.ContainerID)
 		} else {
-			e = s.relay.Stop(id, request.ContainerID)
+			err = s.relay.Stop(ctx, id, request.ContainerID)
 		}
-		if e != nil {
-			http.Error(w, e.Error(), http.StatusBadGateway)
-			return
-		}
-		writeJSON(w, protocol.StartResult{ContainerID: request.ContainerID, HostID: id, Started: true})
-		return
+		respond(w, protocol.StartResult{ContainerID: request.ContainerID, HostID: id, Started: true}, err, http.StatusBadGateway)
+	default:
+		http.NotFound(w, r)
 	}
-	http.NotFound(w, r)
 }
+
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(v)
+	_ = json.NewEncoder(w).Encode(v)
 }

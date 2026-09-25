@@ -1,6 +1,25 @@
-# Current task: Podman-only agent migration
+# Current task: relay hardening (done), next: stack-secret experiment
 
-## Status
+## Relay hardening (2026-09-24)
+
+Wheat change: "Harden agent relay: multiplexed sessions, heartbeat, cancellation, reconnect".
+
+- Protocol v3 (`internal/protocol`): `cancel` message type, relative `timeout_ms`, error codes (`operation_failed`, `unknown_operation`, `busy`, `response_too_large`), `MaxInFlight = 32`, `ErrMessageTooLarge`.
+- `internal/relay` split into `errors.go` (sentinels + `RemoteError`), `session.go` (server side: one reader per session, pending map by random ID, ping, cancel-on-give-up), `remote.go` (registry, `Serve(conn, certHostID)` blocks for the session, replacement), `agent.go` (concurrent dispatch, per-request contexts, cancel, pong/read deadline, waits for workers), `reconnect.go` (`RunAgent`, `DialAgent` with ctx and handshake timeout). Old `websocket.go`/`websocket_test.go` removed.
+- Fixed along the way: agent with no stack manager used to report empty success for stack ops; `ControlHandler` could keep a dead host registered until the request context ended; `DialAgent` mutated the global `websocket.DefaultDialer`; `Hosts()` order was random; `Memory.ListStacks` returned success for unknown hosts.
+- `server.Relay` takes `context.Context`; handlers pass `r.Context()` and map relay errors to 503/504 vs the route's own failure status.
+- Agent main runs `RunAgent` under `signal.NotifyContext`.
+- Tests: `internal/relay/relay_test.go` (19 tests + 2 benchmarks), `internal/server/stacks_test.go` status mapping table. `go test -race ./...` and `go vet ./...` pass; relay tests pass 5× under `-race`; `node --test tests/*.mjs` passes.
+- Docs: `docs/design/architecture.md` has a new "Relay" section, updated checklist and measured budget.
+
+Not done / next:
+- Certificate allowlisting (new outstanding checklist item).
+- The dev services must be restarted to pick up protocol v3 (server and all three agents together; v2 agents are refused).
+- Bart has not yet chosen the stack-secret approach (A: Podman native secrets, B: server-stored encrypted secrets pushed as podman secrets at deploy, C: SOPS/age files decrypted on the agent).
+
+## Earlier: Podman-only agent migration
+
+### Status
 
 - The Podman-only agent runtime, setup planner, bounded command adapter, and Compose executor are implemented.
 - Target agents run native packages on Ubuntu 24.04 and 26.04 as a dedicated rootless user, require Podman 4.7 or later, and use a pinned `podman-compose`.

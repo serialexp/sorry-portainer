@@ -41,7 +41,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	registry := relay.NewRemote()
+	registry := relay.NewRemote(relay.RemoteOptions{})
 	api := server.New(cfg.AdminPassword, cfg.SessionTTL, registry)
 	go func() {
 		log.Printf("sorry-portainer web API listening on %s", cfg.ListenAddr)

@@ -6,15 +6,45 @@ import (
 	"fmt"
 )
 
-const Version = 2
-const MaxMessageSize = 1 << 20
+const Version = 3
+
+// MaxMessageSize bounds one encoded relay message in either direction. Stack
+// operation output is capped at 1 MiB before JSON escaping, and inventories are
+// one message per request, so 4 MiB leaves room for escaping without admitting
+// unbounded payloads.
+const MaxMessageSize = 4 << 20
+
+// MaxInFlight bounds concurrent requests on one agent session. The server
+// refuses requests beyond it and the agent refuses to run more than it.
+const MaxInFlight = 32
+
+// Message types.
+const (
+	TypeHello    = "hello"
+	TypeRequest  = "request"
+	TypeResponse = "response"
+	// TypeCancel asks the agent to cancel the in-flight request with the same ID.
+	// Cancellation is best effort; the server has already stopped waiting.
+	TypeCancel = "cancel"
+)
+
+// Error codes carried in Error.Code.
+const (
+	CodeOperationFailed  = "operation_failed"
+	CodeUnknownOperation = "unknown_operation"
+	CodeBusy             = "busy"
+	CodeResponseTooLarge = "response_too_large"
+)
 
 type Message struct {
-	Version   int             `json:"version"`
-	ID        string          `json:"id"`
-	Type      string          `json:"type"`
-	Operation string          `json:"operation,omitempty"`
-	HostID    string          `json:"host_id,omitempty"`
+	Version   int    `json:"version"`
+	ID        string `json:"id"`
+	Type      string `json:"type"`
+	Operation string `json:"operation,omitempty"`
+	HostID    string `json:"host_id,omitempty"`
+	// TimeoutMS is the request's remaining time budget. It is relative, not an
+	// absolute deadline, so host clock skew cannot shorten or extend it.
+	TimeoutMS int64           `json:"timeout_ms,omitempty"`
 	Payload   json.RawMessage `json:"payload,omitempty"`
 	Error     *Error          `json:"error,omitempty"`
 }
@@ -23,6 +53,9 @@ type Error struct {
 	Message   string `json:"message"`
 	Retryable bool   `json:"retryable"`
 }
+
+// ErrMessageTooLarge reports an encoded message above MaxMessageSize.
+var ErrMessageTooLarge = errors.New("protocol message too large")
 
 func Encode(m Message) ([]byte, error) {
 	if m.Version == 0 {
@@ -33,13 +66,13 @@ func Encode(m Message) ([]byte, error) {
 		return nil, e
 	}
 	if len(b) > MaxMessageSize {
-		return nil, errors.New("protocol message too large")
+		return nil, ErrMessageTooLarge
 	}
 	return b, nil
 }
 func Decode(b []byte) (Message, error) {
 	if len(b) > MaxMessageSize {
-		return Message{}, errors.New("protocol message too large")
+		return Message{}, ErrMessageTooLarge
 	}
 	var m Message
 	if e := json.Unmarshal(b, &m); e != nil {
