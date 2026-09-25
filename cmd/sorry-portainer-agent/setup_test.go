@@ -40,6 +40,7 @@ func testSetupEnvironment(probe agentsetup.Probe) setupEnvironment {
 		installFiles: func(string, string) error {
 			return nil
 		},
+		configureHooks: func(context.Context, string, string) error { return nil },
 	}
 }
 
@@ -64,7 +65,7 @@ func TestSetupAutomaticallyRelaunchesWithSudo(t *testing.T) {
 	if err := runSetupWithEnvironment(context.Background(), nil, &out, environment); err != nil {
 		t.Fatal(err)
 	}
-	if executable == "" || strings.Join(arguments, " ") != "--user sorry-portainer" {
+	if executable == "" || strings.Join(arguments, " ") != "--user sorry-portainer --oci-hooks-dir /home/sorry-portainer/.local/share/sorry-portainer/oci-hooks" {
 		t.Fatalf("sudo relaunch = %q %#v", executable, arguments)
 	}
 	if got := out.String(); !strings.Contains(got, "Detected OS: Pop!_OS 24.04 (ubuntu mode)") || !strings.Contains(got, "automatically relaunching with sudo") {
@@ -85,8 +86,16 @@ func TestElevatedSetupReportsConciseProgressAndInstallsService(t *testing.T) {
 		installed = source != "" && user == "sorry-portainer"
 		return nil
 	}
+	hooks := ""
+	environment.configureHooks = func(_ context.Context, user, dir string) error {
+		if !installed {
+			t.Error("hooks configured before the agent binary was installed")
+		}
+		hooks = user + " " + dir
+		return nil
+	}
 	var out strings.Builder
-	if err := runSetupWithEnvironment(context.Background(), []string{"--elevated"}, &out, environment); err != nil {
+	if err := runSetupWithEnvironment(context.Background(), []string{"--elevated", "--oci-hooks-dir", "/srv/hooks"}, &out, environment); err != nil {
 		t.Fatal(err)
 	}
 	got := out.String()
@@ -95,6 +104,7 @@ func TestElevatedSetupReportsConciseProgressAndInstallsService(t *testing.T) {
 		"Updating apt",
 		"Installing podman and podman-compose",
 		"Installing system service for spa",
+		"Configuring Podman OCI hooks for stack secrets (/srv/hooks)",
 		"Done!",
 		"Happy using!",
 	} {
@@ -104,6 +114,34 @@ func TestElevatedSetupReportsConciseProgressAndInstallsService(t *testing.T) {
 	}
 	if strings.Contains(got, "apt-get") || !installed {
 		t.Fatalf("raw commands leaked or service not installed: output=%q installed=%v", got, installed)
+	}
+	if hooks != "sorry-portainer /srv/hooks" {
+		t.Fatalf("hooks configured as %q", hooks)
+	}
+}
+
+func TestSetupRejectsRelativeHooksDir(t *testing.T) {
+	var out strings.Builder
+	err := runSetupWithEnvironment(context.Background(), []string{"--oci-hooks-dir", "hooks"}, &out, testSetupEnvironment(&setupProbe{}))
+	if err == nil {
+		t.Fatal("accepted a relative hooks dir")
+	}
+}
+
+func TestSetupHooksConfPrint(t *testing.T) {
+	var out strings.Builder
+	if err := runSetupHooksConf([]string{"--print", "--oci-hooks-dir", "/srv/hooks"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	want, _ := agentsetup.HooksDropIn("/srv/hooks")
+	if out.String() != want {
+		t.Fatalf("printed %q", out.String())
+	}
+	if err := runSetupHooksConf([]string{"--print", "extra"}, &out); err == nil {
+		t.Fatal("accepted extra arguments")
+	}
+	if err := runSetupHooksConf([]string{"--print", "--oci-hooks-dir", "relative"}, &out); err == nil {
+		t.Fatal("accepted a relative hooks dir")
 	}
 }
 

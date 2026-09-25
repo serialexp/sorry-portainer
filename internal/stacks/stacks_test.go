@@ -116,7 +116,7 @@ func TestManagerSaveAndOperations(t *testing.T) {
 	if len(calls) != 3 {
 		t.Fatalf("calls = %d, want 3", len(calls))
 	}
-	base := []string{"-p", "agent-prefix-web_1", "-f", "compose.yaml"}
+	base := []string{"-p", "agent-prefix-web_1", "-f", runtimeComposeFile}
 	wants := [][]string{append(append([]string{}, base...), "up", "-d"), append(append([]string{}, base...), "down"), append(append([]string{}, base...), "restart")}
 	for i, call := range calls {
 		if !reflect.DeepEqual(call.args, wants[i]) {

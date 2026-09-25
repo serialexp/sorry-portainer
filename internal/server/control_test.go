@@ -23,6 +23,20 @@ func TestCertificateIdentityUsesHostURI(t *testing.T) {
 		t.Fatalf("identity=%q err=%v", got, err)
 	}
 }
+func TestCertificateIdentityRejectsLookalikeSchemeAndUnsafeIDs(t *testing.T) {
+	for _, raw := range []string{"sorry-hostile://local-b", "sorry-host://..", "sorry-host:../escape"} {
+		uri, err := url.Parse(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, err := certificateIdentity(&x509.Certificate{URIs: []*url.URL{uri}}); err == nil {
+			t.Fatalf("%s: accepted identity %q", raw, got)
+		}
+	}
+	if got, err := certificateIdentity(&x509.Certificate{DNSNames: []string{"host-../x"}}); err == nil {
+		t.Fatalf("accepted DNS identity %q", got)
+	}
+}
 func TestCertificateIdentityRejectsMissingIdentity(t *testing.T) {
 	if _, err := certificateIdentity(&x509.Certificate{}); err == nil {
 		t.Fatal("expected missing identity error")

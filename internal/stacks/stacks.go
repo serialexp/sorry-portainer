@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -16,10 +15,7 @@ import (
 	"time"
 
 	"github.com/serialexp/sorry-portainer/internal/protocol"
-	"gopkg.in/yaml.v3"
 )
-
-var namePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
 
 type Executor interface {
 	Run(context.Context, []string, string, map[string]string) (string, error)
@@ -134,12 +130,15 @@ type Manager struct {
 	executor Executor
 	mu       sync.Mutex
 	locks    map[string]*sync.Mutex
+	// secrets is nil when the agent runs without secret support; stacks that
+	// use secrets then refuse to start.
+	secrets *SecretSupport
 }
 
 func New(root, prefix string, e Executor) *Manager {
 	return &Manager{root: root, prefix: prefix, executor: e, locks: map[string]*sync.Mutex{}}
 }
-func ValidName(n string) bool { return namePattern.MatchString(n) }
+func ValidName(n string) bool { return protocol.ValidStackName(n) }
 func (m *Manager) lock(n string) *sync.Mutex {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -197,7 +196,12 @@ func (m *Manager) inspect(n string) (protocol.Stack, error) {
 	if e != nil {
 		return protocol.Stack{}, e
 	}
-	return protocol.Stack{Name: n, Project: m.project(n), ComposeYAML: string(b), Status: "saved", Version: version}, nil
+	stack := protocol.Stack{Name: n, Project: m.project(n), ComposeYAML: string(b), Status: "saved", Version: version}
+	// A stack saved before secret validation may not parse; it still inspects.
+	if doc, e := parseCompose(b); e == nil {
+		stack.Secrets = doc.plan.Names
+	}
+	return stack, nil
 }
 
 // Versions returns revision metadata only; Compose documents remain available only
@@ -270,9 +274,12 @@ func (m *Manager) Save(ctx context.Context, n, y string, env map[string]string, 
 	if expected != nil && len(env) != 0 {
 		return protocol.Stack{}, errors.New("stack environment updates are not supported")
 	}
-	var doc any
-	if e := yaml.Unmarshal([]byte(y), &doc); e != nil {
-		return protocol.Stack{}, fmt.Errorf("invalid compose YAML: %w", e)
+	doc, e := parseCompose([]byte(y))
+	if e != nil {
+		return protocol.Stack{}, e
+	}
+	if !doc.plan.empty() && m.secrets == nil {
+		return protocol.Stack{}, errSecretsUnsupported
 	}
 	l := m.lock(n)
 	l.Lock()
@@ -396,9 +403,13 @@ func (m *Manager) operate(ctx context.Context, n, op string) (protocol.StackOper
 	if _, e := m.inspect(n); e != nil {
 		return protocol.StackOperation{}, e
 	}
+	plan, e := m.prepareRuntime(n, op != "down")
+	if e != nil {
+		return protocol.StackOperation{Name: n, Operation: op, Output: e.Error()}, e
+	}
 	// podman-compose 1.0.6 accepts -p/-f, but not Docker Compose's
 	// --project-directory option. The executor sets its working directory.
-	args := []string{"-p", m.project(n), "-f", "compose.yaml"}
+	args := []string{"-p", m.project(n), "-f", runtimeComposeFile}
 	env := map[string]string{}
 	b, _ := os.ReadFile(filepath.Join(m.dir(n), "env.json"))
 	_ = json.Unmarshal(b, &env)
@@ -410,6 +421,11 @@ func (m *Manager) operate(ctx context.Context, n, op string) (protocol.StackOper
 	runCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	out, e := m.executor.Run(runCtx, args, m.dir(n), env)
+	if e == nil && op != "down" && !plan.empty() {
+		if e = m.checkInjected(runCtx, n, plan.Services); e != nil {
+			out += "\n" + e.Error()
+		}
+	}
 	return protocol.StackOperation{Name: n, Operation: op, Output: out, Success: e == nil}, e
 }
 func (m *Manager) Up(c context.Context, n string) (protocol.StackOperation, error) {

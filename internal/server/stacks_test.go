@@ -46,6 +46,10 @@ func (r *stackRelay) SaveStack(_ context.Context, _ string, save protocol.StackS
 func (r *stackRelay) StackOperation(context.Context, string, string, string) (protocol.StackOperation, error) {
 	return protocol.StackOperation{}, r.err
 }
+func (r *stackRelay) SyncSecrets(context.Context, string, protocol.SecretSync) (protocol.SecretSyncResult, error) {
+	return protocol.SecretSyncResult{}, r.err
+}
+func (r *stackRelay) RetainSecrets(context.Context, string, []string) error { return r.err }
 
 func authenticatedStackRequest(t *testing.T, s *Server, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
@@ -60,7 +64,7 @@ func authenticatedStackRequest(t *testing.T, s *Server, method, path, body strin
 func TestStackHTTPVersionContracts(t *testing.T) {
 	two := 2
 	relay := &stackRelay{stack: protocol.Stack{Name: "web", ComposeYAML: "services: {}", Version: 3}}
-	s := New("a sufficiently long password", time.Hour, relay)
+	s := New("a sufficiently long password", time.Hour, relay, nil)
 	w := authenticatedStackRequest(t, s, http.MethodPost, "/api/hosts/host/stacks", `{"name":"web","compose_yaml":"services: {}","expected_version":2}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("POST status = %d: %s", w.Code, w.Body.String())
@@ -83,7 +87,7 @@ func TestStackHTTPVersionContracts(t *testing.T) {
 }
 func TestStackHTTPConflict(t *testing.T) {
 	stacks := &stackRelay{err: &relay.RemoteError{Code: protocol.CodeOperationFailed, Message: "stack version mismatch"}}
-	s := New("a sufficiently long password", time.Hour, stacks)
+	s := New("a sufficiently long password", time.Hour, stacks, nil)
 	w := authenticatedStackRequest(t, s, http.MethodPost, "/api/hosts/host/stacks", `{"name":"web","compose_yaml":"services: {}","expected_version":1}`)
 	if w.Code != http.StatusConflict {
 		t.Fatalf("POST status = %d", w.Code)
@@ -114,7 +118,7 @@ func TestRelayFailureStatuses(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			s := New("a sufficiently long password", time.Hour, &stackRelay{err: c.err})
+			s := New("a sufficiently long password", time.Hour, &stackRelay{err: c.err}, nil)
 			w := authenticatedStackRequest(t, s, c.method, c.path, c.body)
 			if w.Code != c.want {
 				t.Fatalf("status = %d, want %d: %s", w.Code, c.want, w.Body.String())

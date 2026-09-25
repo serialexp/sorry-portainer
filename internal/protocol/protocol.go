@@ -4,9 +4,38 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 )
 
-const Version = 3
+var (
+	hostIDPattern     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
+	stackNamePattern  = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
+	secretNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
+)
+
+// ValidHostID reports whether id is a valid host identity. Host IDs appear in
+// certificate URIs, relay messages, and master-side directory names.
+func ValidHostID(id string) bool { return hostIDPattern.MatchString(id) }
+
+// ValidStackName reports whether n is a valid stack name. Stack names become
+// directory names and Compose project suffixes.
+func ValidStackName(n string) bool { return stackNamePattern.MatchString(n) }
+
+// ValidSecretName reports whether n is a valid stack secret name. Secret names
+// become file names on the master and in a container's /run/secrets.
+func ValidSecretName(n string) bool { return secretNamePattern.MatchString(n) }
+
+// Secret limits. A stack's whole secret set travels in one relay message, so
+// the total is kept well under MaxMessageSize after base64 expansion.
+const (
+	MaxSecretSize        = 64 << 10
+	MaxSecretsPerStack   = 64
+	MaxStackSecretsTotal = 1 << 20
+)
+
+// Version 4 added stack secrets (secrets.sync, secrets.retain, and the
+// secret fields of HostInfo).
+const Version = 4
 
 // MaxMessageSize bounds one encoded relay message in either direction. Stack
 // operation output is capped at 1 MiB before JSON escaping, and inventories are
@@ -89,6 +118,37 @@ type HostInfo struct {
 	Prefix        string `json:"prefix"`
 	Hostname      string `json:"hostname"`
 	EngineVersion string `json:"engine_version"`
+	// SwapActive warns that tmpfs pages and agent memory, which hold
+	// secrets, may be written to a swap device.
+	SwapActive bool `json:"swap_active"`
+	// SecretsReady is true when the agent's secret hook and socket are in
+	// place; SecretsProblem says why not.
+	SecretsReady   bool   `json:"secrets_ready"`
+	SecretsProblem string `json:"secrets_problem,omitempty"`
+}
+
+// SecretSync replaces one stack's secret set in the agent's memory. An empty
+// set forgets the stack. Values are never logged.
+type SecretSync struct {
+	Stack   string            `json:"stack"`
+	Secrets map[string][]byte `json:"secrets"`
+}
+
+// SecretSyncResult reports what a sync changed on the agent.
+type SecretSyncResult struct {
+	Stack   string   `json:"stack"`
+	Changed []string `json:"changed,omitempty"`
+	Removed []string `json:"removed,omitempty"`
+	// Restarted lists containers restarted to pick up changed values.
+	Restarted []string `json:"restarted,omitempty"`
+	// Problems lists restarts or checks that failed; the values were stored.
+	Problems []string `json:"problems,omitempty"`
+}
+
+// SecretRetain makes the agent forget every stack not listed. The master
+// sends it after pushing a host's full set.
+type SecretRetain struct {
+	Stacks []string `json:"stacks"`
 }
 type Container struct {
 	ID     string `json:"id"`
@@ -111,6 +171,8 @@ type Stack struct {
 	ComposeYAML string `json:"compose_yaml,omitempty"`
 	Status      string `json:"status"`
 	Version     int    `json:"version"`
+	// Secrets lists the stack secrets the Compose file uses (Inspect only).
+	Secrets []string `json:"secrets,omitempty"`
 }
 
 type StackVersion struct {
@@ -124,8 +186,10 @@ type StackOperation struct {
 	Success   bool   `json:"success"`
 }
 type StackSave struct {
-	Name            string            `json:"name"`
-	ComposeYAML     string            `json:"compose_yaml"`
+	Name        string `json:"name"`
+	ComposeYAML string `json:"compose_yaml"`
+	// Environment is NOT for secrets: it is stored in plain text on the
+	// agent host (env.json). Use stack secrets for passwords and keys.
 	Environment     map[string]string `json:"environment,omitempty"`
 	ExpectedVersion *int              `json:"expected_version,omitempty"`
 }

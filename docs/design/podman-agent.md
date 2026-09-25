@@ -1,6 +1,6 @@
 # Podman Agent — Design
 
-Status: partial — rootless development Compose smoke verified on Ubuntu-compatible 24.04; secret experiment done; dedicated-user deployment and secret implementation outstanding
+Status: partial — rootless development Compose smoke verified on Ubuntu-compatible 24.04; stack secrets implemented; dedicated-user deployment and agent-restart container survival outstanding
 Owner: Bart
 Last updated: 2026-09-24
 
@@ -19,11 +19,14 @@ items as they land and move them to Done.
 - [x] **Phase 1 — development Compose smoke.** On Pop!_OS 24.04 under Bart's rootless user, Podman 4.9.3 and podman-compose 1.0.6 ran a disposable OCI sleeper service and `down` removed it. The automated rootless integration test exercises the same stack manager path.
 - [x] **Open question — secret workflow experiment.** Run 2026-09-24. Podman native secrets always put values on disk. An OCI `createRuntime` hook that writes into a per-container tmpfs does not, and survives restarts when `hooks_dir` is in `containers.conf`. The design and remaining decisions are in `docs/design/stack-secrets.md`.
 
+- [x] **Stack secrets — setup integration.** `setup` runs `setup-hooks-conf` as the agent user, writing `~/.config/containers/containers.conf.d/50-sorry-portainer.conf` with `hooks_dir`; the agent writes its hook JSON (default `~/.local/share/sorry-portainer/oci-hooks`, config `oci_hooks_dir`) and opens its secret socket at startup, and exits if either fails. Development agents get the drop-in through `CONTAINERS_CONF_OVERRIDE`. Details in `docs/design/stack-secrets.md`.
+
 ### Outstanding
 
 - [ ] **Phase 1 — deployment verification.** Test lifecycle under the dedicated service user and on Ubuntu 26.04; the development services currently run as Bart, not the newly provisioned service user.
-- [ ] **Phase 1 — authenticated development API stack smoke.** Exercise save/up/down through the running development agents and master; the local test account/password is not available to the agent in this session.
-- [ ] **Stack secrets — setup integration.** The setup planner must write the agent user's `containers.conf` `hooks_dir` and the secret hook JSON (see `docs/design/stack-secrets.md`). Secret handling itself is still unimplemented.
+- [ ] **Phase 1 — authenticated development API stack smoke.** Save and up (with stack secrets) were exercised through the running development agents, master and UI on 2026-09-24; `down` through the API is still untested.
+- [ ] **Agent stop kills stack containers.** Podman keeps `conmon` in the calling systemd unit's cgroup when `INVOCATION_ID` is set, so stopping or restarting the agent service kills every container the agent started (seen on the development agents 2026-09-24). Needs a decision; options are in `docs/design/stack-secrets.md`.
+- [ ] **`down` leaves the project network.** podman-compose 1.0.6 does not remove `<project>_default`; stacks leak one network per `down`.
 
 ## Why this exists
 
@@ -104,6 +107,12 @@ values and the agent keeps them only in memory. See
 `containers.conf` must set `hooks_dir`, because a `--hooks-dir` flag is not
 passed on to Podman's restart-policy process.
 
+Follow-up (2026-09-24, later): implemented. Setup writes the `hooks_dir`
+drop-in as the agent user (never as root), and the agent writes its hook JSON
+and opens its secret socket in `$XDG_RUNTIME_DIR` at every start. The live
+rootless test confirmed the hook also runs on restarts by Podman's restart
+policy. `env.json` stays for non-secret settings only.
+
 ## Failure and performance behavior
 
 Runtime detection and version validation occur once at agent startup and are
@@ -126,7 +135,8 @@ experiment resolves the open question.
 - Which `podman-compose` version and compatibility test matrix should be pinned
   for Ubuntu 24.04 and 26.04?
 - What secret workflow does the pending experiment validate, including rotation
-  and backup behavior?
+  and backup behavior? (Answered 2026-09-24 in `docs/design/stack-secrets.md`;
+  backups of the master's sealed store are still undecided.)
 - Which agent-health fields expose Podman and `podman-compose` versions without
   disclosing sensitive host configuration?
 

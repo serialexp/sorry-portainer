@@ -1,4 +1,17 @@
-# Current task: stack secrets — experiment done, waiting on Bart's decisions
+# Current task: stack secrets — implemented; two decisions open
+
+## Stack-secret implementation (2026-09-24)
+
+Wheat change: "Stack secrets: validation groundwork and master secret store" (`01a0d1bf…`). Checklist, deviations and open decisions: `docs/design/stack-secrets.md`.
+
+- Master: `internal/secretstore` (Argon2id + AES-GCM, sealed file per value in `<state_dir>/secrets`), `internal/server/secrets.go` (routes, pusher, delivery status). Server starts locked; unlock in the UI.
+- Relay: protocol v4 `secrets.sync` / `secrets.retain`; master pushes on change, unlock and agent connect.
+- Agent: `internal/secrets` (vault, socket, `oci-hook`, verify, hook JSON), `internal/stacks/compose.go` + `secrets.go` (rewrite to `runtime-compose.yaml`, post-up check, rotation restarts), `cmd/sorry-portainer-agent` (`oci-hook`, `setup-hooks-conf [--print]`), `internal/agentsetup/hooks.go` (containers.conf.d drop-in).
+- UI: `src/secrets-api.ts`, `src/secrets-store.ts` (Solid store), `src/secrets-ui.tsx`; wired into `index.tsx` and `stacks-ui.tsx`.
+- Dev: `just install-dev-services` writes `.dev/state/containers-hooks.conf`; agent units set `CONTAINERS_CONF_OVERRIDE` to it. The dev secret store was initialized with a throwaway passphrase (told to Bart, not recorded here); delete `.dev/state/secrets` to reset it. Demo stack `secret-demo` on local-a is running.
+- Tests: `GOFLAGS=-buildvcs=false go test -race ./...`; `node --test tests/*.mjs`; live: `SORRY_PORTAINER_TEST_PODMAN=1 GOFLAGS=-buildvcs=false go test -run TestRealPodman ./internal/stacks/` (passed 3× in a row).
+- Found by the live test and fixed: `--annotation` values are CSV-parsed, so the mount list is `source:target:uid:gid:mode;…`.
+- Open (need Bart): agent stop kills containers (`INVOCATION_ID`/conmon cgroup); agent restart restarts all secret containers. Both with options in the design doc and TODO.md.
 
 ## Stack-secret experiment (2026-09-24)
 

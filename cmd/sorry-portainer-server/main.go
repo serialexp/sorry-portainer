@@ -6,9 +6,12 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 
 	"github.com/serialexp/sorry-portainer/internal/config"
+	"github.com/serialexp/sorry-portainer/internal/protocol"
 	"github.com/serialexp/sorry-portainer/internal/relay"
+	"github.com/serialexp/sorry-portainer/internal/secretstore"
 	"github.com/serialexp/sorry-portainer/internal/server"
 )
 
@@ -41,8 +44,15 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	registry := relay.NewRemote(relay.RemoteOptions{})
-	api := server.New(cfg.AdminPassword, cfg.SessionTTL, registry)
+	store, err := secretstore.Open(filepath.Join(cfg.StateDir, "secrets"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("secret store is %s; unlock it in the web UI to deliver stack secrets", store.State())
+	// api is assigned before any listener starts, so OnConnect never sees nil.
+	var api *server.Server
+	registry := relay.NewRemote(relay.RemoteOptions{OnConnect: func(info protocol.HostInfo) { api.HostConnected(info) }})
+	api = server.New(cfg.AdminPassword, cfg.SessionTTL, registry, store)
 	go func() {
 		log.Printf("sorry-portainer web API listening on %s", cfg.ListenAddr)
 		if err := http.ListenAndServe(cfg.ListenAddr, api.Handler()); err != nil {

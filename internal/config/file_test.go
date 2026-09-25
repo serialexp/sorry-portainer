@@ -8,6 +8,7 @@ import (
 
 func TestLoadAgentFileRequiresPrivatePermissions(t *testing.T) {
 	d := t.TempDir()
+	t.Setenv("HOME", "/home/agent")
 	p := filepath.Join(d, "agent.json")
 	if err := os.WriteFile(p, []byte(`{"server_url":"wss://x","host_id":"a","host_prefix":"a-","agent_cert":"c","agent_key":"k","agent_ca":"ca"}`), 0600); err != nil {
 		t.Fatal(err)
@@ -16,7 +17,7 @@ func TestLoadAgentFileRequiresPrivatePermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.StateDir != d || cfg.ComposeProvider != "/usr/bin/podman-compose" {
+	if cfg.StateDir != d || cfg.ComposeProvider != "/usr/bin/podman-compose" || cfg.OCIHooksDir != "/home/agent/.local/share/sorry-portainer/oci-hooks" || cfg.SecretSocket != "" {
 		t.Fatalf("unexpected defaults: %+v", cfg)
 	}
 	if err := os.Chmod(p, 0644); err != nil {
@@ -49,7 +50,7 @@ func TestLoadServerFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.SessionTTL.Hours() != 1 || c.ListenAddr != ":9443" {
+	if s.SessionTTL.Hours() != 1 || c.ListenAddr != ":9443" || s.StateDir != d {
 		t.Fatalf("server=%+v control=%+v", s, c)
 	}
 }

@@ -1,6 +1,6 @@
 # sorry-portainer Architecture — Design
 
-Status: partial — Podman agent/runtime and relay hardening landed; certificate allowlisting and secrets outstanding
+Status: partial — Podman agent/runtime, relay hardening and stack secrets landed; certificate allowlisting outstanding
 Owner: Bart
 Last updated: 2026-09-24
 
@@ -13,6 +13,7 @@ Last updated: 2026-09-24
 - [x] **Phase 0 — HTTP session boundary.** Health, password login, expiring HttpOnly session cookies, authenticated host/container route shape, and bounded request decoding exist.
 - [x] **Phase 0 — local verification.** Protocol tests and `go test ./...` pass.
 - [x] **Phase 0 — fake local cluster.** Integration tests model three logical hosts sharing one daemon and verify host-prefix start routing with fakes.
+- [x] **Phase 2 — stack-secret workflow.** Implemented 2026-09-24: an encrypted, passphrase-unlocked store on the master; protocol v4 `secrets.sync`/`secrets.retain` pushes into agent memory; an OCI `createRuntime` hook writes values into each container's `/run/secrets` tmpfs. Remaining work and two open decisions are in `docs/design/stack-secrets.md`.
 
 ### Outstanding
 
@@ -28,7 +29,6 @@ Last updated: 2026-09-24
 - [x] **Phase 1 — rootless Ubuntu setup.** Add an explicit plan/apply path for Ubuntu-compatible 24.04 and 26.04 native packages under a dedicated rootless user; live cross-release acceptance remains outstanding.
 - [x] **Phase 2 — Podman Compose stacks.** Invoke `podman compose` with an explicitly configured distro `podman-compose` provider while preserving bounded host-scoped stack lifecycle operations. Git sources, templates, UI stack editor, and live provider acceptance remain outstanding.
 - [ ] **Phase 2 — Podman operations.** Add logs, exec, images, volumes, networks, and harden `podman-compose` stack status/output with streaming and bounded resource use.
-- [ ] **Phase 2 — stack-secret workflow.** Experiment done (2026-09-24): secrets live on the master and in agent memory, and an OCI hook injects them into a per-container tmpfs. Implementation waits on the open decisions in `docs/design/stack-secrets.md`.
 - [x] **Phase 2 — frontend shell.** Add a SolidJS/Vite dashboard with centralized local state, login shell, host selection, container inventory, and host-routed start controls; it falls back to demo data while the API is offline.
 - [x] **Phase 2 — local development services.** Add a Wheat-ignored `.dev` state area, user-level systemd unit generation, and `just` recipes for server, three local agents, and UI on ports 6200/6201/6243.
 - [x] **Legacy — Docker agent filtering.** The superseded Docker agents filter inventory/start operations to their configured host prefix; local-a/b/c integration tests and live dev-agent checks cover that historical boundary.
@@ -55,6 +55,10 @@ Agents are Podman-only. They run as a dedicated rootless user on Ubuntu 24.04 or
 26.04 using native packages, require Podman 4.7 or newer, and use a pinned
 `podman-compose` for stacks. Stack-secret support remains unimplemented pending
 the approved experiment; it is not a deployment fallback or an implied feature.
+
+Follow-up (2026-09-24): stack secrets are implemented as designed in
+`docs/design/stack-secrets.md`. Values live encrypted on the master and in
+plain form only in agent memory and container tmpfs.
 
 ## Goals
 
@@ -98,6 +102,12 @@ The first route contract is:
 | GET | `/api/hosts` | session | list known host status |
 | GET | `/api/hosts/{hostID}/containers` | session | list all containers through that host's agent |
 
+Stack secrets added (2026-09-24), all behind the session:
+`GET /api/secrets/status`, `POST /api/secrets/{initialize,unlock,lock}`, and
+`GET /api/hosts/{hostID}/stacks/{stack}/secrets` (names, sizes, delivery
+state; works while locked) with `PUT`/`DELETE …/secrets/{name}` (write-only
+values; need the store unlocked, else 423).
+
 The relay envelope includes a protocol version, random request ID, message type,
 operation, host identity where relevant, bounded JSON payload, and structured
 error. The server selects the host from authenticated configuration/connection
@@ -106,8 +116,10 @@ authority.
 
 ## Relay
 
-One WebSocket per agent carries protocol v3 messages (`hello`, `request`,
-`response`, `cancel`), each at most 4 MiB encoded.
+One WebSocket per agent carries protocol v4 messages (`hello`, `request`,
+`response`, `cancel`), each at most 4 MiB encoded. (v4 added the stack-secret
+operations `secrets.sync` and `secrets.retain`, and the `hello` fields
+`swap_active`, `secrets_ready` and `secrets_problem`.)
 
 - **Identity.** The control handler hands the hijacked connection and the
   certificate's host ID to `relay.Remote.Serve`, which blocks for the life of the
@@ -198,6 +210,7 @@ the single-admin, multi-host flow is stable.
 - Which `podman-compose` version should be pinned after compatibility testing on
   Ubuntu 24.04 and 26.04?
 - What does the pending stack-secret experiment establish for storage, injection,
-  rotation, access control, and backups?
+  rotation, access control, and backups? (Answered 2026-09-24 in
+  `docs/design/stack-secrets.md`, except backups of the master's sealed store.)
 - What durable store should hold host records, certificate fingerprints, and
   session state?

@@ -22,6 +22,9 @@ type Agent struct {
 	// Heartbeat is the server's ping interval; zero selects DefaultHeartbeat.
 	// The agent treats heartbeatMisses silent intervals as a dead connection.
 	Heartbeat time.Duration
+	// Describe, when set, adds agent-side facts (swap, secret readiness) to
+	// the host info sent in each hello.
+	Describe func(*protocol.HostInfo)
 }
 
 var errStacksUnavailable = errors.New("stack agent unavailable")
@@ -57,6 +60,9 @@ func (a *Agent) Serve(ctx context.Context, conn *websocket.Conn) error {
 		return fmt.Errorf("read host info: %w", err)
 	}
 	info.HostID, info.Prefix = a.HostID, a.Prefix
+	if a.Describe != nil {
+		a.Describe(&info)
+	}
 	payload, err := json.Marshal(info)
 	if err != nil {
 		return err
@@ -235,6 +241,22 @@ func (a *Agent) handle(ctx context.Context, operation string, payload json.RawMe
 			return nil, err
 		}
 		return protocol.StartResult{ContainerID: request.ContainerID, HostID: a.HostID, Started: true}, nil
+	case opSecretsSync, opSecretsRetain:
+		if a.Stacks == nil {
+			return nil, errStacksUnavailable
+		}
+		if operation == opSecretsSync {
+			request, err := decodePayload[protocol.SecretSync](payload)
+			if err != nil {
+				return nil, err
+			}
+			return a.Stacks.SyncSecrets(ctx, request)
+		}
+		request, err := decodePayload[protocol.SecretRetain](payload)
+		if err != nil {
+			return nil, err
+		}
+		return a.Stacks.RetainSecrets(request)
 	}
 	if !strings.HasPrefix(operation, "stacks.") {
 		return nil, unknownOperationError{operation}

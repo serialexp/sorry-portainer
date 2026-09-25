@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	osuser "os/user"
 	"path/filepath"
 	"strings"
 
@@ -24,6 +25,9 @@ type setupEnvironment struct {
 	runSudo       func(context.Context, string, []string, io.Writer) error
 	probe         agentsetup.Probe
 	installFiles  func(string, string) error
+	// configureHooks writes the agent user's containers.conf hooks drop-in,
+	// running as that user.
+	configureHooks func(ctx context.Context, user, hooksDir string) error
 }
 
 func defaultSetupEnvironment() setupEnvironment {
@@ -39,8 +43,56 @@ func defaultSetupEnvironment() setupEnvironment {
 			command.Stderr = os.Stderr
 			return command.Run()
 		},
-		installFiles: installAgentService,
+		installFiles:   installAgentService,
+		configureHooks: configureHooksAsUser,
 	}
+}
+
+// configureHooksAsUser runs the installed agent as the service user to write
+// its containers.conf drop-in. Doing the write as the user means files the
+// user controls cannot redirect a root write elsewhere.
+func configureHooksAsUser(ctx context.Context, user, hooksDir string) error {
+	command := exec.CommandContext(ctx, "runuser", "-u", user, "--", systemAgentBinary, "setup-hooks-conf", "--oci-hooks-dir", hooksDir)
+	command.Dir = "/"
+	if output, err := command.CombinedOutput(); err != nil {
+		return fmt.Errorf("configure Podman OCI hooks for %s: %w: %s", user, err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+// runSetupHooksConf is the unprivileged half of setup: it writes the drop-in
+// into the current user's home.
+func runSetupHooksConf(args []string, stdout io.Writer) error {
+	flags := flag.NewFlagSet("setup-hooks-conf", flag.ContinueOnError)
+	hooksDir := flags.String("oci-hooks-dir", "", "directory the agent writes its OCI hook JSON to")
+	printOnly := flags.Bool("print", false, "print the drop-in instead of installing it (for CONTAINERS_CONF_OVERRIDE in development)")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() > 0 {
+		return fmt.Errorf("unexpected arguments: %v", flags.Args())
+	}
+	current, err := osuser.Current()
+	if err != nil {
+		return err
+	}
+	if *hooksDir == "" {
+		*hooksDir = agentsetup.DefaultOCIHooksDir(current.HomeDir)
+	}
+	if *printOnly {
+		content, err := agentsetup.HooksDropIn(*hooksDir)
+		if err != nil {
+			return err
+		}
+		_, err = io.WriteString(stdout, content)
+		return err
+	}
+	path, err := agentsetup.WriteHooksDropIn(current.HomeDir, *hooksDir)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "wrote %s\n", path)
+	return nil
 }
 
 // runSetup performs setup by default. The private --elevated flag marks the
@@ -55,7 +107,14 @@ func runSetupWithEnvironment(ctx context.Context, args []string, stdout io.Write
 	user := flags.String("user", agentsetup.DefaultUser, "dedicated rootless service user")
 	dryRun := flags.Bool("dry-run", false, "show the required setup steps without applying them")
 	elevated := flags.Bool("elevated", false, "internal: setup is running with elevated privileges")
+	hooksDir := flags.String("oci-hooks-dir", "", "OCI hook directory for stack secrets (default /home/USER/.local/share/sorry-portainer/oci-hooks; must match the agent's oci_hooks_dir)")
 	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if *hooksDir == "" {
+		*hooksDir = agentsetup.DefaultOCIHooksDir(filepath.Join("/home", *user))
+	}
+	if _, err := agentsetup.HooksDropIn(*hooksDir); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 {
@@ -81,7 +140,7 @@ func runSetupWithEnvironment(ctx context.Context, args []string, stdout io.Write
 			return fmt.Errorf("locate current executable: %w", err)
 		}
 		fmt.Fprintln(stdout, "Setup requires sudo; automatically relaunching with sudo.")
-		forwarded := []string{"--user", *user}
+		forwarded := []string{"--user", *user, "--oci-hooks-dir", *hooksDir}
 		return environment.runSudo(ctx, executable, forwarded, stdout)
 	}
 
@@ -106,6 +165,7 @@ func runSetupWithEnvironment(ctx context.Context, args []string, stdout io.Write
 			}
 		}
 		fmt.Fprintln(stdout, "Installing system service for spa")
+		fmt.Fprintf(stdout, "Configuring Podman OCI hooks for stack secrets (%s)\n", *hooksDir)
 		return nil
 	}
 
@@ -125,6 +185,10 @@ func runSetupWithEnvironment(ctx context.Context, args []string, stdout io.Write
 	}
 	fmt.Fprintln(stdout, "Installing system service for spa")
 	if err := environment.installFiles(executable, *user); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "Configuring Podman OCI hooks for stack secrets (%s)\n", *hooksDir)
+	if err := environment.configureHooks(ctx, *user, *hooksDir); err != nil {
 		return err
 	}
 	fmt.Fprintln(stdout, "Done!")

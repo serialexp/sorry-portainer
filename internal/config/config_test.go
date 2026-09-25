@@ -32,11 +32,16 @@ func TestAgentFromEnvRequiresStateDir(t *testing.T) {
 func TestServerFromEnvDefaults(t *testing.T) {
 	t.Setenv("SORRY_PORTAINER_ADMIN_PASSWORD", "a sufficiently long password")
 	t.Setenv("SORRY_PORTAINER_LISTEN", "")
+	t.Setenv("SORRY_PORTAINER_STATE_DIR", "")
+	if _, err := ServerFromEnv(); err == nil {
+		t.Fatal("expected missing state directory to fail")
+	}
+	t.Setenv("SORRY_PORTAINER_STATE_DIR", "/var/lib/sorry-portainer")
 	cfg, err := ServerFromEnv()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.ListenAddr != ":8080" {
-		t.Fatalf("listen address = %q", cfg.ListenAddr)
+	if cfg.ListenAddr != ":8080" || cfg.StateDir != "/var/lib/sorry-portainer" {
+		t.Fatalf("config = %+v", cfg)
 	}
 }

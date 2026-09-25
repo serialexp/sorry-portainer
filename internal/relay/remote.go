@@ -20,9 +20,17 @@ const (
 	helloTimeout          = 10 * time.Second
 )
 
+// Secret operations. Their payloads carry secret values, which must never be
+// logged on either side.
+const (
+	opSecretsSync   = "secrets.sync"
+	opSecretsRetain = "secrets.retain"
+)
+
 // Remote is the server's registry of connected agents.
 type Remote struct {
 	heartbeat time.Duration
+	onConnect func(protocol.HostInfo)
 
 	mu       sync.RWMutex
 	sessions map[string]*session
@@ -31,13 +39,16 @@ type Remote struct {
 // RemoteOptions configures a Remote. Zero values select the defaults.
 type RemoteOptions struct {
 	Heartbeat time.Duration
+	// OnConnect runs in its own goroutine once an agent's session is ready to
+	// take requests. The master uses it to push the host's secrets.
+	OnConnect func(protocol.HostInfo)
 }
 
 func NewRemote(options RemoteOptions) *Remote {
 	if options.Heartbeat <= 0 {
 		options.Heartbeat = DefaultHeartbeat
 	}
-	return &Remote{heartbeat: options.Heartbeat, sessions: map[string]*session{}}
+	return &Remote{heartbeat: options.Heartbeat, onConnect: options.OnConnect, sessions: map[string]*session{}}
 }
 
 // Serve runs one agent connection whose authenticated identity is hostID, until
@@ -60,6 +71,10 @@ func (r *Remote) Serve(conn *websocket.Conn, hostID string) error {
 	r.mu.Unlock()
 	if previous != nil {
 		previous.close(errors.New("replaced by a new session for the same host"))
+	}
+	if r.onConnect != nil {
+		// Requests queue on the session until run starts reading replies.
+		go r.onConnect(info)
 	}
 
 	err = current.run()
@@ -197,6 +212,19 @@ func (r *Remote) SaveStack(ctx context.Context, hostID string, save protocol.Sta
 	var out protocol.Stack
 	err := r.call(ctx, hostID, "stacks.save", save, &out, DefaultRequestTimeout)
 	return out, err
+}
+
+// SyncSecrets replaces one stack's secrets in the agent's memory. The agent
+// may restart containers, so it gets the stack operation timeout.
+func (r *Remote) SyncSecrets(ctx context.Context, hostID string, sync protocol.SecretSync) (protocol.SecretSyncResult, error) {
+	var out protocol.SecretSyncResult
+	err := r.call(ctx, hostID, opSecretsSync, sync, &out, StackOperationTimeout)
+	return out, err
+}
+
+// RetainSecrets makes the agent forget the secrets of stacks not listed.
+func (r *Remote) RetainSecrets(ctx context.Context, hostID string, stacks []string) error {
+	return r.call(ctx, hostID, opSecretsRetain, protocol.SecretRetain{Stacks: stacks}, nil, DefaultRequestTimeout)
 }
 
 func (r *Remote) StackOperation(ctx context.Context, hostID, name, operation string) (protocol.StackOperation, error) {

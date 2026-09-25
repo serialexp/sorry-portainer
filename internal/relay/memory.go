@@ -151,3 +151,11 @@ func (m *Memory) SaveStack(context.Context, string, protocol.StackSave) (protoco
 func (m *Memory) StackOperation(context.Context, string, string, string) (protocol.StackOperation, error) {
 	return protocol.StackOperation{}, errStacksUnsupported
 }
+
+func (m *Memory) SyncSecrets(context.Context, string, protocol.SecretSync) (protocol.SecretSyncResult, error) {
+	return protocol.SecretSyncResult{}, errStacksUnsupported
+}
+
+func (m *Memory) RetainSecrets(context.Context, string, []string) error {
+	return errStacksUnsupported
+}

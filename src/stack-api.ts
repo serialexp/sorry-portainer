@@ -1,4 +1,12 @@
-export type Stack = { name: string; project: string; status: string; version: number; compose_yaml?: string };
+export type Stack = {
+  name: string;
+  project: string;
+  status: string;
+  version: number;
+  compose_yaml?: string;
+  /** Stack secrets the Compose file uses (single-stack reads only). */
+  secrets?: string[];
+};
 export type StackOperation = { name: string; operation: string; success: boolean; output?: string };
 
 export const stackNamePattern = /^[a-z0-9][a-z0-9_-]{0,62}$/;

@@ -1,6 +1,6 @@
 # Stack Secrets — Design
 
-Status: draft, not yet implemented — experiment done; all design decisions made; implementation not started
+Status: partial — phase 1 and rotation implemented and tested end to end on rootless Podman 4.9.3/runc; agent-restart behaviour, crun and Ubuntu 26.04 outstanding (two open decisions below)
 Owner: Bart
 Last updated: 2026-09-24
 
@@ -22,20 +22,28 @@ items as they land and move them to Done.
 - [x] **Decision — scope.** Bart (2026-09-24): secrets belong to one stack (open question 5, per stack).
 - [x] **Decision — existing `env.json`.** Bart (2026-09-24): keep the plaintext stack environment for ordinary settings, clearly labelled in the UI and API as not for secrets (open question 6).
 - [x] **Decision — rotation.** Bart (2026-09-24): the agent restarts affected containers automatically when a new value arrives (open question 7).
+- [x] **Phase 1 — master secret store.** `internal/secretstore`: Argon2id (t=3, 64 MiB, p=4) key from the passphrase, AES-256-GCM per value with host/stack/name bound as associated data, one sealed file per secret under `<state_dir>/secrets`. Unlock, lock and initialize over `/api/secrets/*`; values are write-only (`PUT`/`DELETE /api/hosts/{h}/stacks/{s}/secrets/{name}`, `GET` lists names, sizes and times even while locked). Limits: 64 KiB per value, 64 secrets and 1 MiB per stack. The passphrase is entered in the web UI after start rather than on the server's terminal (see [Implementation notes](#implementation-notes-2026-09-24)).
+- [x] **Phase 1 — swap warning.** The agent reports `swap_active` from `/proc/swaps` in its hello; the host list and host page show a warning. Whether swap is encrypted is not detected.
+- [x] **Phase 1 — relay delivery.** Protocol version 4: `secrets.sync` (one stack's full set; the agent answers with changed/removed/restarted names and problems) and `secrets.retain` (forget stacks not listed, sent only after a fully successful push). The master pushes on value change, on unlock and on every agent connect. Values are never logged; the agent's vault is memory only and survives relay reconnects. Zeroing is best effort (JSON decoding makes copies Go cannot wipe).
+- [x] **Phase 1 — agent hook.** `sorry-portainer-agent oci-hook --host-id H --socket S`, stage `createRuntime`, 15 s timeout, matched on annotation `io.sorry-portainer.agent=^H$`. The socket is `$XDG_RUNTIME_DIR/sorry-portainer/<host>.sock` (directory 0700, socket 0600, peer uid checked with `SO_PEERCRED`). The hook refuses unless `<rootfs>/run/secrets` is a tmpfs that is its own mount, creates files with `O_EXCL|O_NOFOLLOW` under `openat2` no-symlink resolution, and maps owner IDs through the container's user namespace. Any failure exits non-zero and runc refuses to start the container.
+- [x] **Phase 1 — setup integration.** `setup` runs `setup-hooks-conf` as the agent user, which writes the drop-in `~/.config/containers/containers.conf.d/50-sorry-portainer.conf` (`hooks_dir` = Podman's defaults plus the agent's hooks directory). The agent writes its own hook JSON at startup. Development agents get the same drop-in content through `CONTAINERS_CONF_OVERRIDE` (`just install-dev-services`), so a developer's `~/.config/containers` is never touched.
+- [x] **Phase 1 — compose rewrite.** `internal/stacks/compose.go`: standard compose `secrets:` (top-level entries empty or `external: true`; `file:`/`environment:` rejected; long syntax with `target`, `uid`, `gid`, `mode`). Services get the three `io.sorry-portainer.*` annotations and a `/run/secrets` tmpfs; the result goes to `runtime-compose.yaml` and the Podman-native `secrets:` never reaches `podman-compose`. Stacks may not use the `io.sorry-portainer.` prefix anywhere; merge keys and aliases that would bring in secrets, annotations, tmpfs or volumes are rejected. After `up` the agent checks every container really has its files and stops any that don't.
+- [x] **Phase 1 — label `env.json` as non-secret.** The stack editor's secrets panel says the Compose file, `environment:` entries and `env.json` are plain text on the host; `protocol.StackSave.Environment` says so in the API.
+- [x] **Phase 1 — UI.** Store banner (create, unlock, lock), per-stack secrets panel on the edit page (names, sizes, set/replace/delete, delivery state, Compose-referenced names that have no value yet), swap warnings. State lives in a Solid store (`src/secrets-store.ts`).
+- [x] **Phase 2 — rotation.** A new value is pushed at once; the agent restarts running containers of the services that use a changed secret and checks the new files are in place. Removing a secret does not restart anything.
+- [x] **Tests.** Unit tests for the store (including no plaintext on disk and tampering), vault, socket, hook (end to end in a user namespace), compose rewrite, stack flow, relay and server routes; a live rootless Podman test (`SORRY_PORTAINER_TEST_PODMAN=1 go test ./internal/stacks -run TestRealPodmanStackSecrets`) that covers up, owner/mode, rotation, a restart by Podman's restart policy, refusal without values, and a scan of Podman storage and `inspect` for the canary values.
+- [x] **Fix — annotation encoding (extended beyond the original plan).** `podman run --annotation` parses its value as CSV, so the mount list is `source:target:uid:gid:mode;…` rather than JSON. Found by the live test.
 
 ### Outstanding
 
-- [ ] **Phase 1 — master secret store.** Encrypted storage keyed from a start-time passphrase, an unlock step (API + UI) and a clear "locked" state, admin API to create, replace and delete (values write-only, never returned), and a record of which stacks use which secret.
-- [ ] **Phase 1 — swap warning.** The agent reports whether its host has active swap (and whether it is encrypted, if detectable); the UI shows a warning on those hosts.
-- [ ] **Phase 1 — relay delivery.** Protocol messages that carry secret values to the agent; values never logged; the agent holds them only in memory and wipes them on forget.
-- [ ] **Phase 1 — agent hook.** An `oci-hook` subcommand of the agent binary plus an agent-user Unix socket; fail closed; refuses to write unless `/run/secrets` is a tmpfs in the container's mount namespace; no symlink following.
-- [ ] **Phase 1 — setup integration.** The setup planner writes the agent user's `containers.conf` `hooks_dir` and the hook JSON; the agent checks both at startup.
-- [ ] **Phase 1 — compose rewrite.** Services that use secrets get the hook annotation and a `/run/secrets` tmpfs; Podman-native `secrets:` never reaches `podman-compose`.
-- [ ] **Phase 1 — label `env.json` as non-secret.** The UI and API say plainly that stack environment values are stored in plaintext on the host.
-- [ ] **Phase 2 — rotation.** Replacing a value pushes it to the agent, which then restarts the affected containers so the hook runs again.
-- [ ] **Phase 2 — host reboot and agent restart.** Containers that start before the agent has its secrets fail loudly; the agent brings them up once the secrets arrive.
-- [ ] **Verification — crun.** The experiment ran on runc only; Ubuntu hosts may use crun, whose hook-time paths could differ.
-- [ ] **Verification — Ubuntu 26.04 / Podman 5.x and the dedicated agent user.** Re-run `experiments/stack-secrets/` there.
+- [ ] **Decision needed — agent restart restarts every secret container.** A freshly started agent's vault is empty, so the reconnect push reports every value as changed and the agent restarts all running containers that use secrets, although nothing changed. Options: (a) the hook also writes a digest file next to the values inside the container tmpfs, and the agent restarts only containers whose digest differs; (b) the master sends a per-secret generation, the hook records it the same way, and the agent compares generations; (c) skip restarts when the agent had no previous value for the stack, which misses a rotation that happened while the agent was down.
+- [ ] **Decision needed — agent stop kills stack containers (not secret-specific).** Podman leaves `conmon` in the calling systemd unit's cgroup when `INVOCATION_ID` is set (`libpod/oci_conmon_linux.go`), so stopping or restarting the agent service kills every container it started, leaving them in a broken "stopping" state. Podman's own API service clears `INVOCATION_ID` for this reason. Options: (a) the agent clears `INVOCATION_ID` for itself and its Podman children; (b) `KillMode=process` in the agent units; (c) talk to the Podman API service instead of the CLI.
+- [ ] **Phase 2 — host reboot and agent restart.** Containers that start before the agent has its secrets already fail loudly (the hook refuses). Still missing: the agent bringing them up once the secrets arrive, and the UI showing why they are down.
+- [ ] **Production agent layout.** The default hooks directory is `~/.local/share/sorry-portainer/oci-hooks` while `state_dir` is configured separately; settle where each lives for the dedicated agent user.
+- [ ] **Stack deletion.** No stack delete exists yet; when it does, it must delete the stack's secrets on the master and tell the agent to forget them.
+- [ ] **Verification — crun.** Tested on runc only; Ubuntu hosts may use crun, whose hook-time paths could differ.
+- [ ] **Verification — Ubuntu 26.04 / Podman 5.x and the dedicated agent user.** Re-run `experiments/stack-secrets/` and the live test there.
+- [ ] **Defer — encrypted-swap detection.** The warning shows for any active swap.
 - [ ] **Defer — environment-variable secrets.** Not possible without disk (see below). Apps read files, for example through `*_FILE` variables.
 
 ## Why this exists
@@ -151,6 +159,41 @@ hosts must keep restarting in the meantime. An agent's memory is only filled
 again, after an agent restart or host reboot, once the master is unlocked and
 the agent reconnects. Until then, containers that need secrets fail to start and
 the UI must show why.
+
+## Implementation notes (2026-09-24)
+
+The build follows the mechanism above, with these differences. The text above
+is left as it was planned.
+
+- **Unlock in the web UI.** "Passphrase typed at server start" became: the
+  server starts locked and an admin enters the passphrase in the web UI (or
+  `POST /api/secrets/unlock`). Nothing usable is on disk either way, and the
+  server can run under systemd without a terminal. Initializing takes a
+  passphrase of at least 12 characters and cannot be undone or recovered.
+- **What the hook trusts.** Step 3 planned to look up allowed names from the
+  compose project and service labels rather than the annotation. The agent
+  instead trusts the `io.sorry-portainer.*` annotations, because it writes
+  them itself and rejects any stack that uses that prefix anywhere in its
+  Compose file. The socket answers only the agent's own uid, and only for the
+  stack named in the annotation.
+- **tmpfs check.** Instead of parsing `mountinfo`, the hook opens
+  `<rootfs>/run/secrets` without following symlinks and checks with `fstatfs`
+  that it is a tmpfs, and with `st_dev` that it is its own mount (not just a
+  directory inside some other tmpfs).
+- **Modes.** The tmpfs is `mode=0755` so non-root container users can reach
+  their files; files default to 0444 like Docker Compose, and `uid`, `gid`
+  and `mode` from the long syntax are honoured.
+- **Where config lives.** Setup writes a `containers.conf.d` drop-in rather
+  than editing `containers.conf`, and the agent writes the hook JSON itself at
+  every start (so the binary path is always current). The agent does not check
+  `hooks_dir` at startup; it checks after every `up` and rotation that each
+  container has its files, and stops containers that don't, with a hint about
+  `hooks_dir`.
+- **Known limits.** A container that bind-mounts the agent's socket directory
+  could ask for its stack's secrets; stacks are written by the admin, so this
+  is out of scope. Merge keys and aliases are restricted in stacks that use
+  secrets. `podman-compose` 1.0.6 `down` leaves the project network behind
+  (not secret-specific; in `TODO.md`).
 
 ## Open questions for review
 

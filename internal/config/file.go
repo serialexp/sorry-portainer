@@ -10,16 +10,20 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/serialexp/sorry-portainer/internal/protocol"
 )
 
 // ServerFile is the on-disk configuration consumed by the control server.
 // Private keys and passwords are referenced or stored here, so files must be
 // owned by the service account and have mode 0600.
 type ServerFile struct {
-	ListenAddr    string         `json:"listen_addr"`
-	AdminPassword string         `json:"admin_password"`
-	SessionTTL    string         `json:"session_ttl"`
-	Control       ControlTLSFile `json:"control"`
+	ListenAddr    string `json:"listen_addr"`
+	AdminPassword string `json:"admin_password"`
+	SessionTTL    string `json:"session_ttl"`
+	// StateDir defaults to the directory holding the config file.
+	StateDir string         `json:"state_dir"`
+	Control  ControlTLSFile `json:"control"`
 }
 type ControlTLSFile struct {
 	ListenAddr string `json:"listen_addr"`
@@ -41,7 +45,10 @@ func LoadServerFile(path string) (Server, ControlTLS, error) {
 			return Server{}, ControlTLS{}, fmt.Errorf("session_ttl: %w", err)
 		}
 	}
-	cfg := Server{ListenAddr: f.ListenAddr, AdminPassword: f.AdminPassword, SessionTTL: ttl}
+	cfg := Server{ListenAddr: f.ListenAddr, AdminPassword: f.AdminPassword, SessionTTL: ttl, StateDir: f.StateDir}
+	if cfg.StateDir == "" {
+		cfg.StateDir = filepath.Dir(path)
+	}
 	if cfg.ListenAddr == "" {
 		cfg.ListenAddr = ":8080"
 	}
@@ -68,6 +75,8 @@ type AgentFile struct {
 	ServerName      string `json:"server_name"`
 	StateDir        string `json:"state_dir"`
 	ComposeProvider string `json:"compose_provider"`
+	SecretSocket    string `json:"secret_socket"`
+	OCIHooksDir     string `json:"oci_hooks_dir"`
 }
 
 func LoadAgentFile(path string) (Agent, error) {
@@ -75,9 +84,12 @@ func LoadAgentFile(path string) (Agent, error) {
 	if err := loadPrivate(path, &f); err != nil {
 		return Agent{}, err
 	}
-	a := Agent{ServerURL: f.ServerURL, HostID: f.HostID, Prefix: f.Prefix, CertFile: f.CertFile, KeyFile: f.KeyFile, CAFile: f.CAFile, ServerName: f.ServerName, StateDir: f.StateDir, ComposeProvider: f.ComposeProvider}
+	a := Agent{ServerURL: f.ServerURL, HostID: f.HostID, Prefix: f.Prefix, CertFile: f.CertFile, KeyFile: f.KeyFile, CAFile: f.CAFile, ServerName: f.ServerName, StateDir: f.StateDir, ComposeProvider: f.ComposeProvider, SecretSocket: f.SecretSocket, OCIHooksDir: f.OCIHooksDir}
 	if a.StateDir == "" {
 		a.StateDir = filepath.Dir(path)
+	}
+	if a.OCIHooksDir == "" {
+		a.OCIHooksDir = defaultOCIHooksDir(a.StateDir)
 	}
 	if a.ComposeProvider == "" {
 		a.ComposeProvider = "/usr/bin/podman-compose"
@@ -121,6 +133,9 @@ func validateServer(cfg Server) error {
 	if len(cfg.AdminPassword) < 12 {
 		return errors.New("admin password must be at least 12 characters")
 	}
+	if cfg.StateDir == "" {
+		return errors.New("server state directory is required (state_dir or SORRY_PORTAINER_STATE_DIR)")
+	}
 	return nil
 }
 func validateControl(c ControlTLS) error {
@@ -139,8 +154,13 @@ func validateAgent(a Agent) error {
 	if err != nil || u.Scheme != "wss" || u.Host == "" {
 		return errors.New("server_url must be a wss:// URL")
 	}
-	if a.HostID == "" || strings.ContainsAny(a.HostID, " /\\") {
-		return errors.New("host_id contains invalid characters")
+	if !protocol.ValidHostID(a.HostID) {
+		return errors.New("host_id must be 1-128 letters, digits, '.', '_' or '-', starting with a letter or digit")
+	}
+	for n, v := range map[string]string{"secret_socket": a.SecretSocket, "oci_hooks_dir": a.OCIHooksDir} {
+		if v != "" && !filepath.IsAbs(v) {
+			return fmt.Errorf("%s must be an absolute path", n)
+		}
 	}
 	for n, v := range map[string]string{"server_url": a.ServerURL, "host_id": a.HostID, "host_prefix": a.Prefix, "agent_cert": a.CertFile, "agent_key": a.KeyFile, "agent_ca": a.CAFile, "state_dir": a.StateDir, "compose_provider": a.ComposeProvider} {
 		if v == "" {

@@ -9,12 +9,15 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"math/big"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/serialexp/sorry-portainer/internal/protocol"
 )
 
 type InitOptions struct{ StateDir, AdminPassword, ServerName, ControlListen, WebListen string }
@@ -67,6 +70,10 @@ func Init(o InitOptions) error {
 func CreateAgent(o AgentOptions) error {
 	if o.StateDir == "" || o.HostID == "" {
 		return errors.New("state directory and host ID are required")
+	}
+	// The host ID becomes a directory name and a certificate URI.
+	if !protocol.ValidHostID(o.HostID) {
+		return fmt.Errorf("invalid host ID %q", o.HostID)
 	}
 	if o.Prefix == "" {
 		o.Prefix = o.HostID + "-"

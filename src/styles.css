@@ -384,6 +384,95 @@ h2 {
   padding: 12px;
   white-space: pre-wrap;
 }
+.secret-warning {
+  color: #7a5518;
+  background: #fdf4e3;
+  border: 1px solid #f1e0bd;
+  border-radius: 6px;
+  padding: 11px 13px;
+  font-size: 12px;
+}
+.secret-store {
+  margin: 12px 0 14px;
+  border-radius: 6px;
+  padding: 12px 15px;
+  font-size: 12px;
+  border: 1px solid #dce6dc;
+  background: #f8faf7;
+  color: #4d5f54;
+}
+.secret-store.locked,
+.secret-store.uninitialized {
+  background: #fdf4e3;
+  border-color: #f1e0bd;
+  color: #6b4c17;
+}
+.secret-store-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.secret-store-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.secret-store-form p {
+  flex-basis: 100%;
+  margin: 0 0 4px;
+  line-height: 1.5;
+}
+.secret-store-form input {
+  flex: 1 1 200px;
+  border: 1px solid #d3ddd4;
+  border-radius: 5px;
+  padding: 9px 11px;
+  font: 13px "DM Sans";
+}
+.stack-secrets {
+  max-width: 760px;
+  margin-top: 34px;
+  padding-top: 24px;
+  border-top: 1px solid #e0e6df;
+  display: grid;
+  gap: 14px;
+}
+.stack-secrets h3,
+.stack-secrets p {
+  margin: 0;
+}
+.stack-secrets code,
+.stack-note code {
+  font: 12px "DM Mono", monospace;
+}
+.secret-form {
+  display: grid;
+  gap: 14px;
+}
+.secret-value.masked {
+  -webkit-text-security: disc;
+}
+.secret-reveal {
+  display: flex !important;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.secret-reveal input {
+  width: auto !important;
+}
+.secret-delivery {
+  font-size: 12px;
+  color: #63766a;
+}
+.secret-delivery.failed {
+  color: #9b3c31;
+}
+.secret-delivery.pending {
+  color: #7a5518;
+}
 .host-list,
 .container-list {
   display: grid;

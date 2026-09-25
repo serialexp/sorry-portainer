@@ -1,6 +1,8 @@
 import { A, useNavigate } from "@solidjs/router";
 import { createEffect, createSignal, For, Show } from "solid-js";
 import { editStackPath, hostPath, newStackPath } from "./host-route";
+import { StackSecretsPanel } from "./secrets-ui";
+import { setReferencedSecrets } from "./secrets-store";
 import { createStack, deployStack, getStack, stackNamePattern, updateStack, type Stack } from "./stack-api";
 
 type StackListProps = {
@@ -140,6 +142,7 @@ export function StackEditor(props: StackEditorProps) {
         if (props.hostID !== hostID || props.stackName !== stackName) return;
         setCompose(stack.compose_yaml ?? "");
         setVersion(stack.version);
+        setReferencedSecrets(hostID, stackName, stack.secrets ?? []);
       })
       .catch((cause) => {
         if (props.hostID === hostID && props.stackName === stackName)
@@ -182,6 +185,17 @@ export function StackEditor(props: StackEditorProps) {
     }
   }
 
+  // A new revision may use different secrets; the panel's missing-value
+  // warning follows the saved Compose file.
+  async function refreshReferencedSecrets(hostID: string, stackName: string) {
+    try {
+      const stack = await getStack(hostID, stackName);
+      setReferencedSecrets(hostID, stackName, stack.secrets ?? []);
+    } catch {
+      // The warning stays as it was; the deploy result reports missing values.
+    }
+  }
+
   async function saveAndStart(event: MouseEvent & { currentTarget: HTMLButtonElement }) {
     event.preventDefault();
     if (busy()) return;
@@ -203,6 +217,7 @@ export function StackEditor(props: StackEditorProps) {
         } else await createStack(hostID, stackName, compose());
         setSaved(true);
         props.onSaved();
+        if (props.stackName) await refreshReferencedSecrets(hostID, stackName);
       }
       const result = await deployStack(hostID, stackName);
       setDeployOutput(result.output || "Deployment command completed.");
@@ -279,6 +294,17 @@ export function StackEditor(props: StackEditorProps) {
           </button>
         </div>
       </form>
+      <Show
+        when={props.stackName}
+        fallback={
+          <p class="stack-note">
+            Stacks can use Compose <code>secrets:</code>. Save the stack, then set the secret values on its edit page
+            before starting it.
+          </p>
+        }
+      >
+        {(stackName) => <StackSecretsPanel hostID={props.hostID} stackName={stackName()} />}
+      </Show>
     </section>
   );
 }

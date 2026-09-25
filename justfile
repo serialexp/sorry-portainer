@@ -35,9 +35,12 @@ dev-init PASSWORD="dev-admin-password-change-me": build
     done
     just install-dev-services
 
-# Write user-level systemd units pointing at this checkout.
-install-dev-services:
+# Write user-level systemd units pointing at this checkout. The agents get
+# Podman's OCI hooks directory through CONTAINERS_CONF_OVERRIDE, so
+# development never edits ~/.config/containers.
+install-dev-services: build
     mkdir -p "{{units_dir}}"
+    "{{bin_dir}}/sorry-portainer-agent" setup-hooks-conf --print > "{{state_dir}}/containers-hooks.conf"
     for template in server.service ui.service; do \
       sed -e 's#__ROOT__#{{root}}#g' -e 's#__BIN__#{{bin_dir}}#g' -e 's#__STATE__#{{state_dir}}#g' "{{root}}/deploy/systemd/sorry-portainer-$template" > "{{units_dir}}/sorry-portainer-${template%.service}.service"; \
     done

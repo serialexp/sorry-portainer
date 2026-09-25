@@ -4,10 +4,11 @@ import { A, Route, Router, useLocation, useNavigate } from "@solidjs/router";
 import { render } from "solid-js/web";
 import { hostPath, parseHostPath } from "./host-route";
 import { listStacks, type Stack } from "./stack-api";
+import { HostSecretWarnings, type HostSecretInfo, SecretStoreBanner } from "./secrets-ui";
 import { StackEditor, StackList } from "./stacks-ui";
 import "./styles.css";
 
-type Host = { host_id: string; prefix: string; hostname: string; engine_version: string };
+type Host = { host_id: string; prefix: string; hostname: string; engine_version: string } & HostSecretInfo;
 type Container = { id: string; name: string; image: string; state: string; status: string };
 type Volume = { name: string; driver: string; mountpoint: string };
 type Image = { id: string; tags?: string[]; size: number; created: number };
@@ -340,6 +341,7 @@ function Dashboard(props: {
           </div>
         </header>
         <div class="notice">{props.state.notice}</div>
+        <SecretStoreBanner />
         <Show when={!route()}>
           <Overview hosts={hosts()} selectHost={selectHost} />
         </Show>
@@ -408,6 +410,7 @@ function Overview(props: {
                   <strong>{host.host_id}</strong>
                   <small>
                     {host.hostname} · Podman {host.engine_version}
+                    {host.swap_active ? " · swap active" : ""}
                   </small>
                 </span>
                 <span class="online">
@@ -444,6 +447,7 @@ function HostPage(props: {
             <strong>{props.host?.prefix}</strong>
           </div>
         </section>
+        <HostSecretWarnings host={props.host ?? {}} />
       </Show>
       <section class="panel resource-preview">
         <div class="panel-heading">

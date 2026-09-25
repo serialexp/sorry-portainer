@@ -11,6 +11,7 @@ import (
 
 	"github.com/serialexp/sorry-portainer/internal/protocol"
 	"github.com/serialexp/sorry-portainer/internal/relay"
+	"github.com/serialexp/sorry-portainer/internal/secretstore"
 )
 
 func jsonDecode(r *http.Request, v any) error {
@@ -33,21 +34,32 @@ type Relay interface {
 	StackVersions(context.Context, string, string) ([]protocol.StackVersion, error)
 	SaveStack(context.Context, string, protocol.StackSave) (protocol.Stack, error)
 	StackOperation(context.Context, string, string, string) (protocol.StackOperation, error)
+	SyncSecrets(context.Context, string, protocol.SecretSync) (protocol.SecretSyncResult, error)
+	RetainSecrets(context.Context, string, []string) error
 }
 
 type Server struct {
 	sessions *Sessions
 	relay    Relay
+	// secrets and pusher are nil when no secret store is configured.
+	secrets *secretstore.Store
+	pusher  *secretPusher
 }
 
-func New(password string, ttl time.Duration, relay Relay) *Server {
-	return &Server{sessions: NewSessions(password, ttl), relay: relay}
+// New creates the web API. store may be nil, which disables stack secrets.
+func New(password string, ttl time.Duration, relay Relay, store *secretstore.Store) *Server {
+	s := &Server{sessions: NewSessions(password, ttl), relay: relay, secrets: store}
+	if store != nil {
+		s.pusher = newSecretPusher(store, relay)
+	}
+	return s
 }
 
 func (s *Server) Handler() http.Handler {
 	m := http.NewServeMux()
 	m.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	m.HandleFunc("/api/session/login", s.sessions.Login)
+	m.Handle("/api/secrets/", s.sessions.Require(http.HandlerFunc(s.secretStoreRoute)))
 	m.Handle("/api/hosts", s.sessions.Require(http.HandlerFunc(s.hosts)))
 	m.Handle("/api/hosts/", s.sessions.Require(http.HandlerFunc(s.hostOperation)))
 	return m
@@ -109,6 +121,14 @@ func (s *Server) hostOperation(w http.ResponseWriter, r *http.Request) {
 	if len(parts) == 3 && parts[1] == "stacks" && r.Method == http.MethodGet {
 		stack, err := s.relay.InspectStack(ctx, parts[0], parts[2])
 		respond(w, stack, err, http.StatusNotFound)
+		return
+	}
+	if (len(parts) == 4 || len(parts) == 5) && parts[1] == "stacks" && parts[3] == "secrets" {
+		name := ""
+		if len(parts) == 5 {
+			name = parts[4]
+		}
+		s.stackSecrets(w, r, parts[0], parts[2], name)
 		return
 	}
 	if len(parts) == 4 && parts[1] == "stacks" && parts[3] == "versions" && r.Method == http.MethodGet {

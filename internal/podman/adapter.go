@@ -295,3 +295,60 @@ func (c *Client) Stop(ctx context.Context, reference string) error {
 	_, err = c.run(ctx, "stop", "--", item.ID)
 	return err
 }
+
+// Restart stops and starts a container, so its OCI hooks run again.
+func (c *Client) Restart(ctx context.Context, reference string) error {
+	item, err := c.resolveContainer(ctx, reference)
+	if err != nil {
+		return err
+	}
+	_, err = c.run(ctx, "restart", "--", item.ID)
+	return err
+}
+
+// ProjectContainer is one container of a Compose project.
+type ProjectContainer struct {
+	ID      string
+	Name    string
+	Service string
+	State   string
+	// Pid is the container's main process on the host, 0 when not running.
+	Pid int
+}
+
+type projectContainerJSON struct {
+	ID     string            `json:"Id"`
+	Names  []string          `json:"Names"`
+	State  string            `json:"State"`
+	Pid    int               `json:"Pid"`
+	Labels map[string]string `json:"Labels"`
+}
+
+// ProjectContainers lists the containers podman-compose created for project.
+func (c *Client) ProjectContainers(ctx context.Context, project string) ([]ProjectContainer, error) {
+	data, err := c.run(ctx, "ps", "--all", "--format", "json", "--filter", "label=com.docker.compose.project="+project)
+	if err != nil {
+		return nil, err
+	}
+	items, err := decodeJSON[[]projectContainerJSON]("ps", data)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ProjectContainer, 0, len(items))
+	for i := range items {
+		item := &items[i]
+		// The filter is a prefix-free label match; check it exactly.
+		if item.Labels["com.docker.compose.project"] != project {
+			continue
+		}
+		name := ""
+		if len(item.Names) != 0 {
+			name = strings.TrimPrefix(item.Names[0], "/")
+		}
+		if c.prefix != "" && !strings.HasPrefix(name, c.prefix) {
+			continue
+		}
+		out = append(out, ProjectContainer{ID: item.ID, Name: name, Service: item.Labels["com.docker.compose.service"], State: item.State, Pid: item.Pid})
+	}
+	return out, nil
+}

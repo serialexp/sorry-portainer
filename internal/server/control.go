@@ -3,11 +3,13 @@ package server
 import (
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
 
 	"github.com/gorilla/websocket"
+	"github.com/serialexp/sorry-portainer/internal/protocol"
 	"github.com/serialexp/sorry-portainer/internal/relay"
 )
 
@@ -41,20 +43,27 @@ func ControlHandler(registry *relay.Remote) http.Handler {
 	})
 }
 
+// certificateIdentity returns the host ID carried by an agent certificate. The
+// ID names master-side directories, so it must pass protocol.ValidHostID.
 func certificateIdentity(cert *x509.Certificate) (string, error) {
+	identity := ""
 	for _, uri := range cert.URIs {
-		if strings.HasPrefix(uri.Scheme, "sorry-host") {
-			identity := uri.Opaque
+		if uri.Scheme == "sorry-host" {
+			identity = uri.Opaque
 			if identity == "" {
 				identity = uri.Host
 			}
-			if identity != "" {
-				return identity, nil
-			}
+			break
 		}
 	}
-	if len(cert.DNSNames) == 1 && strings.HasPrefix(cert.DNSNames[0], "host-") {
-		return strings.TrimPrefix(cert.DNSNames[0], "host-"), nil
+	if identity == "" && len(cert.DNSNames) == 1 && strings.HasPrefix(cert.DNSNames[0], "host-") {
+		identity = strings.TrimPrefix(cert.DNSNames[0], "host-")
 	}
-	return "", errors.New("agent certificate has no host identity")
+	if identity == "" {
+		return "", errors.New("agent certificate has no host identity")
+	}
+	if !protocol.ValidHostID(identity) {
+		return "", fmt.Errorf("agent certificate host identity %q is invalid", identity)
+	}
+	return identity, nil
 }
