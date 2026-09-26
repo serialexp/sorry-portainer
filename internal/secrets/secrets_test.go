@@ -301,12 +301,14 @@ func TestOpenSecretsDirRefusesUnsafeTargets(t *testing.T) {
 	if _, err := openSecretsDir(proc, 7, "", unix.O_PATH); err == nil || !strings.Contains(err.Error(), "not a tmpfs") {
 		t.Fatalf("disk dir: %v", err)
 	}
-	// A symlink in the container is never followed.
+	// A symlink in the container is never followed. Its target is a real
+	// directory (not an environment path, which CI may leave unset), so only
+	// the refusal to follow it can fail the open.
 	linked := t.TempDir()
 	if err := os.Mkdir(filepath.Join(linked, "run"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(os.Getenv("XDG_RUNTIME_DIR"), filepath.Join(linked, "run", "secrets")); err != nil {
+	if err := os.Symlink(filepath.Join(root, "run", "secrets"), filepath.Join(linked, "run", "secrets")); err != nil {
 		t.Fatal(err)
 	}
 	proc = fakeProc(t, linked, 8)
