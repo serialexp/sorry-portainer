@@ -1,8 +1,8 @@
 # sorry-portainer Architecture — Design
 
-Status: partial — Podman agent/runtime, relay hardening and stack secrets landed; certificate allowlisting outstanding
+Status: partial — Podman agent/runtime, relay hardening, stack secrets and Gothab release builds landed; certificate allowlisting and service installation outstanding
 Owner: Bart
-Last updated: 2026-09-25
+Last updated: 2026-09-26
 
 ## Implementation status
 
@@ -14,8 +14,12 @@ Last updated: 2026-09-25
 - [x] **Phase 0 — local verification.** Protocol tests and `go test ./...` pass.
 - [x] **Phase 0 — fake local cluster.** Integration tests model three logical hosts sharing one daemon and verify host-prefix start routing with fakes.
 - [x] **Phase 2 — stack-secret workflow.** Implemented 2026-09-24: an encrypted, passphrase-unlocked store on the master; protocol v4 `secrets.sync`/`secrets.retain` pushes into agent memory; an OCI `createRuntime` hook writes values into each container's `/run/secrets` tmpfs. Remaining work and two open decisions are in `docs/design/stack-secrets.md`.
+- [x] **Phase 2 — dashboard served by the server.** Added 2026-09-26: `pnpm build` writes into `internal/webui/dist`, which the server embeds and serves on its web listener next to `/api/` (hashed assets cached as immutable, the page revalidated, unknown `/api/` paths 404). Every server build needs the dashboard built first; `just build` does that. Development still uses the Vite server on 6201.
+- [x] **Phase 2 — Gothab release builds.** `.gothab/workflows/release.yml`, run by hand with an existing tag: type-checks and builds the dashboard, runs `go test ./...`, builds static linux/amd64 server and agent binaries plus `SHA256SUMS`, and publishes them with `gt release create`.
 
 ### Outstanding
+
+- [ ] **Phase 2 — service installation from releases.** Install the released server and agent as system services with rsansible, pinned to a release's `SHA256SUMS`.
 
 - [x] **Phase 1 — mTLS agent transport.** Outbound WebSocket sessions, certificate identity mapping, hello/heartbeat, reconnect, and bounded message handling. See [Relay](#relay).
 - [x] **Phase 1 — WebSocket relay prototype.** Add versioned agent hello, host registration, request IDs, deadline-bounded inventory/start calls, and in-process round-trip coverage.

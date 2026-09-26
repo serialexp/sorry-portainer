@@ -58,7 +58,7 @@ func authenticatedStackRequest(t *testing.T, s *Server, method, path, body strin
 	r := httptest.NewRequest(method, path, strings.NewReader(body))
 	r.AddCookie(login.Result().Cookies()[0])
 	w := httptest.NewRecorder()
-	s.Handler().ServeHTTP(w, r)
+	s.Handler(nil).ServeHTTP(w, r)
 	return w
 }
 func TestStackHTTPVersionContracts(t *testing.T) {

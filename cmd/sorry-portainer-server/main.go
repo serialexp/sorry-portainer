@@ -13,6 +13,7 @@ import (
 	"github.com/serialexp/sorry-portainer/internal/relay"
 	"github.com/serialexp/sorry-portainer/internal/secretstore"
 	"github.com/serialexp/sorry-portainer/internal/server"
+	"github.com/serialexp/sorry-portainer/internal/webui"
 )
 
 func main() {
@@ -53,9 +54,13 @@ func main() {
 	var api *server.Server
 	registry := relay.NewRemote(relay.RemoteOptions{OnConnect: func(info protocol.HostInfo) { api.HostConnected(info) }})
 	api = server.New(cfg.AdminPassword, cfg.SessionTTL, registry, store)
+	dashboard, err := webui.Handler()
+	if err != nil {
+		log.Fatal(err)
+	}
 	go func() {
-		log.Printf("sorry-portainer web API listening on %s", cfg.ListenAddr)
-		if err := http.ListenAndServe(cfg.ListenAddr, api.Handler()); err != nil {
+		log.Printf("sorry-portainer dashboard and web API listening on %s", cfg.ListenAddr)
+		if err := http.ListenAndServe(cfg.ListenAddr, api.Handler(dashboard)); err != nil {
 			log.Print(err)
 		}
 	}()

@@ -55,13 +55,20 @@ func New(password string, ttl time.Duration, relay Relay, store *secretstore.Sto
 	return s
 }
 
-func (s *Server) Handler() http.Handler {
+// Handler serves the web API under /api/ and /healthz. Every other path goes
+// to ui (the dashboard), or is 404 when ui is nil. An unknown /api/ path is
+// always 404, never the dashboard page.
+func (s *Server) Handler(ui http.Handler) http.Handler {
 	m := http.NewServeMux()
 	m.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	m.HandleFunc("/api/session/login", s.sessions.Login)
 	m.Handle("/api/secrets/", s.sessions.Require(http.HandlerFunc(s.secretStoreRoute)))
 	m.Handle("/api/hosts", s.sessions.Require(http.HandlerFunc(s.hosts)))
 	m.Handle("/api/hosts/", s.sessions.Require(http.HandlerFunc(s.hostOperation)))
+	m.Handle("/api/", http.NotFoundHandler())
+	if ui != nil {
+		m.Handle("/", ui)
+	}
 	return m
 }
 

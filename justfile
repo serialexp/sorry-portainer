@@ -7,7 +7,8 @@ state_dir := dev_dir / "state"
 units_dir := home_directory() / ".config/systemd/user"
 
 # Build all Go commands without Git VCS stamping (this repository uses Wheat).
-build:
+# The server embeds the dashboard, so the dashboard is built first.
+build: build-ui
     go build -buildvcs=false -o {{bin_dir}}/sorry-portainer-server ./cmd/sorry-portainer-server
     go build -buildvcs=false -o {{bin_dir}}/sorry-portainer-agent ./cmd/sorry-portainer-agent
 

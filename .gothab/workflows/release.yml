@@ -1,0 +1,58 @@
+# Builds the server (with the dashboard inside it) and the agent for a tag
+# that already exists, and publishes them as a Gothab release. Run it by hand
+# from the Actions page after `wheat push --tag <tag>` has reached GitHub and
+# the mirror has synced.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to release, for example v0.1.0
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag }}
+      CGO_ENABLED: "0"
+      GOOS: linux
+      GOARCH: amd64
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install dashboard dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Type-check the dashboard
+        run: pnpm exec tsc -p .
+
+      - name: Build the dashboard
+        run: pnpm build
+
+      - name: Test
+        run: go test ./...
+
+      - name: Build
+        run: |
+          mkdir -p release
+          for cmd in sorry-portainer-server sorry-portainer-agent; do
+            go build -buildvcs=false -trimpath -ldflags "-s -w" \
+              -o "release/$cmd-$GOOS-$GOARCH" "./cmd/$cmd"
+          done
+          (cd release && sha256sum -- * > SHA256SUMS)
+          cat release/SHA256SUMS
+
+      - name: Publish
+        run: gt release create "$TAG" release/* -R "$GITHUB_REPOSITORY"

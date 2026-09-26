@@ -173,7 +173,7 @@ func TestSecretRoutesRequireLogin(t *testing.T) {
 	s, _ := secretServer(t)
 	for _, path := range []string{"/api/secrets/status", "/api/hosts/h1/stacks/web/secrets"} {
 		w := httptest.NewRecorder()
-		s.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		s.Handler(nil).ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
 		if w.Code != http.StatusUnauthorized {
 			t.Fatalf("%s: %d", path, w.Code)
 		}

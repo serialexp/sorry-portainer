@@ -39,7 +39,7 @@ func TestLocalClusterInventory(t *testing.T) {
 		}
 	}
 
-	api := httptest.NewServer(server.New(password, time.Hour, registry, nil).Handler())
+	api := httptest.NewServer(server.New(password, time.Hour, registry, nil).Handler(nil))
 	defer api.Close()
 	client := mustAuthenticatedClient(t, api.URL, password)
 
@@ -72,7 +72,7 @@ func TestLocalClusterInventory(t *testing.T) {
 
 func TestLocalClusterStartRoutesByHostPrefix(t *testing.T) {
 	cluster := newFakeCluster()
-	api := httptest.NewServer(server.New("integration-test-admin-password", time.Hour, cluster.registry, nil).Handler())
+	api := httptest.NewServer(server.New("integration-test-admin-password", time.Hour, cluster.registry, nil).Handler(nil))
 	defer api.Close()
 	client := mustAuthenticatedClient(t, api.URL, "integration-test-admin-password")
 

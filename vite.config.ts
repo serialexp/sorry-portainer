@@ -2,6 +2,9 @@ import { defineConfig } from "vite";
 import solid from "vite-plugin-solid";
 export default defineConfig({
   plugins: [solid()],
+  // The server embeds this directory (internal/webui), so it must stay inside
+  // that Go package.
+  build: { outDir: "internal/webui/dist", emptyOutDir: true },
   server: {
     host: "127.0.0.1",
     port: 6201,
