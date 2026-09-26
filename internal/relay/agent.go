@@ -140,6 +140,13 @@ func (s *agentSession) start(ctx context.Context, request protocol.Message) {
 		defer s.cancel(request.ID)
 		value, err := s.agent.handle(opCtx, request.Operation, request.Payload)
 		if err != nil {
+			// The session is ending, which is what stopped the operation. Its
+			// cancellation error says nothing about the operation, and a reply
+			// would race the connection close; with no reply, the server
+			// reports the disconnect instead.
+			if ctx.Err() != nil {
+				return
+			}
 			code := protocol.CodeOperationFailed
 			var unknown unknownOperationError
 			if errors.As(err, &unknown) {
