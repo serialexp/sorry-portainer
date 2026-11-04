@@ -10,6 +10,8 @@ import {
   listImages,
   listVolumes,
   login,
+  logout,
+  MasterUnreachableError,
   UnauthorizedError,
   type Volume,
 } from "./fleet-api";
@@ -99,7 +101,7 @@ function message(cause: unknown, fallback: string): string {
  */
 export function sessionEnded(cause: unknown): boolean {
   if (!(cause instanceof UnauthorizedError) || fleet.demo) return false;
-  signOut("Your session has ended. Sign in again.");
+  showLogin("Your session has ended. Sign in again.");
   return true;
 }
 
@@ -134,22 +136,37 @@ export async function signIn(password: string) {
     await login(password);
     setFleet({ hosts: await listHosts(), demo: false, phase: "ready", notice: connected });
   } catch (cause) {
-    if (cause instanceof UnauthorizedError) setFleet("loginError", cause.message);
-    else
+    if (cause instanceof MasterUnreachableError)
       setFleet({
         demo: true,
         hosts: demoHosts,
         phase: "ready",
         notice: "Demo cluster · the master could not be reached, so nothing here is real",
       });
+    else setFleet("loginError", message(cause, "Could not sign in."));
   } finally {
     setFleet("signingIn", false);
   }
 }
 
-export function signOut(loginError = "") {
+function showLogin(loginError: string) {
   clearHost();
   setFleet({ phase: "login", demo: false, hosts: [], loginError, notice: "", query: "" });
+}
+
+/** Ends the session on the master, then returns to the login form. */
+export async function signOut() {
+  if (fleet.demo) {
+    showLogin("");
+    return;
+  }
+  try {
+    await logout();
+    showLogin("");
+  } catch (cause) {
+    // The session may still be valid; say so rather than pretend.
+    setFleet("notice", message(cause, "Could not sign out."));
+  }
 }
 
 /** Reloads the host list, for example after a host was enrolled or removed. */

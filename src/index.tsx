@@ -90,7 +90,7 @@ function Dashboard() {
         </Show>
         <div class="sidebar-footer">
           <div class="pulse"></div>All systems nominal
-          <button class="text-button" onClick={() => signOut()}>
+          <button class="text-button" onClick={() => void signOut()}>
             Sign out
           </button>
         </div>

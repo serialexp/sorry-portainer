@@ -28,6 +28,8 @@ Last updated: 2026-11-05
 - [x] **Phase 1 — rootless Ubuntu setup.** Add an explicit plan/apply path for Ubuntu-compatible 24.04 and 26.04 native packages under a dedicated rootless user; live cross-release acceptance remains outstanding.
 - [x] **Phase 2 — Podman Compose stacks.** Invoke `podman compose` with an explicitly configured distro `podman-compose` provider while preserving bounded host-scoped stack lifecycle operations. Git sources, templates, UI stack editor, and live provider acceptance remain outstanding.
 - [x] **Phase 2 — frontend shell.** Add a SolidJS/Vite dashboard with centralized local state, login shell, host selection, container inventory, and host-routed start controls; it falls back to demo data while the API is offline.
+- [x] **Phase 2 — session hardening.** Logout endpoint, `Secure` session cookie by default (`insecure_cookie` for plain-HTTP development), per-client sign-in limit with `trusted_proxies`, bounded session table. See [Security](#security).
+- [x] **Phase 2 — dashboard stores.** Dashboard state in Solid stores (`src/fleet-store.ts`, `secrets-store.ts`, `enrollment-store.ts`) instead of props.
 - [x] **Phase 2 — local development services.** Add a Wheat-ignored `.dev` state area, user-level systemd unit generation, and `just` recipes for server, three local agents, and UI on ports 6200/6201/6243.
 - [x] **Legacy — Docker agent filtering.** The superseded Docker agents filter inventory/start operations to their configured host prefix; local-a/b/c integration tests and live dev-agent checks cover that historical boundary.
 - [x] **Legacy — Docker volumes and images.** The superseded Docker implementation has read-only host volume inventory filtered by prefix and full image inventory without prefix filtering.
@@ -38,7 +40,7 @@ Last updated: 2026-11-05
 
 - [ ] **Phase 2 — service installation from releases.** Install the released server and agent as system services with rsansible, pinned to a release's `SHA256SUMS`.
 - [ ] **Phase 2 — Podman operations.** Add logs, exec, images, volumes, networks, and harden `podman-compose` stack status/output with streaming and bounded resource use.
-- [ ] **Phase 2 — frontend integration.** Replace the demo fallback with live API loading, add stores/modules as the UI grows, and add browser/component tests.
+- [ ] **Phase 2 — frontend integration.** Add browser/component tests. Live API loading and stores landed; the demo fallback now opens only when sign-in cannot reach the master.
 - [ ] **Phase 3 — durable administration.** Persist host enrollment and metadata, add certificate rotation/revocation, durable sessions, and multi-user RBAC. Host enrollment, certificate rotation and revocation by removal landed 2026-11-05; host metadata beyond the registry, durable sessions and RBAC remain.
 
 ## Why this exists
@@ -185,6 +187,29 @@ Hosts enroll with one-time tokens; the server admits only enrolled hosts
 presenting their current certificate; agent and server certificates last 90
 days and renew themselves; `hosts remove` revokes a host at once. The design
 is `docs/design/agent-enrollment.md`.
+
+Update 2026-11-05 (sessions): before the dashboard is exposed through a
+reverse proxy, the session boundary was hardened.
+
+- `POST /api/session/logout` ends the session on the server and clears the
+  cookie; "Sign out" in the dashboard calls it.
+- The session cookie is `Secure` unless `insecure_cookie` is set. A proxy that
+  terminates TLS hands the server plain HTTP, so the server cannot infer
+  HTTPS; the setting exists only for plain-HTTP development (`just dev-init`
+  sets it, and the server logs a warning when it is on).
+- Failed sign-ins are limited per client: ten in a row, then one more every
+  three seconds, answered with 429 and `Retry-After` without checking the
+  password. A client is an IPv4 address or an IPv6 /64. Behind a reverse
+  proxy listed in `trusted_proxies`, the client is the rightmost
+  `X-Forwarded-For` entry that is not itself a trusted proxy; headers from
+  other peers are ignored. The table holds 4,096 clients; when every slot is
+  held by a client still being limited, new clients are refused for the
+  interval rather than evicting a limited one. Successful sign-ins do not
+  count. Many addresses (an IPv6 /48, a botnet) are not stopped by a
+  per-client limit; the admin password's length (12 characters minimum) is
+  the defence there.
+- The session table holds at most 4,096 sessions; at the limit, expired ones
+  go first and then the one closest to expiry.
 
 ## Performance and failure behavior
 

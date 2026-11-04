@@ -4,11 +4,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 )
 
 func TestDashboardGetsEveryPathOutsideTheAPI(t *testing.T) {
-	s := New("a sufficiently long password", time.Hour, &stackRelay{}, nil)
+	s := New(testSessions, &stackRelay{}, nil)
 	ui := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusTeapot) })
 	h := s.Handler(ui)
 	cases := []struct {
@@ -33,7 +32,7 @@ func TestDashboardGetsEveryPathOutsideTheAPI(t *testing.T) {
 }
 
 func TestWithoutADashboardOnlyTheAPIAnswers(t *testing.T) {
-	s := New("a sufficiently long password", time.Hour, &stackRelay{}, nil)
+	s := New(testSessions, &stackRelay{}, nil)
 	w := httptest.NewRecorder()
 	s.Handler(nil).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
 	if w.Code != http.StatusNotFound {

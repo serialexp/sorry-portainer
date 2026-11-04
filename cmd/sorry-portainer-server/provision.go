@@ -39,8 +39,10 @@ func runInit(args []string) {
 	f.Var(&serverNames, "server-name", "DNS name or IP address agents reach the control listener by (repeat or comma-separate)")
 	control := f.String("control-listen", ":9443", "mTLS control address")
 	web := f.String("web-listen", ":8080", "plain HTTP web address")
+	insecure := f.Bool("insecure-cookie", false, "send the session cookie without Secure (plain-HTTP development only)")
 	_ = f.Parse(args)
-	if err := provision.Init(provision.InitOptions{StateDir: *state, AdminPassword: *password, ServerNames: serverNames, ControlListen: *control, WebListen: *web}); err != nil {
+	if err := provision.Init(provision.InitOptions{StateDir: *state, AdminPassword: *password, ServerNames: serverNames,
+		ControlListen: *control, WebListen: *web, InsecureCookie: *insecure}); err != nil {
 		log.Fatal(err)
 	}
 	fmt.Fprintf(os.Stdout, "initialized server state in %s\n", *state)

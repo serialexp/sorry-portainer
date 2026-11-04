@@ -22,6 +22,17 @@
       "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)$",
       "default": "12h"
     },
+    "insecure_cookie": {
+      "type": "boolean",
+      "default": false,
+      "description": "Send the session cookie without Secure. Only for a dashboard served over plain HTTP in development; behind a TLS-terminating proxy leave it off."
+    },
+    "trusted_proxies": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "default": [],
+      "description": "IP addresses or CIDR prefixes of reverse proxies whose X-Forwarded-For header names the client, so failed sign-ins are limited per client rather than per proxy."
+    },
     "state_dir": {
       "type": "string",
       "minLength": 1,

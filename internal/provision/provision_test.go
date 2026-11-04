@@ -46,7 +46,7 @@ func TestInit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.StateDir != d || cfg.AdminPassword != password || cfg.ListenAddr != ":8080" {
+	if cfg.StateDir != d || cfg.AdminPassword != password || cfg.ListenAddr != ":8080" || cfg.InsecureCookie {
 		t.Fatalf("server config %+v", cfg)
 	}
 	want := config.ControlTLS{ListenAddr: ":7443", CAFile: filepath.Join(d, CAFile), CAKeyFile: filepath.Join(d, CAKeyFile),
@@ -60,6 +60,17 @@ func TestInit(t *testing.T) {
 	registry, err := enrollment.OpenRegistry(filepath.Join(d, RegistryFile))
 	if err != nil || len(registry.List()) != 0 {
 		t.Fatalf("registry %v", err)
+	}
+}
+
+func TestInitInsecureCookie(t *testing.T) {
+	d := filepath.Join(t.TempDir(), "state")
+	if err := Init(InitOptions{StateDir: d, AdminPassword: password, ServerNames: []string{"127.0.0.1"}, InsecureCookie: true}); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := config.LoadServerFile(filepath.Join(d, ConfigFile))
+	if err != nil || !cfg.InsecureCookie {
+		t.Fatalf("insecure cookie not configured: %+v %v", cfg, err)
 	}
 }
 

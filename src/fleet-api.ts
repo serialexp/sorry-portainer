@@ -11,6 +11,13 @@ export type ContainerOperation = "start" | "stop";
 /** Thrown when the master answers 401: no session, or a wrong password. */
 export class UnauthorizedError extends Error {}
 
+/** Thrown when sign-in cannot reach the master at all. */
+export class MasterUnreachableError extends Error {}
+
+// What a missing master looks like: the request fails, or a development
+// proxy in front of it answers that it has no upstream.
+const unreachableStatuses = new Set([502, 503, 504]);
+
 async function failure(response: Response, fallback: string): Promise<Error> {
   const text = (await response.text()).trim();
   if (response.status === 401) return new UnauthorizedError(text || fallback);
@@ -27,15 +34,31 @@ function hostEndpoint(hostID: string, operation: string): string {
   return `/api/hosts/${encodeURIComponent(hostID)}/${operation}`;
 }
 
-/** Starts a session; the master sets it as an HttpOnly cookie. */
+/**
+ * Starts a session; the master sets it as an HttpOnly cookie. Too many
+ * failed attempts get the master's "try again in" message.
+ */
 export async function login(password: string, request: typeof fetch = fetch): Promise<void> {
-  const response = await request("/api/session/login", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ password }),
-  });
+  let response: Response;
+  try {
+    response = await request("/api/session/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password }),
+    });
+  } catch (cause) {
+    throw new MasterUnreachableError(cause instanceof Error ? cause.message : "The master could not be reached.");
+  }
   if (response.status === 401) throw new UnauthorizedError("Wrong password.");
+  if (unreachableStatuses.has(response.status))
+    throw new MasterUnreachableError(`The master could not be reached (${response.status}).`);
   if (!response.ok) throw await failure(response, "Could not sign in");
+}
+
+/** Ends the session on the master. */
+export async function logout(request: typeof fetch = fetch): Promise<void> {
+  const response = await request("/api/session/logout", { method: "POST" });
+  if (!response.ok) throw await failure(response, "Could not sign out");
 }
 
 export function listHosts(request: typeof fetch = fetch): Promise<Host[]> {

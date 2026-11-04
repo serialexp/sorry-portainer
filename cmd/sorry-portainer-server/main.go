@@ -100,7 +100,11 @@ func serve(cfg config.Server, control config.ControlTLS) error {
 	// api is assigned before any listener starts, so OnConnect never sees nil.
 	var api *server.Server
 	remote := relay.NewRemote(relay.RemoteOptions{OnConnect: func(info protocol.HostInfo) { api.HostConnected(info) }})
-	api = server.New(cfg.AdminPassword, cfg.SessionTTL, remote, store)
+	api = server.New(server.SessionOptions{Password: cfg.AdminPassword, TTL: cfg.SessionTTL,
+		InsecureCookie: cfg.InsecureCookie, TrustedProxies: cfg.TrustedProxies}, remote, store)
+	if cfg.InsecureCookie {
+		log.Printf("warning: insecure_cookie is set; the session cookie is sent over plain HTTP")
+	}
 	svc := enrollment.NewService(ca, registry, time.Now)
 	svc.SetDisconnect(func(host string) { remote.Disconnect(host, errors.New("host removed or re-enrolled")) })
 	api.EnableEnrollment(svc, control.AgentURL())

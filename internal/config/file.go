@@ -21,6 +21,12 @@ type ServerFile struct {
 	ListenAddr    string `json:"listen_addr"`
 	AdminPassword string `json:"admin_password"`
 	SessionTTL    string `json:"session_ttl"`
+	// InsecureCookie drops Secure from the session cookie; only for a
+	// dashboard served over plain HTTP in development.
+	InsecureCookie bool `json:"insecure_cookie,omitempty"`
+	// TrustedProxies are IP addresses or CIDR prefixes of reverse proxies
+	// whose X-Forwarded-For header names the client.
+	TrustedProxies []string `json:"trusted_proxies,omitempty"`
 	// StateDir defaults to the directory holding the config file.
 	StateDir string         `json:"state_dir,omitempty"`
 	Control  ControlTLSFile `json:"control"`
@@ -46,7 +52,12 @@ func LoadServerFile(path string) (Server, ControlTLS, error) {
 			return Server{}, ControlTLS{}, fmt.Errorf("session_ttl: %w", err)
 		}
 	}
-	cfg := Server{ListenAddr: f.ListenAddr, AdminPassword: f.AdminPassword, SessionTTL: ttl, StateDir: f.StateDir}
+	proxies, err := ParseTrustedProxies(f.TrustedProxies)
+	if err != nil {
+		return Server{}, ControlTLS{}, fmt.Errorf("trusted_proxies: %w", err)
+	}
+	cfg := Server{ListenAddr: f.ListenAddr, AdminPassword: f.AdminPassword, SessionTTL: ttl, StateDir: f.StateDir,
+		InsecureCookie: f.InsecureCookie, TrustedProxies: proxies}
 	if cfg.StateDir == "" {
 		cfg.StateDir = filepath.Dir(path)
 	}

@@ -38,10 +38,17 @@ dev-init PASSWORD="dev-admin-password-change-me": build
     # The state holds the CA key; the server refuses a directory others can read.
     chmod 700 "$state"
     if [[ ! -f "$state/server.json" ]]; then
-      "$server" init --state-dir "$state" --admin-password "{{PASSWORD}}" --server-name 127.0.0.1 --control-listen 127.0.0.1:6243 --web-listen 127.0.0.1:6200
+      "$server" init --state-dir "$state" --admin-password "{{PASSWORD}}" --server-name 127.0.0.1 --control-listen 127.0.0.1:6243 --web-listen 127.0.0.1:6200 --insecure-cookie
     elif ! jq -e '.control.server_names | length > 0' "$state/server.json" >/dev/null; then
       systemctl --user stop sorry-portainer-server.service || true
       "$server" pki reset --state-dir "$state" --server-name 127.0.0.1
+    fi
+    # The development dashboard is plain HTTP, where browsers drop a Secure
+    # cookie; state from before the setting existed gets it once.
+    if ! jq -e 'has("insecure_cookie")' "$state/server.json" >/dev/null; then
+      ( umask 077; jq '.insecure_cookie = true' "$state/server.json" > "$state/server.json.new" )
+      mv "$state/server.json.new" "$state/server.json"
+      systemctl --user try-restart sorry-portainer-server.service
     fi
     just install-dev-services
     systemctl --user start sorry-portainer-server.service

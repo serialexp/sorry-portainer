@@ -70,7 +70,7 @@ func secretServer(t *testing.T) (*Server, *secretRelay) {
 		t.Fatal(err)
 	}
 	r := &secretRelay{hosts: []protocol.HostInfo{{HostID: "h1"}, {HostID: "h2"}}, offline: map[string]bool{}}
-	return New("a sufficiently long password", time.Hour, r, store), r
+	return New(testSessions, r, store), r
 }
 
 func decodeBody[T any](t *testing.T, w *httptest.ResponseRecorder) T {

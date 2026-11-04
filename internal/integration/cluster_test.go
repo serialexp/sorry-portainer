@@ -39,7 +39,7 @@ func TestLocalClusterInventory(t *testing.T) {
 		}
 	}
 
-	api := httptest.NewServer(server.New(password, time.Hour, registry, nil).Handler(nil))
+	api := httptest.NewServer(server.New(testSessions(password), registry, nil).Handler(nil))
 	defer api.Close()
 	client := mustAuthenticatedClient(t, api.URL, password)
 
@@ -72,7 +72,7 @@ func TestLocalClusterInventory(t *testing.T) {
 
 func TestLocalClusterStartRoutesByHostPrefix(t *testing.T) {
 	cluster := newFakeCluster()
-	api := httptest.NewServer(server.New("integration-test-admin-password", time.Hour, cluster.registry, nil).Handler(nil))
+	api := httptest.NewServer(server.New(testSessions("integration-test-admin-password"), cluster.registry, nil).Handler(nil))
 	defer api.Close()
 	client := mustAuthenticatedClient(t, api.URL, "integration-test-admin-password")
 
@@ -137,6 +137,12 @@ func (a *fakeAgent) Images(context.Context) ([]protocol.Image, error) {
 }
 func (a *fakeAgent) Stop(_ context.Context, id string) error  { a.started = "stop:" + id; return nil }
 func (a *fakeAgent) Start(_ context.Context, id string) error { a.started = id; return nil }
+
+// testSessions are sessions for a test server on plain HTTP, whose cookie
+// jar would not send a Secure cookie.
+func testSessions(password string) server.SessionOptions {
+	return server.SessionOptions{Password: password, TTL: time.Hour, InsecureCookie: true}
+}
 
 func mustAuthenticatedClient(t *testing.T, baseURL, password string) *http.Client {
 	t.Helper()

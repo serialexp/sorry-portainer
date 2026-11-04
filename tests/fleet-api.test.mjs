@@ -8,6 +8,8 @@ import {
   listImages,
   listVolumes,
   login,
+  logout,
+  MasterUnreachableError,
   UnauthorizedError,
 } from "../src/fleet-api.ts";
 
@@ -28,11 +30,37 @@ test("login posts the password and tells a wrong password from other failures", 
     assert.equal(error.message, "Wrong password.");
     return true;
   });
-  await assert.rejects(login("secret", async () => failed(502)), (error) => {
-    assert.ok(!(error instanceof UnauthorizedError));
-    assert.match(error.message, /Could not sign in \(502\)/);
-    return true;
+  await assert.rejects(
+    login("secret", async () => failed(429, "too many failed sign-ins; try again in 3 seconds")),
+    (error) => {
+      assert.ok(!(error instanceof UnauthorizedError) && !(error instanceof MasterUnreachableError));
+      assert.equal(error.message, "too many failed sign-ins; try again in 3 seconds");
+      return true;
+    },
+  );
+  await assert.rejects(login("secret", async () => failed(400)), /Could not sign in \(400\)/);
+});
+
+test("only a missing master counts as unreachable at sign-in", async () => {
+  for (const status of [502, 503, 504])
+    await assert.rejects(login("secret", async () => failed(status)), MasterUnreachableError);
+  await assert.rejects(
+    login("secret", async () => {
+      throw new TypeError("fetch failed");
+    }),
+    MasterUnreachableError,
+  );
+  await assert.rejects(login("secret", async () => failed(500)), (error) => !(error instanceof MasterUnreachableError));
+});
+
+test("logout posts to the session route", async () => {
+  const calls = [];
+  await logout(async (url, options) => {
+    calls.push([url, options.method]);
+    return { ok: true, status: 204 };
   });
+  assert.deepEqual(calls, [["/api/session/logout", "POST"]]);
+  await assert.rejects(logout(async () => failed(500)), /Could not sign out \(500\)/);
 });
 
 test("host reads are host-scoped and escape the host ID", async () => {

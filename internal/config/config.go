@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -19,11 +20,55 @@ type Server struct {
 	// StateDir holds the master's durable state, including the encrypted
 	// secret store under StateDir/secrets.
 	StateDir string
+	// InsecureCookie drops Secure from the session cookie (plain-HTTP
+	// development only).
+	InsecureCookie bool
+	// TrustedProxies are the reverse proxies whose X-Forwarded-For names the
+	// client for the sign-in limit.
+	TrustedProxies []netip.Prefix
+}
+
+// ParseTrustedProxies reads IP addresses and CIDR prefixes. An address
+// stands for itself alone.
+func ParseTrustedProxies(values []string) ([]netip.Prefix, error) {
+	out := make([]netip.Prefix, 0, len(values))
+	for _, v := range values {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			continue
+		}
+		if strings.Contains(v, "/") {
+			p, err := netip.ParsePrefix(v)
+			if err != nil {
+				return nil, err
+			}
+			if p.Addr().Is4In6() {
+				return nil, fmt.Errorf("%s: write IPv4 prefixes in IPv4 form", v)
+			}
+			if p != p.Masked() {
+				return nil, fmt.Errorf("%s has host bits set; did you mean %s?", v, p.Masked())
+			}
+			out = append(out, p)
+			continue
+		}
+		a, err := netip.ParseAddr(v)
+		if err != nil {
+			return nil, err
+		}
+		a = a.Unmap()
+		out = append(out, netip.PrefixFrom(a, a.BitLen()))
+	}
+	return out, nil
 }
 
 func ServerFromEnv() (Server, error) {
 	cfg := Server{ListenAddr: getenv("SORRY_PORTAINER_LISTEN", ":8080"), SessionTTL: 12 * time.Hour, StateDir: os.Getenv("SORRY_PORTAINER_STATE_DIR"),
-		AdminPassword: os.Getenv("SORRY_PORTAINER_ADMIN_PASSWORD")}
+		AdminPassword: os.Getenv("SORRY_PORTAINER_ADMIN_PASSWORD"), InsecureCookie: os.Getenv("SORRY_PORTAINER_INSECURE_COOKIE") == "1"}
+	proxies, err := ParseTrustedProxies(strings.Split(os.Getenv("SORRY_PORTAINER_TRUSTED_PROXIES"), ","))
+	if err != nil {
+		return Server{}, fmt.Errorf("SORRY_PORTAINER_TRUSTED_PROXIES: %w", err)
+	}
+	cfg.TrustedProxies = proxies
 	if v := os.Getenv("SORRY_PORTAINER_SESSION_TTL"); v != "" {
 		d, err := time.ParseDuration(v)
 		if err != nil || d <= 0 {

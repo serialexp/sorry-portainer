@@ -1,4 +1,14 @@
-# Current task: deploy sorry-portainer to jp1 (master) and hel1 — enrollment Phase 1 and the web UI done; session hardening, release and rsansible role next
+# Current task: deploy sorry-portainer to jp1 (master) and hel1 — enrollment, web UI and session hardening done; Codex/Antigravity review, then release and rsansible role
+
+## Session hardening (2026-11-05)
+
+Wheat change: "Harden dashboard sessions". Bart's choices: Secure cookie by default with `insecure_cookie` for plain-HTTP development; per-client sign-in limit keyed through `trusted_proxies`.
+
+- Code: `internal/server/session.go` (`SessionOptions`, `Logout`, bounded table), `internal/server/loginlimit.go` (GCRA limiter, `clientKey`), config fields `insecure_cookie`/`trusted_proxies` (+ env `SORRY_PORTAINER_INSECURE_COOKIE=1`, `SORRY_PORTAINER_TRUSTED_PROXIES`), `init --insecure-cookie`, schema. Frontend: `logout()`, `MasterUnreachableError` (demo only when unreachable), sign-out calls the server.
+- `just dev-init` adds `insecure_cookie: true` to existing dev state once; done on this machine.
+- Tests: session/limiter tests, five mutation checks (refund, untrusted XFF, logout delete, session eviction, Secure flag), benchmarks `go test -run '^$' -bench 'LimiterFullTable|LoginAtSessionCap' ./internal/server` (22 ns/0 allocs; 37 µs). Live: 10×401 then 429 Retry-After 3; logout clears the cookie; reload after sign-out stays signed out.
+- For the role: on jp1 `listen_addr` must be the Docker bridge gateway (what `host.docker.internal` resolves to), and `trusted_proxies` the Caddy network's subnet (TODO.md).
+- Next: Bart asked for a Codex and Antigravity review of the code, then release (ask first), then the role.
 
 ## Dashboard store and enrollment page (2026-11-05)
 
@@ -9,7 +19,7 @@ Wheat changes, in order: "Enrollment page and web API" (`01a1a75d…`, the `/api
 - Enrollment page: `/enrollment` (sidebar and overview links); `src/enrollment-api.ts` (`certificateState`, overdue below 30 days), `enrollment-store.ts`, `enrollment-ui.tsx`. Token answer has `reenroll`; the command then ends in `--replace` and the page says to restart the agent.
 - Tests: `node --test tests/*.mjs` 26 pass; `tsc`, `biome format`, `pnpm build` clean; `go test -race ./...` green. Browser check on the dev UI: wrong/right password, reload keeps the session, host switch, images, stack editor, sign out, token for a new and an enrolled host, revoke. Remove was not clicked on the dev hosts (it would de-enroll them); the Go route test covers it.
 - Dev: the Vite unit had been running since Sep 25 from the old `sorry-portainer.old-wheat` directory; restarted. The dev server was rebuilt and restarted.
-- Next: the session issues in TODO.md (logout endpoint, `Secure` cookie behind Caddy, login rate limit, `Sessions.max` not a cap) should be settled before the dashboard is public on jp1 — ask Bart; then tag and release (ask first), then the rsansible role.
+- Next: done — see "Session hardening" above.
 
 ## Agent enrollment, allowlisting and rotation (2026-11-05)
 

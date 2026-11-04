@@ -38,7 +38,7 @@ func enrollmentServer(t *testing.T) (*Server, *enrollment.Service, *onlineRelay)
 	svc := enrollment.NewService(ca, registry, time.Now)
 	svc.SetDisconnect(func(string) {})
 	relay := &onlineRelay{}
-	s := New("a sufficiently long password", time.Hour, relay, nil)
+	s := New(testSessions, relay, nil)
 	s.EnableEnrollment(svc, "wss://jp1.example:9443/control/agent")
 	return s, svc, relay
 }
@@ -168,7 +168,7 @@ func TestEnrollmentNeedsASessionAndConfiguration(t *testing.T) {
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("without a session: %d", w.Code)
 	}
-	plain := New("a sufficiently long password", time.Hour, &onlineRelay{}, nil)
+	plain := New(testSessions, &onlineRelay{}, nil)
 	if w := authenticatedStackRequest(t, plain, http.MethodGet, "/api/enrollment/hosts", ""); w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("without enrollment: %d", w.Code)
 	}

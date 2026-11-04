@@ -18,8 +18,5 @@
   - Stack deletion doesn't exist yet; when added it must delete the stack's secrets on the master and make the agent forget them.
   - Backups of the master's sealed secret store (`<state_dir>/secrets`) are undecided.
 
-- Found while moving the dashboard state into stores (2026-11-05); these matter before the dashboard is public on jp1:
-  - "Sign out" only hides the dashboard: there is no logout endpoint, the session stays valid, and a reload signs straight back in.
-  - The session cookie is `Secure` only when the request itself arrived over TLS (`r.TLS != nil`); behind Caddy the dashboard is served over plain HTTP on 127.0.0.1, so the cookie is never `Secure`.
-  - `/api/session/login` has no rate limit or backoff against password guessing.
-  - `Sessions.max` (4096) only triggers pruning of expired sessions; when none have expired the map keeps growing.
+- Found while hardening sessions (2026-11-05):
+  - jp1 deployment: the label-only Caddy container reaches the host through `host.docker.internal` (the Docker bridge gateway), so the server's `listen_addr` there must be that gateway address, not 127.0.0.1, and `trusted_proxies` must list the Caddy network's subnet.

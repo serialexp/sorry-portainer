@@ -37,7 +37,9 @@ type InitOptions struct {
 	// control listener by; the server certificate covers all of them.
 	ServerNames              []string
 	ControlListen, WebListen string
-	Now                      func() time.Time
+	// InsecureCookie sets insecure_cookie, for plain-HTTP development.
+	InsecureCookie bool
+	Now            func() time.Time
 }
 
 // Init creates a new state directory: the control CA, an empty host
@@ -84,7 +86,8 @@ func Init(o InitOptions) error {
 	if err := writePKI(o.StateDir, o.Now()); err != nil {
 		return err
 	}
-	cfg := config.ServerFile{ListenAddr: o.WebListen, AdminPassword: o.AdminPassword, SessionTTL: "12h", Control: control}
+	cfg := config.ServerFile{ListenAddr: o.WebListen, AdminPassword: o.AdminPassword, SessionTTL: "12h",
+		InsecureCookie: o.InsecureCookie, Control: control}
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err

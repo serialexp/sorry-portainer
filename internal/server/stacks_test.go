@@ -9,7 +9,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/serialexp/sorry-portainer/internal/protocol"
 	"github.com/serialexp/sorry-portainer/internal/relay"
@@ -64,7 +63,7 @@ func authenticatedStackRequest(t *testing.T, s *Server, method, path, body strin
 func TestStackHTTPVersionContracts(t *testing.T) {
 	two := 2
 	relay := &stackRelay{stack: protocol.Stack{Name: "web", ComposeYAML: "services: {}", Version: 3}}
-	s := New("a sufficiently long password", time.Hour, relay, nil)
+	s := New(testSessions, relay, nil)
 	w := authenticatedStackRequest(t, s, http.MethodPost, "/api/hosts/host/stacks", `{"name":"web","compose_yaml":"services: {}","expected_version":2}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("POST status = %d: %s", w.Code, w.Body.String())
@@ -87,7 +86,7 @@ func TestStackHTTPVersionContracts(t *testing.T) {
 }
 func TestStackHTTPConflict(t *testing.T) {
 	stacks := &stackRelay{err: &relay.RemoteError{Code: protocol.CodeOperationFailed, Message: "stack version mismatch"}}
-	s := New("a sufficiently long password", time.Hour, stacks, nil)
+	s := New(testSessions, stacks, nil)
 	w := authenticatedStackRequest(t, s, http.MethodPost, "/api/hosts/host/stacks", `{"name":"web","compose_yaml":"services: {}","expected_version":1}`)
 	if w.Code != http.StatusConflict {
 		t.Fatalf("POST status = %d", w.Code)
@@ -118,7 +117,7 @@ func TestRelayFailureStatuses(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			s := New("a sufficiently long password", time.Hour, &stackRelay{err: c.err}, nil)
+			s := New(testSessions, &stackRelay{err: c.err}, nil)
 			w := authenticatedStackRequest(t, s, c.method, c.path, c.body)
 			if w.Code != c.want {
 				t.Fatalf("status = %d, want %d: %s", w.Code, c.want, w.Body.String())
