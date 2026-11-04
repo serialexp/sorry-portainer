@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"strings"
@@ -34,18 +36,58 @@ func (n *names) Set(v string) error {
 func runInit(args []string) {
 	f := flag.NewFlagSet("init", flag.ExitOnError)
 	state := f.String("state-dir", defaultStateDir, "state directory")
-	password := f.String("admin-password", "", "initial web admin password")
+	password := f.String("admin-password", "", "initial web admin password (visible to other local users while init runs; prefer --admin-password-file)")
+	passwordFile := f.String("admin-password-file", "", "read the initial web admin password from this file, or from stdin with -")
 	var serverNames names
 	f.Var(&serverNames, "server-name", "DNS name or IP address agents reach the control listener by (repeat or comma-separate)")
 	control := f.String("control-listen", ":9443", "mTLS control address")
 	web := f.String("web-listen", ":8080", "plain HTTP web address")
 	insecure := f.Bool("insecure-cookie", false, "send the session cookie without Secure (plain-HTTP development only)")
 	_ = f.Parse(args)
+	if *passwordFile != "" {
+		if *password != "" {
+			log.Fatal("give --admin-password or --admin-password-file, not both")
+		}
+		var err error
+		if *password, err = readPassword(*passwordFile, os.Stdin); err != nil {
+			log.Fatal(err)
+		}
+	}
 	if err := provision.Init(provision.InitOptions{StateDir: *state, AdminPassword: *password, ServerNames: serverNames,
 		ControlListen: *control, WebListen: *web, InsecureCookie: *insecure}); err != nil {
 		log.Fatal(err)
 	}
 	fmt.Fprintf(os.Stdout, "initialized server state in %s\n", *state)
+}
+
+// maxPasswordFile bounds what readPassword reads; a password is short.
+const maxPasswordFile = 4 << 10
+
+// readPassword reads a password from path, or from stdin when path is "-".
+// One trailing line ending is dropped, so `echo` and editors that end the
+// file with a newline give the password itself.
+func readPassword(path string, stdin io.Reader) (string, error) {
+	source := stdin
+	if path != "-" {
+		f, err := os.Open(path)
+		if err != nil {
+			return "", fmt.Errorf("read the admin password: %w", err)
+		}
+		defer f.Close()
+		source = f
+	}
+	data, err := io.ReadAll(io.LimitReader(source, maxPasswordFile+1))
+	if err != nil {
+		return "", fmt.Errorf("read the admin password: %w", err)
+	}
+	if len(data) > maxPasswordFile {
+		return "", fmt.Errorf("the admin password file is larger than %d bytes", maxPasswordFile)
+	}
+	password := strings.TrimSuffix(strings.TrimSuffix(string(data), "\n"), "\r")
+	if password == "" {
+		return "", errors.New("the admin password file is empty")
+	}
+	return password, nil
 }
 
 func runPKI(args []string) {
