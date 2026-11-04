@@ -16,12 +16,11 @@ import (
 	"github.com/serialexp/sorry-portainer/internal/agentsetup"
 )
 
-const systemAgentBinary = "/usr/local/bin/sorry-portainer-agent"
-const systemAgentUnit = "/etc/systemd/system/sorry-portainer-agent.service"
-
-// systemAgentDir holds the agent's configuration, credentials and state. The
-// agent user owns it, because the agent replaces its own certificate.
-const systemAgentDir = "/var/lib/sorry-portainer-agent"
+const (
+	systemAgentBinary = agentsetup.SystemAgentBinary
+	systemAgentUnit   = agentsetup.SystemAgentUnit
+	systemAgentDir    = agentsetup.SystemAgentDir
+)
 
 type setupEnvironment struct {
 	readOSRelease func() ([]byte, error)
@@ -207,12 +206,13 @@ func runSetupWithEnvironment(ctx context.Context, args []string, stdout io.Write
 // enrollInstructions is the next step after setup: the agent starts once it
 // has been enrolled.
 func enrollInstructions(user string) string {
-	return fmt.Sprintf(`Next, enroll this host. On the master, as the server's account:
+	return fmt.Sprintf(`Next, enroll this host. Create a token in the dashboard's Enrollment page,
+or on the master as the server's account:
   sorry-portainer-server hosts token --host HOST_ID
-Then here, giving the token on stdin:
-  sudo runuser -u %s -- %s enroll --server-url wss://MASTER:9443/control/agent --host-id HOST_ID --dir %s --token-file -
+Then run here, and paste the token when asked:
+  %s
   sudo systemctl enable --now sorry-portainer-agent
-`, user, systemAgentBinary, systemAgentDir)
+`, agentsetup.EnrollCommand(user, "wss://MASTER:9443/control/agent", "HOST_ID"))
 }
 
 func installAgentService(sourceBinary, user string) error {

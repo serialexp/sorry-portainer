@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/serialexp/sorry-portainer/internal/enrollment"
 	"github.com/serialexp/sorry-portainer/internal/protocol"
 	"github.com/serialexp/sorry-portainer/internal/relay"
 	"github.com/serialexp/sorry-portainer/internal/secretstore"
@@ -44,6 +45,9 @@ type Server struct {
 	// secrets and pusher are nil when no secret store is configured.
 	secrets *secretstore.Store
 	pusher  *secretPusher
+	// enrollment is nil until EnableEnrollment.
+	enrollment *enrollment.Service
+	controlURL string
 }
 
 // New creates the web API. store may be nil, which disables stack secrets.
@@ -63,6 +67,7 @@ func (s *Server) Handler(ui http.Handler) http.Handler {
 	m.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	m.HandleFunc("/api/session/login", s.sessions.Login)
 	m.Handle("/api/secrets/", s.sessions.Require(http.HandlerFunc(s.secretStoreRoute)))
+	m.Handle("/api/enrollment/", s.sessions.Require(http.HandlerFunc(s.enrollmentRoute)))
 	m.Handle("/api/hosts", s.sessions.Require(http.HandlerFunc(s.hosts)))
 	m.Handle("/api/hosts/", s.sessions.Require(http.HandlerFunc(s.hostOperation)))
 	m.Handle("/api/", http.NotFoundHandler())

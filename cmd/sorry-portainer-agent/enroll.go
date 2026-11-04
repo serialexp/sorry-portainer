@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"flag"
@@ -12,6 +13,8 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/serialexp/sorry-portainer/internal/agentcred"
 )
 
@@ -21,7 +24,8 @@ const enrollTimeout = time.Minute
 // runEnroll exchanges a one-time token for this host's certificate and
 // writes the agent configuration. The token is read from a file or stdin,
 // never from the command line, so it does not show up in a process list.
-func runEnroll(args []string, stdin io.Reader, stdout io.Writer) error {
+// prompt, when not nil, asks for the token on stdin (a terminal).
+func runEnroll(args []string, stdin io.Reader, prompt, stdout io.Writer) error {
 	flags := flag.NewFlagSet("enroll", flag.ContinueOnError)
 	serverURL := flags.String("server-url", "", "master control URL, wss://HOST:PORT/control/agent")
 	hostID := flags.String("host-id", "", "this host's ID, as the token was issued for")
@@ -42,7 +46,7 @@ func runEnroll(args []string, stdin io.Reader, stdout io.Writer) error {
 			return fmt.Errorf("enroll requires %s", name)
 		}
 	}
-	token, err := readToken(*tokenFile, stdin)
+	token, err := readToken(*tokenFile, stdin, prompt)
 	if err != nil {
 		return err
 	}
@@ -62,7 +66,10 @@ func runEnroll(args []string, stdin io.Reader, stdout io.Writer) error {
 // maxTokenFile is far above a token's length; anything longer is not one.
 const maxTokenFile = 4 << 10
 
-func readToken(path string, stdin io.Reader) (string, error) {
+// readToken reads the token: the first line of the file, or of stdin for
+// "-". A token is one line, so pasting it at a prompt and pressing Enter is
+// enough.
+func readToken(path string, stdin io.Reader, prompt io.Writer) (string, error) {
 	var source io.Reader = stdin
 	if path != "-" {
 		f, err := os.Open(path)
@@ -71,17 +78,25 @@ func readToken(path string, stdin io.Reader) (string, error) {
 		}
 		defer f.Close()
 		source = f
+	} else if prompt != nil {
+		fmt.Fprint(prompt, "Paste the enrollment token and press Enter: ")
 	}
-	data, err := io.ReadAll(io.LimitReader(source, maxTokenFile+1))
-	if err != nil {
+	line, err := bufio.NewReader(io.LimitReader(source, maxTokenFile+1)).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
 		return "", fmt.Errorf("read the token: %w", err)
 	}
-	if len(data) > maxTokenFile {
+	if len(line) > maxTokenFile {
 		return "", errors.New("the token file is too large to hold a token")
 	}
-	token := strings.TrimSpace(string(data))
+	token := strings.TrimSpace(line)
 	if token == "" {
 		return "", errors.New("no token given")
 	}
 	return token, nil
+}
+
+// isTerminal reports whether f is a terminal.
+func isTerminal(f *os.File) bool {
+	_, err := unix.IoctlGetTermios(int(f.Fd()), unix.TCGETS)
+	return err == nil
 }

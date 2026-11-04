@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -41,7 +42,11 @@ func main() {
 		os.Exit(runOCIHook(os.Args[2:]))
 	}
 	if len(os.Args) > 1 && os.Args[1] == "enroll" {
-		if err := runEnroll(os.Args[2:], os.Stdin, os.Stdout); err != nil {
+		var prompt io.Writer
+		if isTerminal(os.Stdin) {
+			prompt = os.Stderr
+		}
+		if err := runEnroll(os.Args[2:], os.Stdin, prompt, os.Stdout); err != nil {
 			log.Fatal(err)
 		}
 		return

@@ -48,6 +48,16 @@ func ValidServerName(name string) bool {
 	return len(name) <= 253 && dnsNamePattern.MatchString(name)
 }
 
+// AgentURL is the relay URL agents dial: the first server name and the
+// listener's port.
+func (c ControlTLS) AgentURL() string {
+	_, port, err := net.SplitHostPort(c.ListenAddr)
+	if err != nil || port == "" {
+		port = "9443"
+	}
+	return "wss://" + net.JoinHostPort(c.ServerNames[0], port) + "/control/agent"
+}
+
 func validateControl(c ControlTLS) error {
 	if c.ListenAddr == ":80" || c.ListenAddr == ":443" {
 		return errors.New("control listener must not use port 80 or 443")

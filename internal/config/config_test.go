@@ -49,6 +49,21 @@ func TestControlTLSFromEnvRequiresServerNames(t *testing.T) {
 	}
 }
 
+func TestAgentURL(t *testing.T) {
+	for listen, want := range map[string]string{
+		":9443":          "wss://jp1.example:9443/control/agent",
+		"0.0.0.0:7443":   "wss://jp1.example:7443/control/agent",
+		"127.0.0.1:6243": "wss://jp1.example:6243/control/agent",
+	} {
+		if got := (ControlTLS{ListenAddr: listen, ServerNames: []string{"jp1.example", "10.0.0.1"}}).AgentURL(); got != want {
+			t.Errorf("%s: %s, want %s", listen, got, want)
+		}
+	}
+	if got := (ControlTLS{ListenAddr: ":9443", ServerNames: []string{"2001:db8::1"}}).AgentURL(); got != "wss://[2001:db8::1]:9443/control/agent" {
+		t.Errorf("IPv6 name: %s", got)
+	}
+}
+
 func TestValidServerName(t *testing.T) {
 	for _, ok := range []string{"jp1.serial-experiments.com", "localhost", "127.0.0.1", "::1", "control.local"} {
 		if !ValidServerName(ok) {

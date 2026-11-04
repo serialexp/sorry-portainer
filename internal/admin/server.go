@@ -165,12 +165,7 @@ func (s *Server) list() ListResponse {
 	for _, info := range s.connected() {
 		online[info.HostID] = true
 	}
-	entries := s.enrollment.Registry().List()
-	hosts := make([]HostStatus, len(entries))
-	for i, e := range entries {
-		hosts[i] = HostStatus{HostID: e.HostID, Prefix: e.Prefix, EnrolledAt: e.EnrolledAt, CurrentNotAfter: e.Current.NotAfter,
-			Pending: e.Pending != (enrollment.CertRef{}), Online: online[e.HostID]}
-	}
+	hosts := s.enrollment.Registry().Statuses(online)
 	tokens := s.enrollment.Tokens()
 	if tokens == nil {
 		tokens = []enrollment.TokenInfo{}

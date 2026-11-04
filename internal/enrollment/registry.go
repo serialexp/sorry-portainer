@@ -183,6 +183,30 @@ func (r *Registry) List() []HostEntry {
 	return out
 }
 
+// HostStatus is an enrolled host as administrators see it.
+type HostStatus struct {
+	HostID          string    `json:"host_id"`
+	Prefix          string    `json:"prefix"`
+	EnrolledAt      time.Time `json:"enrolled_at"`
+	CurrentNotAfter time.Time `json:"current_not_after"`
+	// Pending is true while a renewed certificate waits for the agent to
+	// connect with it.
+	Pending bool `json:"pending"`
+	Online  bool `json:"online"`
+}
+
+// Statuses lists the enrolled hosts ordered by ID; online says which have a
+// session.
+func (r *Registry) Statuses(online map[string]bool) []HostStatus {
+	entries := r.List()
+	out := make([]HostStatus, len(entries))
+	for i, e := range entries {
+		out[i] = HostStatus{HostID: e.HostID, Prefix: e.Prefix, EnrolledAt: e.EnrolledAt, CurrentNotAfter: e.Current.NotAfter,
+			Pending: e.Pending != (CertRef{}), Online: online[e.HostID]}
+	}
+	return out
+}
+
 // update applies change to a copy of the registry, persists it, and then
 // publishes it. If change fails, nothing is written. If the write fails
 // before the rename, nothing changes. If only the directory sync fails, the

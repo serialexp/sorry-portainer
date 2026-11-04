@@ -103,6 +103,7 @@ func serve(cfg config.Server, control config.ControlTLS) error {
 	api = server.New(cfg.AdminPassword, cfg.SessionTTL, remote, store)
 	svc := enrollment.NewService(ca, registry, time.Now)
 	svc.SetDisconnect(func(host string) { remote.Disconnect(host, errors.New("host removed or re-enrolled")) })
+	api.EnableEnrollment(svc, control.AgentURL())
 
 	adminListener, err := admin.Listen(cfg.StateDir)
 	if err != nil {

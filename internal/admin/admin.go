@@ -44,22 +44,10 @@ type TokenResponse struct {
 	ExpiresAt time.Time `json:"expires_at"`
 }
 
-// HostStatus is one enrolled host.
-type HostStatus struct {
-	HostID          string    `json:"host_id"`
-	Prefix          string    `json:"prefix"`
-	EnrolledAt      time.Time `json:"enrolled_at"`
-	CurrentNotAfter time.Time `json:"current_not_after"`
-	// Pending is true while a renewed certificate waits for the agent to
-	// connect with it.
-	Pending bool `json:"pending"`
-	Online  bool `json:"online"`
-}
-
 // ListResponse answers ActionList.
 type ListResponse struct {
-	Hosts  []HostStatus           `json:"hosts"`
-	Tokens []enrollment.TokenInfo `json:"tokens"`
+	Hosts  []enrollment.HostStatus `json:"hosts"`
+	Tokens []enrollment.TokenInfo  `json:"tokens"`
 }
 
 // RemoveResponse answers ActionRemove.
