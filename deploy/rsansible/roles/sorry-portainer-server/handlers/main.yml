@@ -1,0 +1,5 @@
+- name: Restart sorry-portainer-server
+  systemd:
+    name: sorry-portainer-server
+    state: restarted
+    daemon_reload: true

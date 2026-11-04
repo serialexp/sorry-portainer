@@ -1,0 +1,26 @@
+# Managed by the sorry-portainer-server rsansible role.
+[Unit]
+Description=Sorry Portainer master
+Documentation=https://gothab.io/serialexp/sorry-portainer
+# The dashboard listens on a Docker bridge's gateway address, which exists
+# only once Docker has brought its networks up.
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sorry-portainer
+Group=sorry-portainer
+ExecStart={{ sorry_portainer_server_bin }} --config {{ sorry_portainer_server_state_dir }}/server.json
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ReadWritePaths={{ sorry_portainer_server_state_dir }}
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

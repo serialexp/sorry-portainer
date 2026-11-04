@@ -1,0 +1,41 @@
+# Enrollment, once per host: the master issues a one-time token through its
+# admin socket (root may use it), and the agent enrolls with it over the
+# network. The token only ever travels on stdin.
+
+- name: Issue an enrollment token
+  delegate_to: "{{ sorry_portainer_master }}"
+  command:
+    argv:
+      - "{{ sorry_portainer_master_bin }}"
+      - hosts
+      - token
+      - --state-dir
+      - "{{ sorry_portainer_master_state_dir }}"
+      - --host
+      - "{{ sorry_portainer_host_id }}"
+      - --ttl
+      - 15m
+  register: sorry_portainer_token
+  when: not sorry_portainer_agent_config.stat.exists
+  no_log: true
+  tags: [sorry-portainer]
+
+- name: Enroll with the master
+  become_user: sorry-portainer
+  command:
+    argv:
+      - "{{ sorry_portainer_agent_bin }}"
+      - enroll
+      - --server-url
+      - "{{ sorry_portainer_control_url }}"
+      - --host-id
+      - "{{ sorry_portainer_host_id }}"
+      - --dir
+      - "{{ sorry_portainer_agent_dir }}"
+      - --token-file
+      - "-"
+    chdir: "{{ sorry_portainer_agent_dir }}"
+    stdin: "{{ sorry_portainer_token.stdout | trim }}\n"
+  when: not sorry_portainer_agent_config.stat.exists
+  no_log: true
+  tags: [sorry-portainer]

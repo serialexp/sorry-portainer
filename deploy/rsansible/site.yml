@@ -1,0 +1,23 @@
+# Deploys sorry-portainer: the master (server) first, then the agents, which
+# enroll with one-time tokens the master issues during the run.
+#
+#   rsansible run -i deploy/rsansible/inventory/production.yml deploy/rsansible/site.yml
+#
+# The inventory is not in the repository; inventory.example.yml shows its
+# shape. vars/release.yml pins the release binaries by URL and SHA-256.
+
+- name: sorry-portainer master
+  hosts: sorry_portainer_server
+  become: true
+  vars_files:
+    - vars/release.yml
+  roles:
+    - sorry-portainer-server
+
+- name: sorry-portainer agents
+  hosts: sorry_portainer_agents
+  become: true
+  vars_files:
+    - vars/release.yml
+  roles:
+    - sorry-portainer-agent

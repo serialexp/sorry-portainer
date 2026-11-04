@@ -1,4 +1,13 @@
-# Current task: deploy sorry-portainer to jp1 (master) and hel1 — v0.2.0 released; next the rsansible role
+# Current task: deploy sorry-portainer to jp1 (master) and hel1 — deployed with the rsansible role (v0.2.2)
+
+## Deployment (2026-11-05)
+
+- `deploy/rsansible`: `site.yml`, roles `sorry-portainer-server` and `sorry-portainer-agent`, `vars/release.yml` (pins), `inventory.example.yml`, `README.md`. The real inventory `deploy/rsansible/inventory/` is Wheat-ignored. The admin password was generated, unseen, into `inventory/group_vars/all/secrets.yml`; Bart reads it from there.
+- Releases: v0.2.1 adds `init --admin-password-file`. v0.2.2 fixes the agent unit (`%U` meant root in a system unit, so the agent crash-looped on `/run/user/0`). Both are on Gothab only; GitHub was not pushed (ask first).
+- Live: the master is on jp1. Control is on `:9443`, publicly reachable. The dashboard listens on `172.20.0.1:6200` (the caddy bridge) and is served at https://sorry-portainer.jp.serial-experiments.com through the `sorry-portainer-caddy` label container. hel1 runs Podman 5.7.0 and podman-compose 1.5.0, is enrolled, and shows online. A second run changes nothing.
+- rsansible gaps worked around: `become_user` isn't templated (the account is fixed as `sorry-portainer`); there are no `dirname` or `tojson` filters (`to_json` is compact); `stat` has no `checksum_algorithm` (it is always sha256).
+- Not checked: signing in with the real password (it stays unread, Rule 16), and a reboot of either host.
+
 
 ## Release v0.2.0 (2026-11-05)
 

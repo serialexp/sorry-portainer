@@ -1,0 +1,144 @@
+# The master: binary, state directory, server.json, systemd unit, and the
+# label-only container through which caddy-docker-proxy serves the
+# dashboard. The account is always sorry-portainer: rsansible does not
+# template become_user.
+
+- name: Check the required settings
+  assert:
+    that:
+      - sorry_portainer_admin_password is defined
+      - sorry_portainer_admin_password | length >= 12
+      - sorry_portainer_server_names | length > 0
+      - sorry_portainer_dashboard_host is defined
+    fail_msg: "set sorry_portainer_admin_password (12+ characters), sorry_portainer_server_names and sorry_portainer_dashboard_host"
+  no_log: true
+  tags: [sorry-portainer]
+
+- name: Create the server account
+  user:
+    name: sorry-portainer
+    system: true
+    home: "{{ sorry_portainer_server_state_dir }}"
+    create_home: false
+    shell: /usr/sbin/nologin
+    state: present
+  tags: [sorry-portainer]
+
+# The server refuses a state directory anyone else can read: it holds the
+# control CA's key.
+- name: Create the state directory
+  file:
+    path: "{{ sorry_portainer_server_state_dir }}"
+    state: directory
+    owner: sorry-portainer
+    group: sorry-portainer
+    mode: "0700"
+  tags: [sorry-portainer]
+
+- name: Install the server binary
+  get_url:
+    url: "{{ sorry_portainer_server_binary_url }}"
+    dest: "{{ sorry_portainer_server_bin }}"
+    checksum: "sha256:{{ sorry_portainer_server_binary_sha256 }}"
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart sorry-portainer-server
+  tags: [sorry-portainer]
+
+# The dashboard listens on the gateway address of the network Caddy is on,
+# so only containers on that network reach it, and Caddy's address is the
+# trusted proxy for sign-in rate limiting.
+- name: Read the Caddy network's gateway and subnet
+  command:
+    argv:
+      - docker
+      - network
+      - inspect
+      - "{{ sorry_portainer_caddy_network }}"
+      - --format
+      - "{{ '{{' }}(index .IPAM.Config 0).Gateway{{ '}}' }} {{ '{{' }}(index .IPAM.Config 0).Subnet{{ '}}' }}"
+  register: sorry_portainer_caddy_ipam
+  changed_when: false
+  check_mode: false
+  tags: [sorry-portainer, caddy]
+
+- name: Derive the dashboard address
+  set_fact:
+    sorry_portainer_web_listen: "{{ (sorry_portainer_caddy_ipam.stdout | trim).split(' ')[0] }}:{{ sorry_portainer_web_port }}"
+    sorry_portainer_web_upstream: "{{ (sorry_portainer_caddy_ipam.stdout | trim).split(' ')[0] }}:{{ sorry_portainer_web_port }}"
+    sorry_portainer_trusted_proxy: "{{ (sorry_portainer_caddy_ipam.stdout | trim).split(' ')[1] }}"
+  tags: [sorry-portainer, caddy]
+
+- name: Check whether the state is initialized
+  stat:
+    path: "{{ sorry_portainer_server_state_dir }}/control-ca.key"
+  register: sorry_portainer_ca_key
+  tags: [sorry-portainer]
+
+# init creates the control CA and the empty host registry; the template
+# below then owns server.json. The password goes in on stdin, never argv.
+- name: Initialize the server state
+  become_user: sorry-portainer
+  command:
+    argv:
+      - "{{ sorry_portainer_server_bin }}"
+      - init
+      - --state-dir
+      - "{{ sorry_portainer_server_state_dir }}"
+      - --admin-password-file
+      - "-"
+      - --server-name
+      - "{{ sorry_portainer_server_names | join(',') }}"
+      - --control-listen
+      - "{{ sorry_portainer_control_listen }}"
+      - --web-listen
+      - "{{ sorry_portainer_web_listen }}"
+    chdir: "{{ sorry_portainer_server_state_dir }}"
+    stdin: "{{ sorry_portainer_admin_password }}\n"
+  when: not sorry_portainer_ca_key.stat.exists
+  no_log: true
+  notify: Restart sorry-portainer-server
+  tags: [sorry-portainer]
+
+- name: Write server.json
+  template:
+    src: server.json.j2
+    dest: "{{ sorry_portainer_server_state_dir }}/server.json"
+    owner: sorry-portainer
+    group: sorry-portainer
+    mode: "0600"
+  no_log: true
+  notify: Restart sorry-portainer-server
+  tags: [sorry-portainer]
+
+- name: Install the systemd unit
+  template:
+    src: sorry-portainer-server.service.j2
+    dest: /etc/systemd/system/sorry-portainer-server.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart sorry-portainer-server
+  tags: [sorry-portainer]
+
+- name: Start the server
+  systemd:
+    name: sorry-portainer-server
+    enabled: true
+    state: started
+    daemon_reload: true
+  tags: [sorry-portainer]
+
+- name: Apply pending restarts
+  meta: flush_handlers
+  tags: [sorry-portainer]
+
+# Agents enroll right after this play; the admin socket must answer.
+- name: Wait for the admin socket
+  wait_for:
+    path: "{{ sorry_portainer_server_state_dir }}/admin.sock"
+    timeout: 60
+  tags: [sorry-portainer]
+
+- import_tasks: caddy.yml

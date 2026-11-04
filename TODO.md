@@ -18,8 +18,11 @@
   - Stack deletion doesn't exist yet; when added it must delete the stack's secrets on the master and make the agent forget them.
   - Backups of the master's sealed secret store (`<state_dir>/secrets`) are undecided.
 
-- Found while hardening sessions (2026-11-05):
-  - jp1 deployment: the label-only Caddy container reaches the host through `host.docker.internal` (the Docker bridge gateway), so the server's `listen_addr` there must be that gateway address, not 127.0.0.1, and `trusted_proxies` must list the Caddy network's subnet.
+- Found while deploying to jp1 and hel1 (2026-11-05):
+  - jp1's root filesystem is 94% full (about 4.6 GB free). Nothing was cleaned up; that needs Bart.
+  - Not yet tested: a reboot of jp1. The dashboard listens on the Caddy network's gateway address, which exists only once Docker is up. The unit is ordered `After=docker.service` and restarts every 5 s if the bind fails, so it should recover either way. Check the journal after the next reboot.
+  - Every release means copying asset URLs and checksums into `deploy/rsansible/vars/release.yml` by hand, because Gothab has no by-tag download URL. Either Gothab gets one, or a small script fills the file from `gt release view`.
+  - The role doesn't remove hosts or the label container; removing a host is `hosts remove` by hand.
 
 - From the Codex/Antigravity review (2026-11-05), deferred by Bart until after v0.2.0:
   - The control listener's failure log (`internal/server/control.go`) is keyed by the full remote address, so rotating IPv6 addresses evict real entries and escape the per-address limit. Key it by `clientPrefix` (/64) and add a global lines-per-minute budget.

@@ -1,0 +1,9 @@
+sorry_portainer_agent_dir: /var/lib/sorry-portainer-agent
+sorry_portainer_agent_bin: /usr/local/bin/sorry-portainer-agent
+# The release binary is downloaded here; setup copies it to
+# sorry_portainer_agent_bin.
+sorry_portainer_agent_download_dir: /var/cache/sorry-portainer
+sorry_portainer_host_id: "{{ inventory_hostname }}"
+# The master's state directory and binary, for issuing enrollment tokens.
+sorry_portainer_master_state_dir: /var/lib/sorry-portainer
+sorry_portainer_master_bin: /usr/local/bin/sorry-portainer-server

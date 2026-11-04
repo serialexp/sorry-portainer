@@ -1,0 +1,65 @@
+# An agent host: `sorry-portainer-agent setup` installs Podman, the
+# rootless service user, the binary and its unit; the host then enrolls
+# with a one-time token from the master and the service starts.
+
+- name: Create the download directory
+  file:
+    path: "{{ sorry_portainer_agent_download_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  tags: [sorry-portainer]
+
+- name: Download the agent binary
+  get_url:
+    url: "{{ sorry_portainer_agent_binary_url }}"
+    dest: "{{ sorry_portainer_agent_download_dir }}/sorry-portainer-agent"
+    checksum: "sha256:{{ sorry_portainer_agent_binary_sha256 }}"
+    owner: root
+    group: root
+    mode: "0755"
+  tags: [sorry-portainer]
+
+- name: Check the installed agent binary
+  stat:
+    path: "{{ sorry_portainer_agent_bin }}"
+  register: sorry_portainer_agent_installed
+  tags: [sorry-portainer]
+
+- name: Check what setup would change
+  command:
+    argv: ["{{ sorry_portainer_agent_download_dir }}/sorry-portainer-agent", setup, --dry-run, --user, sorry-portainer]
+  register: sorry_portainer_agent_plan
+  changed_when: false
+  check_mode: false
+  tags: [sorry-portainer]
+
+- name: Check whether the agent is enrolled
+  stat:
+    path: "{{ sorry_portainer_agent_dir }}/agent.json"
+  register: sorry_portainer_agent_config
+  tags: [sorry-portainer]
+
+# setup is idempotent; it runs when the host lacks something or the
+# installed binary is not the pinned one.
+- name: Set up the agent host
+  command:
+    argv: ["{{ sorry_portainer_agent_download_dir }}/sorry-portainer-agent", setup, --user, sorry-portainer]
+    chdir: /
+  when: >-
+    'No package or rootless Podman changes are required.' not in sorry_portainer_agent_plan.stdout
+    or not sorry_portainer_agent_installed.stat.exists
+    or sorry_portainer_agent_installed.stat.checksum != sorry_portainer_agent_binary_sha256
+  notify: Restart sorry-portainer-agent
+  tags: [sorry-portainer]
+
+- import_tasks: enroll.yml
+
+- name: Start the agent
+  systemd:
+    name: sorry-portainer-agent
+    enabled: true
+    state: started
+    daemon_reload: true
+  tags: [sorry-portainer]

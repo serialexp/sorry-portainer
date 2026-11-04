@@ -1,0 +1,58 @@
+# caddy-docker-proxy builds its configuration from container labels. This
+# container exists only to carry them; Caddy proxies to the address in the
+# label, the server on the Caddy network's gateway.
+
+- name: Read the label container's labels
+  command:
+    argv:
+      - docker
+      - inspect
+      - --format
+      - "{{ '{{' }}index .Config.Labels \"caddy\"{{ '}}' }} {{ '{{' }}index .Config.Labels \"caddy.reverse_proxy\"{{ '}}' }} {{ '{{' }}.Config.Image{{ '}}' }}"
+      - "{{ sorry_portainer_caddy_container }}"
+  register: sorry_portainer_caddy_labels
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  tags: [sorry-portainer, caddy]
+
+- name: Decide whether the label container needs replacing
+  set_fact:
+    sorry_portainer_caddy_current: >-
+      {{ sorry_portainer_caddy_labels.rc == 0 and
+         (sorry_portainer_caddy_labels.stdout | trim) ==
+         (sorry_portainer_dashboard_host ~ ' ' ~ sorry_portainer_web_upstream ~ ' ' ~ sorry_portainer_caddy_image) }}
+  tags: [sorry-portainer, caddy]
+
+- name: Remove the outdated label container
+  command:
+    argv: [docker, rm, --force, "{{ sorry_portainer_caddy_container }}"]
+  when: sorry_portainer_caddy_labels.rc == 0 and not sorry_portainer_caddy_current | bool
+  tags: [sorry-portainer, caddy]
+
+- name: Run the label container
+  command:
+    argv:
+      - docker
+      - run
+      - --detach
+      - --name
+      - "{{ sorry_portainer_caddy_container }}"
+      - --restart
+      - unless-stopped
+      - --network
+      - "{{ sorry_portainer_caddy_network }}"
+      - --read-only
+      - --cap-drop
+      - ALL
+      - --security-opt
+      - no-new-privileges
+      - --memory
+      - 16m
+      - --label
+      - "caddy={{ sorry_portainer_dashboard_host }}"
+      - --label
+      - "caddy.reverse_proxy={{ sorry_portainer_web_upstream }}"
+      - "{{ sorry_portainer_caddy_image }}"
+  when: not sorry_portainer_caddy_current | bool
+  tags: [sorry-portainer, caddy]

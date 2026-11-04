@@ -1,0 +1,9 @@
+sorry_portainer_server_state_dir: /var/lib/sorry-portainer
+sorry_portainer_server_bin: /usr/local/bin/sorry-portainer-server
+sorry_portainer_control_listen: ":9443"
+sorry_portainer_web_port: 6200
+sorry_portainer_session_ttl: 12h
+sorry_portainer_caddy_network: caddy
+# Carries the Caddy labels only; Caddy proxies to the address in the label.
+sorry_portainer_caddy_container: sorry-portainer-caddy
+sorry_portainer_caddy_image: registry.k8s.io/pause:3.10

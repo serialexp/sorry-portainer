@@ -1,6 +1,6 @@
 # Agent Enrollment and Certificate Rotation — Design
 
-Status: partial — Phase 1 and the Phase 2 UI implemented (2026-11-05); the rsansible role is outstanding
+Status: complete except the deferred items — Phases 1 and 2 implemented; deployed to jp1 (master) and hel1 with the rsansible role (2026-11-05)
 Owner: Bart
 Last updated: 2026-11-05
 
@@ -35,7 +35,7 @@ items as they land and move them to Done.
 - [x] **Extended beyond the plan — graceful server shutdown.** SIGTERM stops both listeners and gives in-flight requests 10 seconds; agent sessions close with the process and agents reconnect.
 - [x] **Phase 2 — web API.** The `/api/enrollment/` routes in [Web UI](#web-ui), behind the dashboard session; `internal/server/enrollment.go`. Extended beyond the plan: the token answer says whether the host is already enrolled (`reenroll`), and its command then ends in `--replace`.
 - [x] **Phase 2 — UI.** The `/enrollment` page (`src/enrollment-ui.tsx`, `enrollment-store.ts`, `enrollment-api.ts`): enroll a host with the token and agent command shown once, outstanding tokens with revoke, enrolled hosts including offline ones with certificate expiry and renewal state, remove with confirmation. Its own page rather than part of the host page; see the note under [Web UI](#web-ui).
-- [ ] **Phase 2 — rsansible role.** Install the master and agents from a release and enroll each agent with a fresh token; covered in its own doc.
+- [x] **Phase 2 — rsansible role.** `deploy/rsansible` (usage in its `README.md`) installs the master and agents from a pinned release and enrolls each agent with a fresh token from `hosts token`, passed on stdin under `no_log`. Extended beyond the plan: `server init --admin-password-file PATH|-` (v0.2.1), so the password never appears in a process list. Found while deploying: the agent unit's `%U` resolved to root's UID in a system unit; `setup` now writes the service user's UID and orders the agent after `user@UID.service` (v0.2.2). Applied to jp1 and hel1 on 2026-11-05; hel1 is online and a second run changes nothing.
 - [ ] **Defer — control CA rotation.** The CA is valid for 10 years; `server pki reset` replaces it, and every agent must then be enrolled again.
 - [ ] **Defer — master-enforced host prefix.** The prefix stays in the agent's config; the master records the one the agent reports at enrollment but does not enforce it.
 

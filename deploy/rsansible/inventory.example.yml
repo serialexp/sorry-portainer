@@ -1,0 +1,27 @@
+# Copy to inventory/production.yml (Wheat-ignored) and fill in. Secrets go
+# in inventory/group_vars/all/secrets.yml, also ignored:
+#
+#   sorry_portainer_admin_password: "at least 12 characters"
+all:
+  vars:
+    ansible_user: root
+    # The master's control URL, as agents reach it. Its host name must be
+    # one of sorry_portainer_server_names.
+    sorry_portainer_master: master
+    sorry_portainer_control_url: "wss://master.example.com:9443/control/agent"
+  children:
+    sorry_portainer_server:
+      hosts:
+        master:
+          ansible_host: master.example.com
+          sorry_portainer_server_names: [master.example.com]
+          # Docker network caddy-docker-proxy watches; the dashboard listens
+          # on its gateway address and Caddy serves it under this name.
+          sorry_portainer_caddy_network: caddy
+          sorry_portainer_dashboard_host: sorry-portainer.example.com
+    sorry_portainer_agents:
+      hosts:
+        podman-host:
+          ansible_host: podman-host.example.com
+          # Defaults to the inventory name.
+          sorry_portainer_host_id: podman-host

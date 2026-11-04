@@ -1,0 +1,14 @@
+{{ {
+  "state_dir": sorry_portainer_server_state_dir,
+  "listen_addr": sorry_portainer_web_listen,
+  "admin_password": sorry_portainer_admin_password,
+  "session_ttl": sorry_portainer_session_ttl,
+  "trusted_proxies": [sorry_portainer_trusted_proxy],
+  "control": {
+    "listen_addr": sorry_portainer_control_listen,
+    "ca_file": sorry_portainer_server_state_dir ~ "/control-ca.crt",
+    "ca_key_file": sorry_portainer_server_state_dir ~ "/control-ca.key",
+    "credential_file": sorry_portainer_server_state_dir ~ "/control-server.pem",
+    "server_names": sorry_portainer_server_names,
+  },
+} | to_json }}
