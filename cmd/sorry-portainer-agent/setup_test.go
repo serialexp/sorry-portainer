@@ -161,20 +161,27 @@ func TestSetupDryRunUsesHumanProgressOnly(t *testing.T) {
 }
 
 func TestAgentUnitRunsFromTheAgentDirectory(t *testing.T) {
-	unit := agentUnit("spa", "/home/spa", "/usr/local/bin/sorry-portainer-agent", "/var/lib/sorry-portainer-agent")
+	unit := agentUnit("spa", 1234, "/home/spa", "/usr/local/bin/sorry-portainer-agent", "/var/lib/sorry-portainer-agent")
 	for _, wanted := range []string{
+		"After=network-online.target user@1234.service\n",
+		"Wants=network-online.target user@1234.service\n",
 		"ConditionPathExists=/var/lib/sorry-portainer-agent/agent.json\n",
 		"ExecStart=/usr/local/bin/sorry-portainer-agent --config /var/lib/sorry-portainer-agent/agent.json\n",
 		"User=spa\n",
+		"Group=spa\n",
 		"Environment=HOME=/home/spa\n",
-		"Environment=XDG_RUNTIME_DIR=/run/user/%U\n",
+		"Environment=XDG_RUNTIME_DIR=/run/user/1234\n",
 	} {
 		if !strings.Contains(unit, wanted) {
 			t.Fatalf("unit missing %q:\n%s", wanted, unit)
 		}
 	}
-	if strings.Contains(unit, "/etc/sorry-portainer") {
-		t.Fatalf("unit still uses /etc/sorry-portainer:\n%s", unit)
+	// A specifier would expand to the system manager's values (root's),
+	// not the service user's.
+	for _, unwanted := range []string{"/etc/sorry-portainer", "%"} {
+		if strings.Contains(unit, unwanted) {
+			t.Fatalf("unit contains %q:\n%s", unwanted, unit)
+		}
 	}
 }
 

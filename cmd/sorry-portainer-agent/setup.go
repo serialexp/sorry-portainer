@@ -238,7 +238,7 @@ func installAgentService(sourceBinary, user string) error {
 	if err := prepareAgentDir(systemAgentDir, uid, gid); err != nil {
 		return fmt.Errorf("prepare %s: %w", systemAgentDir, err)
 	}
-	unit := agentUnit(user, filepath.Join("/home", user), systemAgentBinary, systemAgentDir)
+	unit := agentUnit(user, uid, filepath.Join("/home", user), systemAgentBinary, systemAgentDir)
 	if err := writeAtomic(systemAgentUnit, []byte(unit), 0644); err != nil {
 		return fmt.Errorf("install agent systemd service: %w", err)
 	}
@@ -250,28 +250,31 @@ func installAgentService(sourceBinary, user string) error {
 }
 
 // agentUnit is the system service. It waits for enrollment: without
-// agent.json it does not start.
-func agentUnit(user, home, binary, dir string) string {
+// agent.json it does not start. The runtime directory is written out
+// because systemd's %U in a system unit is the manager's UID (0), not
+// User='s; the user's manager owns that directory and the Podman socket,
+// so the agent starts after it.
+func agentUnit(user string, uid int, home, binary, dir string) string {
 	config := filepath.Join(dir, "agent.json")
 	return fmt.Sprintf(`[Unit]
 Description=Sorry Portainer Podman agent
-After=network-online.target
-Wants=network-online.target
-ConditionPathExists=%s
+After=network-online.target user@%[2]d.service
+Wants=network-online.target user@%[2]d.service
+ConditionPathExists=%[3]s
 
 [Service]
 Type=simple
-User=%s
-Group=%s
-Environment=HOME=%s
-Environment=XDG_RUNTIME_DIR=/run/user/%%U
-ExecStart=%s --config %s
+User=%[1]s
+Group=%[1]s
+Environment=HOME=%[4]s
+Environment=XDG_RUNTIME_DIR=/run/user/%[2]d
+ExecStart=%[5]s --config %[3]s
 Restart=on-failure
 RestartSec=2
 
 [Install]
 WantedBy=multi-user.target
-`, config, user, user, home, binary, config)
+`, user, uid, config, home, binary)
 }
 
 // prepareAgentDir creates the agent directory, or brings an existing one to
