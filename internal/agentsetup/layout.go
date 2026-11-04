@@ -13,8 +13,13 @@ const (
 
 // EnrollCommand is what an administrator runs on a set-up host to enroll it.
 // The token is pasted when the command asks for it, so it never appears on a
-// command line.
-func EnrollCommand(user, serverURL, hostID string) string {
-	return fmt.Sprintf("sudo runuser -u %s -- %s enroll --server-url %s --host-id %s --dir %s --token-file -",
+// command line. replace enrolls over the host's existing agent
+// configuration, keeping its other settings and stacks.
+func EnrollCommand(user, serverURL, hostID string, replace bool) string {
+	command := fmt.Sprintf("sudo runuser -u %s -- %s enroll --server-url %s --host-id %s --dir %s --token-file -",
 		user, SystemAgentBinary, serverURL, hostID, SystemAgentDir)
+	if replace {
+		command += " --replace"
+	}
+	return command
 }

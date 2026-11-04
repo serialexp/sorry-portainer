@@ -769,3 +769,112 @@ h2 {
     padding: 32px;
   }
 }
+.fleet-link-next {
+  margin-top: -12px;
+}
+.fleet-link.active {
+  color: #fff;
+}
+.grey {
+  background: #a7b3aa;
+}
+.offline {
+  font-size: 11px;
+  color: #89968d;
+}
+.enrollment-page {
+  display: grid;
+  gap: 18px;
+}
+.enroll-toolbar {
+  justify-content: flex-end;
+}
+.enroll-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 14px;
+}
+.enroll-form label,
+.enroll-copy {
+  display: grid;
+  gap: 8px;
+  color: #63766a;
+  font-size: 13px;
+}
+.enroll-form label:first-child {
+  flex: 1 1 240px;
+}
+.enroll-form input,
+.enroll-form select,
+.enroll-copy input {
+  border: 1px solid #d3ddd4;
+  border-radius: 6px;
+  padding: 10px 11px;
+  font: 13px "DM Mono", monospace;
+  color: #24302c;
+  background: #fff;
+}
+.enroll-issued {
+  display: grid;
+  gap: 16px;
+  border: 1px solid #f1e0bd;
+}
+.enroll-issued .panel-heading {
+  margin-bottom: 0;
+}
+.enroll-issued .secret-warning {
+  margin: 0;
+}
+.enroll-copy > span,
+.enroll-command {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.enroll-copy input {
+  flex: 1;
+  min-width: 0;
+}
+.enroll-command pre {
+  flex: 1;
+  margin: 0;
+  padding: 10px 11px;
+  background: #f0f5f0;
+  border-radius: 6px;
+  font: 12px "DM Mono", monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.enroll-steps {
+  display: grid;
+  gap: 14px;
+  margin: 0;
+  padding-left: 20px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #3f4f47;
+}
+.enroll-steps .enroll-command {
+  margin: 8px 0;
+}
+.enroll-steps code {
+  font: 12px "DM Mono", monospace;
+}
+.enroll-steps small {
+  display: block;
+  color: #829087;
+  font-size: 12px;
+}
+.enroll-list .resource-copy {
+  flex: 1;
+}
+.enroll-list .resource-copy small {
+  white-space: normal;
+}
+.certificate.overdue {
+  color: #9a6a35 !important;
+}
+.certificate.expired {
+  color: #9b3c31 !important;
+}

@@ -76,8 +76,8 @@ func TestEnrollmentTokenLifecycle(t *testing.T) {
 		t.Fatalf("expires in %s", until)
 	}
 	want := "sudo runuser -u sorry-portainer -- /usr/local/bin/sorry-portainer-agent enroll --server-url wss://jp1.example:9443/control/agent --host-id hel1 --dir /var/lib/sorry-portainer-agent --token-file -"
-	if created.Command != want {
-		t.Fatalf("command %q", created.Command)
+	if created.Command != want || created.Reenroll {
+		t.Fatalf("command %q, reenroll %v", created.Command, created.Reenroll)
 	}
 	if strings.Contains(created.Command, created.Token) {
 		t.Fatal("token on the command line")
@@ -95,6 +95,21 @@ func TestEnrollmentTokenLifecycle(t *testing.T) {
 	}
 	if w = authenticatedStackRequest(t, s, http.MethodDelete, "/api/enrollment/tokens/hel1", ""); w.Code != http.StatusNotFound {
 		t.Fatalf("second revoke: %d", w.Code)
+	}
+}
+
+// A token for an enrolled host comes with a command that replaces the
+// agent's configuration.
+func TestEnrollmentTokenForEnrolledHost(t *testing.T) {
+	s, svc, _ := enrollmentServer(t)
+	enrollHost(t, svc, "hel1")
+	w := authenticatedStackRequest(t, s, http.MethodPost, "/api/enrollment/tokens", `{"host_id":"hel1"}`)
+	var created TokenResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil || w.Code != http.StatusOK {
+		t.Fatalf("create: %d %s %v", w.Code, w.Body, err)
+	}
+	if !created.Reenroll || !strings.HasSuffix(created.Command, " --token-file - --replace") {
+		t.Fatalf("command %q, reenroll %v", created.Command, created.Reenroll)
 	}
 }
 

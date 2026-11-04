@@ -93,8 +93,11 @@ function message(cause: unknown, fallback: string): string {
   return cause instanceof Error ? cause.message : fallback;
 }
 
-/** Sends the dashboard back to the login form when the session has ended. */
-function sessionEnded(cause: unknown): boolean {
+/**
+ * Sends the dashboard back to the login form when cause says the session
+ * has ended, and reports whether it did.
+ */
+export function sessionEnded(cause: unknown): boolean {
   if (!(cause instanceof UnauthorizedError) || fleet.demo) return false;
   signOut("Your session has ended. Sign in again.");
   return true;

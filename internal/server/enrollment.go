@@ -37,6 +37,9 @@ type TokenResponse struct {
 	// Command enrolls the host once setup has run there; it asks for the
 	// token.
 	Command string `json:"command"`
+	// Reenroll is true when the host is already enrolled: Command replaces
+	// the agent's configuration, and the running agent must be restarted.
+	Reenroll bool `json:"reenroll"`
 }
 
 // enrollmentRoute serves:
@@ -129,10 +132,11 @@ func (s *Server) createToken(w http.ResponseWriter, r *http.Request) {
 		enrollmentError(w, err)
 		return
 	}
+	_, reenroll := s.enrollment.Registry().Get(req.HostID)
 	// The response holds a secret.
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, TokenResponse{Token: token, ExpiresAt: expires,
-		Command: agentsetup.EnrollCommand(agentsetup.DefaultUser, s.controlURL, req.HostID)})
+	writeJSON(w, TokenResponse{Token: token, ExpiresAt: expires, Reenroll: reenroll,
+		Command: agentsetup.EnrollCommand(agentsetup.DefaultUser, s.controlURL, req.HostID, reenroll)})
 }
 
 func enrollmentError(w http.ResponseWriter, err error) {

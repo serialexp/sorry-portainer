@@ -16,7 +16,8 @@ import {
   signOut,
   toggleContainer,
 } from "./fleet-store";
-import { hostPath, parseHostPath } from "./host-route";
+import { EnrollmentPage } from "./enrollment-ui";
+import { enrollmentPath, hostPath, parseHostPath } from "./host-route";
 import { HostSecretWarnings, SecretStoreBanner } from "./secrets-ui";
 import { StackEditor, StackList } from "./stacks-ui";
 import "./styles.css";
@@ -46,7 +47,9 @@ function Dashboard() {
   const location = useLocation();
   const route = () => parseHostPath(location.pathname);
   const section = () => route()?.section;
+  const enrolling = () => location.pathname === enrollmentPath;
   const selected = () => (route()?.hostID === fleet.selectedHost ? selectedHost() : undefined);
+  const heading = () => pageHeading(location.pathname);
   return (
     <div class="app-shell">
       <aside class="sidebar">
@@ -58,6 +61,9 @@ function Dashboard() {
         </div>
         <A class="fleet-link" href="/">
           ← All hosts
+        </A>
+        <A class="fleet-link fleet-link-next" href={enrollmentPath} activeClass="active">
+          Enrollment
         </A>
         <Show when={route()} fallback={<p class="sidebar-hint">Select a host to browse its resources.</p>}>
           <div class="selected-host">
@@ -92,34 +98,11 @@ function Dashboard() {
       <main>
         <header>
           <div>
-            <p class="eyebrow">{section() ? `${route()?.hostID} / PODMAN` : "OVERVIEW / PODMAN FLEET"}</p>
+            <p class="eyebrow">{heading().eyebrow}</p>
             <h1>
-              {section() === "images"
-                ? "Images"
-                : section() === "volumes"
-                  ? "Volumes"
-                  : section() === "stacks"
-                    ? route()?.action === "new"
-                      ? "Create stack"
-                      : route()?.action === "edit"
-                        ? "Edit stack"
-                        : "Stacks"
-                    : section() === "containers"
-                      ? "Containers"
-                      : "Hosts"}{" "}
-              <span>✦</span>
+              {heading().title} <span>✦</span>
             </h1>
-            <p class="subtitle">
-              {section() === "images"
-                ? "Images available on this host's Podman installation."
-                : section() === "volumes"
-                  ? `Persistent storage owned by ${route()?.hostID}.`
-                  : section() === "stacks"
-                    ? `Compose projects saved on ${route()?.hostID}.`
-                    : section() === "containers"
-                      ? `Containers on ${route()?.hostID}.`
-                      : "Choose a host to browse its resources."}
-            </p>
+            <p class="subtitle">{heading().subtitle}</p>
           </div>
           <div class="header-actions">
             <label class="search-box">
@@ -127,7 +110,7 @@ function Dashboard() {
               <input
                 value={fleet.query}
                 onInput={(event) => setQuery(event.currentTarget.value)}
-                placeholder={section() ? `Search ${section()}` : "Search hosts"}
+                placeholder={heading().search}
                 aria-label="Search"
               />
               <kbd>⌘ K</kbd>
@@ -137,7 +120,10 @@ function Dashboard() {
         </header>
         <div class="notice">{fleet.notice}</div>
         <SecretStoreBanner />
-        <Show when={!route()}>
+        <Show when={enrolling()}>
+          <EnrollmentPage />
+        </Show>
+        <Show when={!route() && !enrolling()}>
           <Overview />
         </Show>
         <Show when={route() && !selected()}>
@@ -167,6 +153,41 @@ function Dashboard() {
     </div>
   );
 }
+/** The header text for the page at pathname. */
+function pageHeading(pathname: string): { eyebrow: string; title: string; subtitle: string; search: string } {
+  if (pathname === enrollmentPath)
+    return {
+      eyebrow: "FLEET / ENROLLMENT",
+      title: "Enrollment",
+      subtitle: "Hosts allowed to connect, and tokens for new ones.",
+      search: "Search enrolled hosts",
+    };
+  const route = parseHostPath(pathname);
+  if (!route)
+    return {
+      eyebrow: "OVERVIEW / PODMAN FLEET",
+      title: "Hosts",
+      subtitle: "Choose a host to browse its resources.",
+      search: "Search hosts",
+    };
+  const eyebrow = `${route.hostID} / PODMAN`;
+  const search = `Search ${route.section}`;
+  switch (route.section) {
+    case "images":
+      return { eyebrow, search, title: "Images", subtitle: "Images available on this host's Podman installation." };
+    case "volumes":
+      return { eyebrow, search, title: "Volumes", subtitle: `Persistent storage owned by ${route.hostID}.` };
+    case "containers":
+      return { eyebrow, search, title: "Containers", subtitle: `Containers on ${route.hostID}.` };
+    case "stacks":
+      return {
+        eyebrow,
+        search,
+        title: route.action === "new" ? "Create stack" : route.action === "edit" ? "Edit stack" : "Stacks",
+        subtitle: `Compose projects saved on ${route.hostID}.`,
+      };
+  }
+}
 function Overview() {
   const navigate = useNavigate();
   return (
@@ -177,6 +198,9 @@ function Overview() {
             <p class="eyebrow">YOUR FLEET</p>
             <h2>Podman hosts</h2>
           </div>
+          <A class="add-button" href={enrollmentPath}>
+            Enroll a host
+          </A>
         </div>
         <div class="host-list">
           <For each={filteredHosts()}>

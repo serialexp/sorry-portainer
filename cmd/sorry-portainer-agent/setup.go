@@ -212,7 +212,7 @@ or on the master as the server's account:
 Then run here, and paste the token when asked:
   %s
   sudo systemctl enable --now sorry-portainer-agent
-`, agentsetup.EnrollCommand(user, "wss://MASTER:9443/control/agent", "HOST_ID"))
+`, agentsetup.EnrollCommand(user, "wss://MASTER:9443/control/agent", "HOST_ID", false))
 }
 
 func installAgentService(sourceBinary, user string) error {

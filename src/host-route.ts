@@ -3,6 +3,9 @@ export type HostRoute = { hostID: string; section: HostSection; action?: "new" |
 
 const sections: readonly string[] = ["containers", "images", "volumes", "stacks"];
 
+/** The fleet-wide enrollment page. Host routes always have a section after the host ID, so it cannot clash with one. */
+export const enrollmentPath = "/enrollment";
+
 export function hostPath(hostID: string, section: HostSection): string {
   return `/${encodeURIComponent(hostID)}/${section}`;
 }

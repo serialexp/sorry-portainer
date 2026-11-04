@@ -1,4 +1,15 @@
-# Current task: deploy sorry-portainer to jp1 (master) and hel1 — agent enrollment (Phase 1) done; release and rsansible role next
+# Current task: deploy sorry-portainer to jp1 (master) and hel1 — enrollment Phase 1 and the web UI done; session hardening, release and rsansible role next
+
+## Dashboard store and enrollment page (2026-11-05)
+
+Wheat changes, in order: "Enrollment page and web API" (`01a1a75d…`, the `/api/enrollment/` routes), "Dashboard state in a Solid store" (`01a1a767…`), "Enrollment page in the dashboard" (`01a1a76d…`). The page could not be added to `01a1a75d…` because it builds on the store change; Wheat refused without `--force`, which was not used.
+
+- Bart's decisions: UI first, then release; dashboard on jp1 through a label-only container on the caddy network that proxies to the host's 127.0.0.1:8080 (caddy needs `host-gateway`); control port 9443 public; refactor the dashboard state into stores before the page.
+- Store: `src/fleet-api.ts` (session, hosts, containers; `UnauthorizedError`), `src/fleet-store.ts` (phase booting/login/ready, demo flag, selected host and its resources, search selectors, `sessionEnded`). `index.tsx` components and `StackList`/`StackEditor` take no data props; the editor reads the stack name from the URL. Behaviour fixes on the way: a wrong password shows "Wrong password." instead of opening demo mode (demo mode only when sign-in cannot reach the master); container start/stop reports failures and reloads the list instead of faking the result; a 401 anywhere returns to the login form.
+- Enrollment page: `/enrollment` (sidebar and overview links); `src/enrollment-api.ts` (`certificateState`, overdue below 30 days), `enrollment-store.ts`, `enrollment-ui.tsx`. Token answer has `reenroll`; the command then ends in `--replace` and the page says to restart the agent.
+- Tests: `node --test tests/*.mjs` 26 pass; `tsc`, `biome format`, `pnpm build` clean; `go test -race ./...` green. Browser check on the dev UI: wrong/right password, reload keeps the session, host switch, images, stack editor, sign out, token for a new and an enrolled host, revoke. Remove was not clicked on the dev hosts (it would de-enroll them); the Go route test covers it.
+- Dev: the Vite unit had been running since Sep 25 from the old `sorry-portainer.old-wheat` directory; restarted. The dev server was rebuilt and restarted.
+- Next: the session issues in TODO.md (logout endpoint, `Secure` cookie behind Caddy, login rate limit, `Sessions.max` not a cap) should be settled before the dashboard is public on jp1 — ask Bart; then tag and release (ask first), then the rsansible role.
 
 ## Agent enrollment, allowlisting and rotation (2026-11-05)
 
@@ -10,7 +21,7 @@ Wheat change: "Agent enrollment with one-time tokens and host allowlisting" (`01
 - Dev: `just dev-init` migrated `.dev/state` (old PKI in `.dev/state/pki-retired-20261104T160639Z/`), tightened it to 0700, and enrolled local-a/b/c; a second run is a no-op. All three online with stacks intact.
 - Tests: `GOFLAGS=-buildvcs=false go test -race ./...` green; benchmarks `go test -run '^$' -bench . ./internal/enrollment ./internal/integration`; six mutation checks recorded in the design doc.
 - Next: tag and release (ask Bart first), then the rsansible role in `deploy/rsansible` (inventory Wheat-ignored; look at `~/Projects/gothab/ansible/roles` and `~/Projects/rsansible` examples/`RSANSIBLE_IDIOMS.md`; invoke `~/.local/bin/rsansible`). The server CLI's `pki reset` and `init` must run as the server's account (they refuse a state dir owned by someone else); the role should use `become_user` for them and for `enroll` on agents.
-- Open questions for Bart before the role: how the web UI is routed on jp1 (caddy-docker-proxy only sees Docker containers; the server runs on the host), the control port and its exposure (default 9443), jp1 disk (94% full; reclaimable listed in the conversation, nothing deleted), and the one-off-services-after-reboot decision.
+- Open questions for Bart before the role: jp1 disk (94% full; reclaimable listed in the conversation, nothing deleted) and the one-off-services-after-reboot decision. (Web UI routing and the control port were answered; see above.)
 
 ## Agent restart and reboot (2026-09-25)
 

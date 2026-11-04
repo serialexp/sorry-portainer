@@ -1,6 +1,6 @@
 # Agent Enrollment and Certificate Rotation — Design
 
-Status: partial — Phase 1 implemented (2026-11-05); Phase 2 (UI, rsansible role) outstanding
+Status: partial — Phase 1 and the Phase 2 UI implemented (2026-11-05); the rsansible role is outstanding
 Owner: Bart
 Last updated: 2026-11-05
 
@@ -33,10 +33,8 @@ items as they land and move them to Done.
 - [x] **Phase 1 — production agent layout.** `setup` creates `/var/lib/sorry-portainer-agent` for the agent user (0700) and its unit runs `--config /var/lib/sorry-portainer-agent/agent.json`; setup prints the enroll step.
 - [x] **Phase 1 — tests and benchmarks.** Every item under [Tests](#tests); benchmarks and their results under [Performance](#performance). Mutation-checked: admitting a pending certificate, accepting an expired one, reusing a token with another key, pinning to any CA in the chain, removal without disconnect, and the admin socket's peer check each fail a test.
 - [x] **Extended beyond the plan — graceful server shutdown.** SIGTERM stops both listeners and gives in-flight requests 10 seconds; agent sessions close with the process and agents reconnect.
-
-### Outstanding
-
-- [ ] **Phase 2 — UI.** Enroll a host (token and agent command shown once), outstanding tokens with revoke, enrolled hosts including offline ones with certificate expiry, remove a host.
+- [x] **Phase 2 — web API.** The `/api/enrollment/` routes in [Web UI](#web-ui), behind the dashboard session; `internal/server/enrollment.go`. Extended beyond the plan: the token answer says whether the host is already enrolled (`reenroll`), and its command then ends in `--replace`.
+- [x] **Phase 2 — UI.** The `/enrollment` page (`src/enrollment-ui.tsx`, `enrollment-store.ts`, `enrollment-api.ts`): enroll a host with the token and agent command shown once, outstanding tokens with revoke, enrolled hosts including offline ones with certificate expiry and renewal state, remove with confirmation. Its own page rather than part of the host page; see the note under [Web UI](#web-ui).
 - [ ] **Phase 2 — rsansible role.** Install the master and agents from a release and enroll each agent with a fresh token; covered in its own doc.
 - [ ] **Defer — control CA rotation.** The CA is valid for 10 years; `server pki reset` replaces it, and every agent must then be enrolled again.
 - [ ] **Defer — master-enforced host prefix.** The prefix stays in the agent's config; the master records the one the agent reports at enrollment but does not enforce it.
@@ -476,6 +474,16 @@ Web API (session required):
 | `GET /api/enrollment/tokens` | outstanding tokens: host, expiry (never the secret) |
 | `POST /api/enrollment/tokens` | `{host_id, ttl}` → `{token, expires_at, command}` |
 | `DELETE /api/enrollment/tokens/{host}` | revoke |
+
+Follow-up (2026-11-05): the form and lists became a page of their own,
+`/enrollment`, linked from the sidebar and the hosts overview, instead of
+part of the host page: a host being enrolled has no host page yet, and an
+enrolled host that is offline is not in the connected-host list the host
+pages come from. The issued token lives only in the page's store and is
+dropped when the page closes, when Done is pressed, or when its token is
+revoked. A host's certificate is shown as overdue once less than 30 days
+are left without a pending renewal, since agents renew 30 to 37 days before
+expiry.
 
 ## `server pki reset` and development setup
 
