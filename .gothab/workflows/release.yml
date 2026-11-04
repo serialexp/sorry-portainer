@@ -1,7 +1,8 @@
 # Builds the server (with the dashboard inside it) and the agent for a tag
-# that already exists, and publishes them as a Gothab release. Run it by hand
-# from the Actions page after `wheat push --tag <tag>` has reached GitHub and
-# the mirror has synced.
+# that already exists, and publishes them as a Gothab release. Gothab is the
+# primary repository: `wheat push ssh://git@gothab.io/serialexp/sorry-portainer.git`
+# with `--to refs/heads/main`, then `--tag <tag>`, and run this from the
+# Actions page (or POST /repos/serialexp/sorry-portainer/actions/dispatches).
 name: Release
 
 on:

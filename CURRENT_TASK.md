@@ -1,4 +1,10 @@
-# Current task: deploy sorry-portainer to jp1 (master) and hel1 — enrollment, web UI, session hardening and review fixes done; next release v0.2.0 (ask first), then rsansible role
+# Current task: deploy sorry-portainer to jp1 (master) and hel1 — v0.2.0 released; next the rsansible role
+
+## Release v0.2.0 (2026-11-05)
+
+- Gothab is the primary repository (not a mirror of GitHub). Main and tag `v0.2.0` (commit a2092f14) were pushed to Gothab with `wheat push ssh://git@gothab.io/serialexp/sorry-portainer.git --to refs/heads/main` / `--tag v0.2.0`, and also to GitHub before Bart pointed out Gothab is primary (same commit IDs).
+- Release run af9c36ca passed; https://gothab.io/serialexp/sorry-portainer/releases/4396940f-cc55-4ea1-bd4f-69812a164288 has both linux-amd64 binaries and SHA256SUMS (agent 167b6f34…, server 63324cf2…). Assets download anonymously (redirect to signed R2 URLs).
+- Before publishing, test fixtures naming jp1's real hostname/IP were replaced with reserved example values (own Wheat change).
 
 ## Review fixes (2026-11-05)
 
