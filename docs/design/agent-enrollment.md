@@ -395,7 +395,8 @@ The server listens on `<state_dir>/admin.sock` once it holds the state lock,
 so it may remove a stale socket file (never another kind of file). The socket
 is 0600; peers must run as the server's own uid or as root (`SO_PEERCRED`).
 The CLI checks the server end the same way. One JSON request and one JSON
-response per connection, 64 KiB at most each way, 5-second deadline, at most
+response per connection, 64 KiB at most for a request and 16 MiB for a
+response (a listed host takes about 160 bytes), 5-second deadline, at most
 4 connections at a time.
 
 ```json

@@ -15,9 +15,13 @@ const (
 	controlRequestTimeout = 30 * time.Second
 )
 
+// bodyReadTimeout bounds reading a request body on the web listener; see
+// boundBodyRead. A variable so tests can shorten it.
+var bodyReadTimeout = 30 * time.Second
+
 // NewWebServer is the web listener's server. Stack operations can keep a
 // response open for minutes, so only the header read and idle time are
-// bounded, not the whole response.
+// bounded here, not the whole response; handlers bound their body reads.
 func NewWebServer(addr string, handler http.Handler) *http.Server {
 	return &http.Server{
 		Addr:              addr,

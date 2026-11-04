@@ -2,6 +2,8 @@
 // values only travel from the browser to the master; the API never returns
 // them.
 
+import { UnauthorizedError } from "./fleet-api.ts";
+
 export type StoreState = "uninitialized" | "locked" | "unlocked";
 export type SecretEntry = { name: string; size: number; updated_at: string };
 export type SecretSyncResult = {
@@ -30,6 +32,7 @@ export class SecretsUnavailableError extends Error {}
 
 async function failure(response: Response, fallback: string): Promise<Error> {
   const text = (await response.text()).trim();
+  if (response.status === 401) return new UnauthorizedError(text || fallback);
   if (response.status === 503) return new SecretsUnavailableError(text || fallback);
   return new Error(text || `${fallback} (${response.status}).`);
 }

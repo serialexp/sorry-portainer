@@ -59,6 +59,10 @@ type registryFile struct {
 // the registry refuses further changes until the server restarts.
 var ErrDegraded = errors.New("host registry refuses changes after a failed write; restart the server")
 
+// errPublished marks an update error after which the change was published
+// anyway, because the file already holds it.
+var errPublished = errors.New("change published but not durable")
+
 // Registry is the durable list of enrolled hosts, hosts.json. The running
 // server is its only reader and writer. Readers use the published snapshot
 // without locking and never wait for the disk; changes are serialized,
@@ -211,8 +215,9 @@ func (r *Registry) Statuses(online map[string]bool) []HostStatus {
 // publishes it. If change fails, nothing is written. If the write fails
 // before the rename, nothing changes. If only the directory sync fails, the
 // file holds the new content, so it is published, but the registry turns
-// degraded and the caller still gets the error: nothing that depends on the
-// change may be handed out before it is durable.
+// degraded and the caller still gets the error, wrapping errPublished:
+// nothing that depends on the change may be handed out before it is durable,
+// but what the published registry no longer allows must stop.
 func (r *Registry) update(change func(hosts map[string]Host) error) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -231,7 +236,7 @@ func (r *Registry) update(change func(hosts map[string]Host) error) error {
 		if errors.Is(err, atomicfile.ErrDirectorySync) {
 			r.published.Store(&next)
 			r.degraded = fmt.Errorf("%w (%v)", ErrDegraded, err)
-			return r.degraded
+			return fmt.Errorf("%w: %w", errPublished, r.degraded)
 		}
 		return err
 	}

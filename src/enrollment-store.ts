@@ -11,11 +11,11 @@ import {
   revokeToken,
   type TokenLifetime,
 } from "./enrollment-api";
-import { fleet, loadHosts, sessionEnded } from "./fleet-store";
+import { fleet, loadHosts, onSessionEnd, sessionEnded } from "./fleet-store";
 
 // Enrollment page state. The issued token is the only copy of its secret: it
-// stays here until the page closes or the admin dismisses it, and is never
-// written anywhere else.
+// stays here until the page closes, the session ends or the admin dismisses
+// it, and is never written anywhere else.
 
 type EnrollmentState = {
   hosts: EnrolledHost[];
@@ -29,7 +29,7 @@ type EnrollmentState = {
   issued: (IssuedToken & { host_id: string }) | null;
 };
 
-const [enrollment, setEnrollment] = createStore<EnrollmentState>({
+const initial = (): EnrollmentState => ({
   hosts: [],
   tokens: [],
   loading: false,
@@ -39,7 +39,23 @@ const [enrollment, setEnrollment] = createStore<EnrollmentState>({
   issued: null,
 });
 
+const [enrollment, setEnrollment] = createStore<EnrollmentState>(initial());
+
 export { enrollment };
+
+// Bumped by resetEnrollment, so answers to requests made before it, above
+// all a token being issued, are dropped. Loads also drop older loads.
+let generation = 0;
+let loadRequest = 0;
+
+/** Forgets everything, including an issued token; for leaving the page and session ends. */
+export function resetEnrollment() {
+  ++generation;
+  ++loadRequest;
+  setEnrollment(initial());
+}
+
+onSessionEnd(resetEnrollment);
 
 function message(cause: unknown, fallback: string): string {
   return cause instanceof Error ? cause.message : fallback;
@@ -52,40 +68,53 @@ function failed(cause: unknown, fallback: string) {
 }
 
 export async function loadEnrollment() {
+  const request = ++loadRequest;
   setEnrollment({ loading: true, error: "" });
   try {
     const [hosts, tokens] = await Promise.all([listEnrolledHosts(), listTokens()]);
-    setEnrollment({ hosts, tokens, availability: "available" });
+    if (request === loadRequest) setEnrollment({ hosts, tokens, availability: "available" });
   } catch (cause) {
-    failed(cause, "Could not load enrollment.");
+    if (request === loadRequest) failed(cause, "Could not load enrollment.");
   } finally {
-    setEnrollment("loading", false);
+    if (request === loadRequest) setEnrollment("loading", false);
   }
 }
 
-async function action(busy: string, run: () => Promise<void>, fallback: string): Promise<boolean> {
+/**
+ * Runs one change at a time. run gets current, which turns false once the
+ * store has been reset; nothing is recorded from a request made before that.
+ */
+async function action(
+  busy: string,
+  run: (current: () => boolean) => Promise<void>,
+  fallback: string,
+): Promise<boolean> {
   if (enrollment.busy) return false;
+  const started = generation;
+  const current = () => started === generation;
   setEnrollment({ busy, error: "" });
   try {
-    await run();
-    return true;
+    await run(current);
+    return current();
   } catch (cause) {
-    failed(cause, fallback);
+    if (current()) failed(cause, fallback);
     return false;
   } finally {
-    setEnrollment("busy", "");
-    if (fleet.phase === "ready") await loadEnrollment();
+    if (current()) {
+      setEnrollment("busy", "");
+      if (fleet.phase === "ready") await loadEnrollment();
+    }
   }
 }
 
-/** Creates a token for hostID and keeps it until dismissIssued. */
+/** Creates a token for hostID and keeps it until dismissIssued or a reset. */
 export function issueToken(hostID: string, ttl: TokenLifetime) {
   return action(
     "issue",
-    async () => {
+    async (current) => {
       setEnrollment("issued", null);
       const issued = await createToken(hostID, ttl);
-      setEnrollment("issued", { ...issued, host_id: hostID });
+      if (current()) setEnrollment("issued", { ...issued, host_id: hostID });
     },
     "Could not create a token.",
   );
@@ -98,10 +127,10 @@ export function dismissIssued() {
 export function revoke(hostID: string) {
   return action(
     `revoke:${hostID}`,
-    async () => {
+    async (current) => {
       await revokeToken(hostID);
       // The token shown on the page no longer works.
-      if (enrollment.issued?.host_id === hostID) setEnrollment("issued", null);
+      if (current() && enrollment.issued?.host_id === hostID) setEnrollment("issued", null);
     },
     "Could not revoke the token.",
   );
@@ -111,9 +140,9 @@ export function revoke(hostID: string) {
 export function remove(hostID: string) {
   return action(
     `remove:${hostID}`,
-    async () => {
+    async (current) => {
       await removeHost(hostID);
-      if (enrollment.issued?.host_id === hostID) setEnrollment("issued", null);
+      if (current() && enrollment.issued?.host_id === hostID) setEnrollment("issued", null);
       await loadHosts();
     },
     "Could not remove the host.",

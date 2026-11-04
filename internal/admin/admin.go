@@ -13,8 +13,11 @@ import (
 const (
 	// SocketFile is the socket's name inside the state directory.
 	SocketFile = "admin.sock"
-	// MaxMessage bounds a request and a response.
-	MaxMessage = 64 << 10
+	// MaxRequest bounds a request; requests are small.
+	MaxRequest = 64 << 10
+	// MaxResponse bounds a response. A listed host takes about 160 bytes,
+	// so this holds the list of some hundred thousand hosts.
+	MaxResponse = 16 << 20
 	// Timeout bounds a whole exchange.
 	Timeout = 5 * time.Second
 	// MaxConnections is how many connections are answered at once.

@@ -1,4 +1,17 @@
-# Current task: deploy sorry-portainer to jp1 (master) and hel1 — enrollment, web UI and session hardening done; Codex/Antigravity review, then release and rsansible role
+# Current task: deploy sorry-portainer to jp1 (master) and hel1 — enrollment, web UI, session hardening and review fixes done; next release v0.2.0 (ask first), then rsansible role
+
+## Review fixes (2026-11-05)
+
+Wheat change: "Fix review findings before v0.2.0". Codex and Antigravity reviewed; Bart chose to fix 1–6 now, the rest is in TODO.md.
+
+1. Web body reads bounded: `boundBodyRead` (ResponseController read deadline, `bodyReadTimeout` 30 s) in `jsonDecode` and the token decoder. net/http clears the deadline itself when the body hits EOF (`startBackgroundRead`), so long handlers are not cancelled; `internal/server/body_test.go` covers both (mutation-checked).
+2. `registry.update` wraps `errPublished` when only the directory sync failed; `Remove` and `Enroll` then still disconnect the host (test + mutation check).
+3. Admin socket: `MaxRequest` 64 KiB, `MaxResponse` 16 MiB; test with a 10,000-host list.
+4. Stack editor: a stack it created keeps its name (read-only) and later saves update it; route loads use a request counter (also fixes A→B→A). Fixed the name `pattern`, which the `v` regex flag rejected.
+5. Stack and secret APIs map 401 to `UnauthorizedError`; callers go through `sessionEnded`.
+6. `onSessionEnd` in fleet-store; enrollment and secrets stores reset on session end with generation counters, so a late token answer is dropped; leaving the enrollment page calls `resetEnrollment`; `loadHosts`/`loadEnrollment` have request counters.
+
+Verified: `go test -race ./...`, 30 node tests, tsc, biome format, build; browser: stack 401 → login, issued token gone after sign-out, created stack's name locked. The test stack `review-rename` remains in local-a's dev state (no stack deletion yet).
 
 ## Session hardening (2026-11-05)
 

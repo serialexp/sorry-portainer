@@ -1,3 +1,5 @@
+import { UnauthorizedError } from "./fleet-api.ts";
+
 export type Stack = {
   name: string;
   project: string;
@@ -24,6 +26,14 @@ export type StackOperation = { name: string; operation: string; success: boolean
 
 export const stackNamePattern = /^[a-z0-9][a-z0-9_-]{0,62}$/;
 
+// A 401 means the session ended; the dashboard handles that apart from
+// other failures. Other errors carry the master's message when it has one.
+async function failure(response: Response, fallback: string): Promise<Error> {
+  const text = (await response.text()).trim();
+  if (response.status === 401) return new UnauthorizedError(text || fallback);
+  return new Error(text || `${fallback} (${response.status}).`);
+}
+
 function endpoint(hostID: string, name?: string): string {
   const base = `/api/hosts/${encodeURIComponent(hostID)}/stacks`;
   return name === undefined ? base : `${base}/${encodeURIComponent(name)}`;
@@ -31,13 +41,13 @@ function endpoint(hostID: string, name?: string): string {
 
 export async function listStacks(hostID: string, request: typeof fetch = fetch): Promise<Stack[]> {
   const response = await request(endpoint(hostID));
-  if (!response.ok) throw new Error(`Could not load stacks (${response.status}).`);
+  if (!response.ok) throw await failure(response, "Could not load stacks");
   return (await response.json()) as Stack[];
 }
 
 export async function getStack(hostID: string, name: string, request: typeof fetch = fetch): Promise<Stack> {
   const response = await request(endpoint(hostID, name));
-  if (!response.ok) throw new Error(`Could not load stack (${response.status}).`);
+  if (!response.ok) throw await failure(response, "Could not load stack");
   return (await response.json()) as Stack;
 }
 
@@ -59,7 +69,7 @@ async function saveStack(
       ...(expectedVersion === undefined ? {} : { expected_version: expectedVersion }),
     }),
   });
-  if (!response.ok) throw new Error((await response.text()).trim() || `Save failed (${response.status}).`);
+  if (!response.ok) throw await failure(response, "Save failed");
 }
 
 export function createStack(hostID: string, name: string, composeYAML: string, request: typeof fetch = fetch) {
@@ -85,7 +95,7 @@ async function stackOperation(
   request: typeof fetch,
 ): Promise<StackOperation> {
   const response = await request(`${endpoint(hostID, name)}/${operation}`, { method: "POST" });
-  if (!response.ok) throw new Error((await response.text()).trim() || `${failed} (${response.status}).`);
+  if (!response.ok) throw await failure(response, failed);
   const result = (await response.json()) as StackOperation;
   if (!result.success) throw new Error(result.output || `${failed}.`);
   return result;

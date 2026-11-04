@@ -1,8 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { UnauthorizedError } from "../src/fleet-api.ts";
 import { createStack, deployStack, getStack, listStacks, rebootLabel, stopStack, updateStack } from "../src/stack-api.ts";
 
 const ok = (body) => ({ ok: true, json: async () => body });
+const failed = (status, text = "") => ({ ok: false, status, text: async () => text });
 
 test("reboot label follows the stack's desired state", () => {
   assert.equal(rebootLabel({ desired: "up" }), "starts after reboot");
@@ -16,7 +18,17 @@ test("listing and detail are host-scoped", async () => {
   assert.equal((await listStacks("build node", request))[0].name, "web");
   assert.equal((await getStack("build node", "web", request))[0].version, 1);
   assert.deepEqual(calls, ["/api/hosts/build%20node/stacks", "/api/hosts/build%20node/stacks/web"]);
-  await assert.rejects(listStacks("host", async () => ({ ok: false, status: 502 })), /502/);
+  await assert.rejects(listStacks("host", async () => failed(502)), /502/);
+});
+
+test("a 401 from any stack route means the session ended", async () => {
+  const unauthorized = async () => failed(401, "authentication required");
+  await assert.rejects(listStacks("host", unauthorized), UnauthorizedError);
+  await assert.rejects(getStack("host", "web", unauthorized), UnauthorizedError);
+  await assert.rejects(createStack("host", "web", "services: {}", unauthorized), UnauthorizedError);
+  await assert.rejects(deployStack("host", "web", unauthorized), UnauthorizedError);
+  await assert.rejects(stopStack("host", "web", unauthorized), UnauthorizedError);
+  await assert.rejects(listStacks("host", async () => failed(502)), (error) => !(error instanceof UnauthorizedError));
 });
 
 test("creation sends no expected version; update sends the version being edited", async () => {

@@ -91,7 +91,7 @@ func (c *Client) call(ctx context.Context, request Request, out any) error {
 	// request it refused, and the reset that follows the answer is not an
 	// error.
 	var data json.RawMessage
-	if err := json.NewDecoder(io.LimitReader(conn, MaxMessage)).Decode(&data); err != nil {
+	if err := json.NewDecoder(io.LimitReader(conn, MaxResponse)).Decode(&data); err != nil {
 		return fmt.Errorf("read the server's answer: %w", err)
 	}
 	var failure errorBody

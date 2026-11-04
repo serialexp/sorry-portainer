@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/serialexp/sorry-portainer/internal/enrollment"
 	"github.com/serialexp/sorry-portainer/internal/protocol"
@@ -14,9 +14,24 @@ import (
 	"github.com/serialexp/sorry-portainer/internal/secretstore"
 )
 
-func jsonDecode(r *http.Request, v any) error {
-	d := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
-	return d.Decode(v)
+// maxBody bounds a JSON request body on the web listener.
+const maxBody = 1 << 20
+
+func jsonDecode(w http.ResponseWriter, r *http.Request, v any) error {
+	boundBodyRead(w)
+	return json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBody)).Decode(v)
+}
+
+// boundBodyRead gives the handler bodyReadTimeout to read the request body.
+// The web server has no ReadTimeout, because stack operations keep a
+// response open for minutes, so each handler that reads a body bounds it.
+// The deadline does not outlive the body: net/http clears it when the body
+// reaches EOF and it starts watching the connection for the client going
+// away. A body left unread keeps the deadline, which then bounds the drain
+// after the handler returns.
+func boundBodyRead(w http.ResponseWriter) {
+	// A ResponseRecorder in tests has no connection to bound.
+	_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(bodyReadTimeout))
 }
 
 // Relay reaches host agents. Every call takes the HTTP request's context, so a
@@ -122,7 +137,7 @@ func (s *Server) hostOperation(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(parts) == 2 && parts[1] == "stacks" && r.Method == http.MethodPost {
 		var req protocol.StackSave
-		if jsonDecode(r, &req) != nil {
+		if jsonDecode(w, r, &req) != nil {
 			http.Error(w, "invalid stack", http.StatusBadRequest)
 			return
 		}
@@ -177,7 +192,7 @@ func (s *Server) hostOperation(w http.ResponseWriter, r *http.Request) {
 		respond(w, images, err, http.StatusBadGateway)
 	case (operation == "start" || operation == "stop") && r.Method == http.MethodPost:
 		var request protocol.StartRequest
-		if jsonDecode(r, &request) != nil || request.ContainerID == "" {
+		if jsonDecode(w, r, &request) != nil || request.ContainerID == "" {
 			http.Error(w, "container_id is required", http.StatusBadRequest)
 			return
 		}

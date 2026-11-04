@@ -447,12 +447,46 @@ func TestRegistryWriteFailures(t *testing.T) {
 	if _, ok := f.svc.Registry().Get("hel1"); !ok {
 		t.Fatal("renamed content was not published")
 	}
+	// A published re-enrollment ends the session of the earlier certificate.
+	if len(f.disconnected) != 1 || f.disconnected[0] != "hel1" {
+		t.Fatalf("disconnected %v", f.disconnected)
+	}
 	f.svc.registry.write = writeRegistryFile
 	if _, _, err := f.svc.CreateToken("jp1", 0); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.svc.Remove("hel1"); code(err) != CodeUnavailable || !errors.Is(f.svc.registry.degraded, ErrDegraded) {
 		t.Fatalf("degraded registry accepted a change: %v", err)
+	}
+	// The refused removal changed nothing, so the session stays.
+	if len(f.disconnected) != 1 {
+		t.Fatalf("refused removal disconnected %v", f.disconnected)
+	}
+}
+
+// TestRemoveDisconnectsWhenOnlyTheSyncFails: the removal is published, so the
+// host's session ends although the caller is told the removal is not durable.
+func TestRemoveDisconnectsWhenOnlyTheSyncFails(t *testing.T) {
+	f := newFixture(t)
+	key := newKey(t)
+	if _, _, err := f.svc.Enroll(EnrollRequest{Token: f.token("hel1"), HostID: "hel1", Prefix: "hel1-", CSR: f.csr(key, "hel1")}); err != nil {
+		t.Fatal(err)
+	}
+	f.disconnected = nil
+	f.svc.registry.write = func(path string, data []byte) error {
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			return err
+		}
+		return atomicfile.ErrDirectorySync
+	}
+	if err := f.svc.Remove("hel1"); code(err) != CodeUnavailable {
+		t.Fatalf("directory sync failure: %v", err)
+	}
+	if _, ok := f.svc.Registry().Get("hel1"); ok {
+		t.Fatal("removal was not published")
+	}
+	if len(f.disconnected) != 1 || f.disconnected[0] != "hel1" {
+		t.Fatalf("disconnected %v", f.disconnected)
 	}
 }
 

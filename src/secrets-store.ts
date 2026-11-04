@@ -1,4 +1,4 @@
-import { createStore } from "solid-js/store";
+import { createStore, reconcile } from "solid-js/store";
 import {
   type Delivery,
   deleteStackSecret,
@@ -12,6 +12,7 @@ import {
   type StoreState,
   unlockStore,
 } from "./secrets-api";
+import { onSessionEnd, sessionEnded } from "./fleet-store";
 
 // Secret-store state shared by the store banner and the per-stack panels.
 // Components read it directly instead of receiving it through props.
@@ -34,14 +35,25 @@ type SecretsState = {
   stacks: Record<string, StackSecretsState>;
 };
 
-const [secrets, setSecrets] = createStore<SecretsState>({
+const initial = (): SecretsState => ({
   store: "unknown",
   storeBusy: false,
   storeError: "",
   stacks: {},
 });
 
+const [secrets, setSecrets] = createStore<SecretsState>(initial());
+
 export { secrets };
+
+// Bumped when the session ends, so answers to earlier requests are dropped.
+let generation = 0;
+
+onSessionEnd(() => {
+  ++generation;
+  // Replace stacks wholesale; a plain set would merge the old entries in.
+  setSecrets(reconcile(initial()));
+});
 
 export function stackKey(hostID: string, stack: string): string {
   return `${hostID}/${stack}`;
@@ -69,9 +81,12 @@ function message(cause: unknown, fallback: string): string {
 }
 
 export async function refreshStoreState() {
+  const started = generation;
   try {
-    setSecrets({ store: await getStoreState(), storeError: "" });
+    const store = await getStoreState();
+    if (started === generation) setSecrets({ store, storeError: "" });
   } catch (cause) {
+    if (started !== generation || sessionEnded(cause)) return;
     if (cause instanceof SecretsUnavailableError) setSecrets({ store: "unavailable", storeError: "" });
     else setSecrets("storeError", message(cause, "Could not read the secret store state."));
   }
@@ -79,16 +94,18 @@ export async function refreshStoreState() {
 
 async function storeAction(action: () => Promise<StoreState>, fallback: string): Promise<boolean> {
   if (secrets.storeBusy) return false;
+  const started = generation;
   setSecrets({ storeBusy: true, storeError: "" });
   try {
     const state = await action();
+    if (started !== generation) return false;
     setSecrets("store", state);
     return true;
   } catch (cause) {
-    setSecrets("storeError", message(cause, fallback));
+    if (started === generation && !sessionEnded(cause)) setSecrets("storeError", message(cause, fallback));
     return false;
   } finally {
-    setSecrets("storeBusy", false);
+    if (started === generation) setSecrets("storeBusy", false);
   }
 }
 
@@ -112,17 +129,20 @@ export function setReferencedSecrets(hostID: string, stack: string, names: strin
 
 export async function loadStackSecrets(hostID: string, stack: string) {
   const key = stackKey(hostID, stack);
+  const started = generation;
   ensureStack(key);
   setSecrets("stacks", key, { loading: true, error: "" });
   try {
     const result = await listStackSecrets(hostID, stack);
+    if (started !== generation) return;
     setSecrets("store", result.state);
     setSecrets("stacks", key, { entries: result.secrets ?? [], delivery: result.delivery });
   } catch (cause) {
+    if (started !== generation || sessionEnded(cause)) return;
     if (cause instanceof SecretsUnavailableError) setSecrets("store", "unavailable");
     setSecrets("stacks", key, "error", message(cause, "Could not load stack secrets."));
   } finally {
-    setSecrets("stacks", key, "loading", false);
+    if (started === generation) setSecrets("stacks", key, "loading", false);
   }
 }
 
@@ -130,17 +150,23 @@ async function stackAction(hostID: string, stack: string, name: string, action: 
   const key = stackKey(hostID, stack);
   ensureStack(key);
   if (secrets.stacks[key].busy) return false;
+  const started = generation;
   setSecrets("stacks", key, { busy: name, error: "" });
   try {
-    setSecrets("stacks", key, "delivery", await action());
+    const delivery = await action();
+    if (started !== generation) return false;
+    setSecrets("stacks", key, "delivery", delivery);
     return true;
   } catch (cause) {
-    setSecrets("stacks", key, "error", message(cause, "The secret change failed."));
+    if (started === generation && !sessionEnded(cause))
+      setSecrets("stacks", key, "error", message(cause, "The secret change failed."));
     return false;
   } finally {
-    setSecrets("stacks", key, "busy", "");
-    // Refresh names and the store state (a 423 means it was locked meanwhile).
-    await loadStackSecrets(hostID, stack);
+    if (started === generation) {
+      setSecrets("stacks", key, "busy", "");
+      // Refresh names and the store state (a 423 means it was locked meanwhile).
+      await loadStackSecrets(hostID, stack);
+    }
   }
 }
 

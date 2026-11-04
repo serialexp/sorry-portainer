@@ -271,6 +271,10 @@ func (s *Service) Enroll(req EnrollRequest) (EnrollResponse, Enrolled, error) {
 	})
 	if err != nil {
 		s.mu.Unlock()
+		if errors.Is(err, errPublished) {
+			// The published entry no longer accepts the earlier certificate.
+			s.disconnect(req.HostID)
+		}
 		return EnrollResponse{}, done, fail(CodeUnavailable, http.StatusServiceUnavailable, "cannot record the enrollment: %v", err)
 	}
 	entry.usedKey, entry.issued = pub, cert
@@ -428,6 +432,11 @@ func (s *Service) Remove(hostID string) error {
 	}
 	s.mu.Unlock()
 	if err != nil {
+		if errors.Is(err, errPublished) {
+			// The host is gone from the published registry, so its session
+			// must end even though the removal may not be durable.
+			s.disconnect(hostID)
+		}
 		return fail(CodeUnavailable, http.StatusServiceUnavailable, "cannot record the removal: %v", err)
 	}
 	if !enrolled && !hadToken {

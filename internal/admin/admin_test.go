@@ -197,11 +197,71 @@ func TestMalformedAndOversizedRequests(t *testing.T) {
 	for name, payload := range map[string]string{
 		"not json":      "hello\n",
 		"unknown field": `{"action":"list","admin":true}` + "\n",
-		"oversized":     `{"action":"list","host_id":"` + strings.Repeat("a", MaxMessage) + `"}` + "\n",
+		"oversized":     `{"action":"list","host_id":"` + strings.Repeat("a", MaxRequest) + `"}` + "\n",
 	} {
 		if got := exchange(t, dir, payload); got.Code != enrollment.CodeInvalidRequest {
 			t.Errorf("%s: %+v", name, got)
 		}
+	}
+}
+
+// answerWith serves one admin connection in a fresh state directory with
+// answer, whatever the request, and returns a client for it.
+func answerWith(t *testing.T, answer []byte) *Client {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "state")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := Listen(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		_, _ = conn.Write(answer)
+	}()
+	client, err := NewClient(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return client
+}
+
+// TestClientReadsLargeLists: a list far beyond the request limit, here ten
+// thousand hosts, reaches the client.
+func TestClientReadsLargeLists(t *testing.T) {
+	const hosts = 10_000
+	list := ListResponse{Hosts: make([]enrollment.HostStatus, hosts), Tokens: []enrollment.TokenInfo{}}
+	for i := range list.Hosts {
+		id := fmt.Sprintf("host-%05d", i)
+		list.Hosts[i] = enrollment.HostStatus{HostID: id, Prefix: id + "-", EnrolledAt: time.Now().UTC(), CurrentNotAfter: time.Now().UTC()}
+	}
+	answer, err := json.Marshal(list)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(answer) <= MaxRequest || len(answer) > MaxResponse {
+		t.Fatalf("answer of %d bytes does not exercise the response limit", len(answer))
+	}
+	got, err := answerWith(t, answer).List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Hosts) != hosts || got.Hosts[hosts-1].HostID != "host-09999" {
+		t.Fatalf("got %d hosts", len(got.Hosts))
+	}
+}
+
+func TestClientRefusesOversizedAnswers(t *testing.T) {
+	answer := []byte(`{"hosts":[],"tokens":[],"pad":"` + strings.Repeat("a", MaxResponse) + `"}`)
+	if _, err := answerWith(t, answer).List(context.Background()); err == nil || !strings.Contains(err.Error(), "read the server's answer") {
+		t.Fatalf("List = %v", err)
 	}
 }
 

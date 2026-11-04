@@ -218,7 +218,7 @@ func (s *Server) secretStoreRoute(w http.ResponseWriter, r *http.Request) {
 	switch action {
 	case "initialize", "unlock":
 		var req passphraseRequest
-		if jsonDecode(r, &req) != nil {
+		if jsonDecode(w, r, &req) != nil {
 			http.Error(w, "invalid request", http.StatusBadRequest)
 			return
 		}
@@ -260,7 +260,7 @@ func (s *Server) stackSecrets(w http.ResponseWriter, r *http.Request, host, stac
 		writeJSON(w, stackSecretsResponse{State: s.secrets.State(), Secrets: entries, Delivery: s.pusher.delivery(host, stack)})
 	case name != "" && r.Method == http.MethodPut:
 		var req secretValueRequest
-		if jsonDecode(r, &req) != nil {
+		if jsonDecode(w, r, &req) != nil {
 			http.Error(w, "invalid request", http.StatusBadRequest)
 			return
 		}

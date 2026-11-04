@@ -1,6 +1,6 @@
 import { A, useLocation, useNavigate } from "@solidjs/router";
 import { createEffect, createSignal, For, Show } from "solid-js";
-import { filteredStacks, fleet, loadStacks, searchTerm } from "./fleet-store";
+import { filteredStacks, fleet, loadStacks, searchTerm, sessionEnded } from "./fleet-store";
 import { editStackPath, hostPath, newStackPath, parseHostPath } from "./host-route";
 import { StackSecretsPanel } from "./secrets-ui";
 import { setReferencedSecrets } from "./secrets-store";
@@ -35,7 +35,7 @@ export function StackList() {
       if (fleet.selectedHost !== hostID) return;
       setOperationOutput(result.output || `${name}: ${verb} command completed.`);
     } catch (cause) {
-      if (fleet.selectedHost === hostID)
+      if (fleet.selectedHost === hostID && !sessionEnded(cause))
         setOperationError(cause instanceof Error ? cause.message : `Could not ${verb} stack.`);
     } finally {
       setBusy("");
@@ -136,11 +136,19 @@ export function StackEditor() {
   const [deploying, setDeploying] = createSignal(false);
   const [saved, setSaved] = createSignal(false);
   const [deployOutput, setDeployOutput] = createSignal("");
+  // A stack this editor created; later saves update it, and its name is fixed.
+  const [created, setCreated] = createSignal("");
+  const existingStack = () => editedStack() ?? (created() || undefined);
   const busy = () => saving() || deploying() || loading();
+  // Answers for an earlier route are dropped; returning to the same stack
+  // starts a new request.
+  let loadRequest = 0;
   createEffect(() => {
     const hostID = currentHost();
     const stackName = editedStack();
+    const request = ++loadRequest;
     setName(stackName ?? "");
+    setCreated("");
     setCompose("");
     setVersion(0);
     setSaved(false);
@@ -153,19 +161,45 @@ export function StackEditor() {
     setLoading(true);
     void getStack(hostID, stackName)
       .then((stack) => {
-        if (currentHost() !== hostID || editedStack() !== stackName) return;
+        if (request !== loadRequest) return;
         setCompose(stack.compose_yaml ?? "");
         setVersion(stack.version);
         setReferencedSecrets(hostID, stackName, stack.secrets ?? []);
       })
       .catch((cause) => {
-        if (currentHost() === hostID && editedStack() === stackName)
+        if (request === loadRequest && !sessionEnded(cause))
           setError(cause instanceof Error ? cause.message : "Could not load stack.");
       })
       .finally(() => {
-        if (currentHost() === hostID && editedStack() === stackName) setLoading(false);
+        if (request === loadRequest) setLoading(false);
       });
   });
+
+  // Saves the form as a new stack, or as a new revision of the existing one,
+  // and returns the stack's name.
+  async function persist(hostID: string): Promise<string> {
+    const existing = existingStack();
+    if (existing) {
+      await updateStack(hostID, existing, compose(), version());
+      setVersion(version() + 1);
+      setSaved(true);
+      void loadStacks();
+      return existing;
+    }
+    const stackName = name().trim();
+    await createStack(hostID, stackName, compose());
+    setCreated(stackName);
+    setSaved(true);
+    void loadStacks();
+    // The next save is an update, which needs the version just created.
+    // Without it the save buttons stay disabled, but the stack exists.
+    try {
+      setVersion((await getStack(hostID, stackName)).version);
+    } catch (cause) {
+      if (!sessionEnded(cause)) setError("Saved, but its version could not be read; reopen the stack to edit it.");
+    }
+    return stackName;
+  }
 
   async function save(event: SubmitEvent) {
     event.preventDefault();
@@ -183,17 +217,10 @@ export function StackEditor() {
     setSaving(true);
     const hostID = currentHost();
     try {
-      if (!saved()) {
-        if (editedStack()) {
-          await updateStack(hostID, stackName, compose(), version());
-          setVersion(version() + 1);
-        } else await createStack(hostID, stackName, compose());
-        setSaved(true);
-        void loadStacks();
-      }
+      if (!saved()) await persist(hostID);
       navigate(hostPath(hostID, "stacks"));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not save the stack.");
+      if (!sessionEnded(cause)) setError(cause instanceof Error ? cause.message : "Could not save the stack.");
     } finally {
       setSaving(false);
     }
@@ -205,8 +232,10 @@ export function StackEditor() {
     try {
       const stack = await getStack(hostID, stackName);
       setReferencedSecrets(hostID, stackName, stack.secrets ?? []);
-    } catch {
-      // The warning stays as it was; the deploy result reports missing values.
+    } catch (cause) {
+      // Otherwise the warning stays as it was; the deploy result reports
+      // missing values.
+      sessionEnded(cause);
     }
   }
 
@@ -224,18 +253,16 @@ export function StackEditor() {
     setDeploying(true);
     const hostID = currentHost();
     try {
+      let target = existingStack() ?? stackName;
       if (!saved()) {
-        if (editedStack()) {
-          await updateStack(hostID, stackName, compose(), version());
-          setVersion(version() + 1);
-        } else await createStack(hostID, stackName, compose());
-        setSaved(true);
-        void loadStacks();
-        if (editedStack()) await refreshReferencedSecrets(hostID, stackName);
+        const updating = !!existingStack();
+        target = await persist(hostID);
+        if (updating) await refreshReferencedSecrets(hostID, target);
       }
-      const result = await deployStack(hostID, stackName);
+      const result = await deployStack(hostID, target);
       setDeployOutput(result.output || "Deployment command completed.");
     } catch (cause) {
+      if (sessionEnded(cause)) return;
       setError(
         `${saved() ? "Stack saved, but deployment failed" : "Could not save stack"}: ${cause instanceof Error ? cause.message : "Unknown error"}`,
       );
@@ -263,10 +290,10 @@ export function StackEditor() {
           <input
             required
             maxLength={63}
-            pattern="[a-z0-9][a-z0-9_-]{0,62}"
+            pattern="[a-z0-9][a-z0-9_\-]{0,62}"
             value={name()}
             onInput={(event) => setName(event.currentTarget.value)}
-            readOnly={!!editedStack()}
+            readOnly={!!existingStack()}
             disabled={busy()}
             placeholder="my-stack"
           />
@@ -299,11 +326,11 @@ export function StackEditor() {
             class="primary"
             type="button"
             onClick={saveAndStart}
-            disabled={busy() || (!!editedStack() && !version())}
+            disabled={busy() || (!!existingStack() && !version())}
           >
             {deploying() ? "Starting…" : saved() ? "Retry start" : "Save and start"}
           </button>
-          <button class="add-button" type="submit" disabled={busy() || (!!editedStack() && !version())}>
+          <button class="add-button" type="submit" disabled={busy() || (!!existingStack() && !version())}>
             {saving() ? "Saving…" : "Save without starting"}
           </button>
         </div>

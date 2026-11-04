@@ -6,7 +6,15 @@ import {
   type TokenLifetime,
   tokenLifetimes,
 } from "./enrollment-api";
-import { dismissIssued, enrollment, issueToken, loadEnrollment, remove, revoke } from "./enrollment-store";
+import {
+  dismissIssued,
+  enrollment,
+  issueToken,
+  loadEnrollment,
+  remove,
+  resetEnrollment,
+  revoke,
+} from "./enrollment-store";
 import { fleet, searchTerm } from "./fleet-store";
 
 const formatTime = (iso: string) => new Date(iso).toLocaleString();
@@ -271,7 +279,8 @@ export function EnrollmentPage() {
     if (!fleet.demo) void loadEnrollment();
   });
   // The token's secret is not kept once the page closes.
-  onCleanup(dismissIssued);
+  // Leaving the page drops the issued token, also one still being issued.
+  onCleanup(resetEnrollment);
   return (
     <Show
       when={!fleet.demo}

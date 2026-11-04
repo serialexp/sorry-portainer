@@ -79,7 +79,7 @@ func (s *Sessions) Login(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Password string `json:"password"`
 	}
-	if err := jsonDecode(r, &body); err != nil || subtle.ConstantTimeCompare([]byte(body.Password), []byte(s.opts.Password)) != 1 {
+	if err := jsonDecode(w, r, &body); err != nil || subtle.ConstantTimeCompare([]byte(body.Password), []byte(s.opts.Password)) != 1 {
 		// The attempt taken above stays spent.
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return

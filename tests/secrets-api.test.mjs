@@ -10,9 +10,19 @@ import {
   putStackSecret,
   unlockStore,
 } from "../src/secrets-api.ts";
+import { UnauthorizedError } from "../src/fleet-api.ts";
 
 const ok = (body) => ({ ok: true, json: async () => body });
 const fail = (status, text) => ({ ok: false, status, text: async () => text });
+
+test("a 401 from any secret route means the session ended", async () => {
+  const unauthorized = async () => fail(401, "authentication required");
+  await assert.rejects(getStoreState(unauthorized), UnauthorizedError);
+  await assert.rejects(unlockStore("long-enough-passphrase", unauthorized), UnauthorizedError);
+  await assert.rejects(listStackSecrets("host", "web", unauthorized), UnauthorizedError);
+  await assert.rejects(putStackSecret("host", "web", "token", "value", unauthorized), UnauthorizedError);
+  await assert.rejects(deleteStackSecret("host", "web", "token", unauthorized), UnauthorizedError);
+});
 
 test("store state routes send the passphrase only in the body", async () => {
   const calls = [];

@@ -20,3 +20,10 @@
 
 - Found while hardening sessions (2026-11-05):
   - jp1 deployment: the label-only Caddy container reaches the host through `host.docker.internal` (the Docker bridge gateway), so the server's `listen_addr` there must be that gateway address, not 127.0.0.1, and `trusted_proxies` must list the Caddy network's subnet.
+
+- From the Codex/Antigravity review (2026-11-05), deferred by Bart until after v0.2.0:
+  - The control listener's failure log (`internal/server/control.go`) is keyed by the full remote address, so rotating IPv6 addresses evict real entries and escape the per-address limit. Key it by `clientPrefix` (/64) and add a global lines-per-minute budget.
+  - `enroll --replace` and a running agent's renewer both write the staged key and bundle. `enroll` should take the agent directory lock and refuse while the agent holds it.
+  - Any 503 sets the enrollment page to "unavailable", which hides Refresh, so a transient 503 leaves no retry.
+  - Reported but not verified: repeated immediate renewals once the CA has under 30 days left; a 128-character host ID gets a 129-character default prefix.
+  - Deployment note: the default web listen address `:8080` binds every interface.

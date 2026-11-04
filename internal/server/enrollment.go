@@ -107,11 +107,22 @@ func allow(w http.ResponseWriter, r *http.Request, method string) bool {
 	return false
 }
 
-func (s *Server) createToken(w http.ResponseWriter, r *http.Request) {
-	var req TokenRequest
+func decodeTokenRequest(w http.ResponseWriter, r *http.Request, req *TokenRequest) error {
+	boundBodyRead(w)
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxEnrollmentBody))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&req); err != nil || decoder.Decode(new(json.RawMessage)) != io.EOF {
+	if err := decoder.Decode(req); err != nil {
+		return err
+	}
+	if decoder.Decode(new(json.RawMessage)) != io.EOF {
+		return errors.New("trailing data")
+	}
+	return nil
+}
+
+func (s *Server) createToken(w http.ResponseWriter, r *http.Request) {
+	var req TokenRequest
+	if decodeTokenRequest(w, r, &req) != nil {
 		http.Error(w, "invalid token request", http.StatusBadRequest)
 		return
 	}

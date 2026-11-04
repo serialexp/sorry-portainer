@@ -102,7 +102,7 @@ func (s *Server) answer(conn *net.UnixConn) any {
 		return errorBody{Error: "the admin socket answers only the server's account and root", Code: "forbidden"}
 	}
 	var request Request
-	decoder := json.NewDecoder(io.LimitReader(conn, MaxMessage))
+	decoder := json.NewDecoder(io.LimitReader(conn, MaxRequest))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
 		return invalid("invalid request: %v", err)

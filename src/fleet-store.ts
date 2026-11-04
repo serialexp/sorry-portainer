@@ -90,6 +90,16 @@ export { fleet };
 // for the same host, are dropped.
 let hostRequest = 0;
 let stackRequest = 0;
+let hostsRequest = 0;
+
+// Other stores' resets, run whenever the dashboard returns to the login form
+// so nothing from one session is shown in the next.
+const sessionResets: (() => void)[] = [];
+
+/** Registers reset to run when the session ends or the admin signs out. */
+export function onSessionEnd(reset: () => void) {
+  sessionResets.push(reset);
+}
 
 function message(cause: unknown, fallback: string): string {
   return cause instanceof Error ? cause.message : fallback;
@@ -151,7 +161,9 @@ export async function signIn(password: string) {
 
 function showLogin(loginError: string) {
   clearHost();
+  ++hostsRequest;
   setFleet({ phase: "login", demo: false, hosts: [], loginError, notice: "", query: "" });
+  for (const reset of sessionResets) reset();
 }
 
 /** Ends the session on the master, then returns to the login form. */
@@ -172,10 +184,12 @@ export async function signOut() {
 /** Reloads the host list, for example after a host was enrolled or removed. */
 export async function loadHosts() {
   if (fleet.demo) return;
+  const request = ++hostsRequest;
   try {
-    setFleet("hosts", await listHosts());
+    const hosts = await listHosts();
+    if (request === hostsRequest) setFleet("hosts", hosts);
   } catch (cause) {
-    if (!sessionEnded(cause)) setFleet("notice", message(cause, "Could not load hosts."));
+    if (request === hostsRequest && !sessionEnded(cause)) setFleet("notice", message(cause, "Could not load hosts."));
   }
 }
 
