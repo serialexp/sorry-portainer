@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -106,6 +108,7 @@ func TestElevatedSetupReportsConciseProgressAndInstallsService(t *testing.T) {
 		"Installing system service for spa",
 		"Configuring Podman OCI hooks for stack secrets (/srv/hooks)",
 		"Done!",
+		"enroll --server-url wss://MASTER:9443/control/agent --host-id HOST_ID --dir /var/lib/sorry-portainer-agent --token-file -",
 		"Happy using!",
 	} {
 		if !strings.Contains(got, wanted) {
@@ -154,5 +157,66 @@ func TestSetupDryRunUsesHumanProgressOnly(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "apt-get") || !strings.Contains(out.String(), "Updating apt") {
 		t.Fatalf("output = %q", out.String())
+	}
+}
+
+func TestAgentUnitRunsFromTheAgentDirectory(t *testing.T) {
+	unit := agentUnit("spa", "/home/spa", "/usr/local/bin/sorry-portainer-agent", "/var/lib/sorry-portainer-agent")
+	for _, wanted := range []string{
+		"ConditionPathExists=/var/lib/sorry-portainer-agent/agent.json\n",
+		"ExecStart=/usr/local/bin/sorry-portainer-agent --config /var/lib/sorry-portainer-agent/agent.json\n",
+		"User=spa\n",
+		"Environment=HOME=/home/spa\n",
+		"Environment=XDG_RUNTIME_DIR=/run/user/%U\n",
+	} {
+		if !strings.Contains(unit, wanted) {
+			t.Fatalf("unit missing %q:\n%s", wanted, unit)
+		}
+	}
+	if strings.Contains(unit, "/etc/sorry-portainer") {
+		t.Fatalf("unit still uses /etc/sorry-portainer:\n%s", unit)
+	}
+}
+
+func TestPrepareAgentDir(t *testing.T) {
+	uid, gid := os.Getuid(), os.Getgid()
+	dir := filepath.Join(t.TempDir(), "agent")
+	if err := prepareAgentDir(dir, uid, gid); err != nil {
+		t.Fatal(err)
+	}
+	st, err := os.Stat(dir)
+	if err != nil || !st.IsDir() || st.Mode().Perm() != 0o700 {
+		t.Fatalf("created %v %v", st.Mode(), err)
+	}
+	// An existing, too open directory is tightened; its content is kept.
+	if err := os.WriteFile(filepath.Join(dir, "agent.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := prepareAgentDir(dir, uid, gid); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := os.Stat(dir); st.Mode().Perm() != 0o700 {
+		t.Fatalf("mode %v", st.Mode())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "agent.json")); err != nil {
+		t.Fatal(err)
+	}
+	// Symlinks and files are refused.
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(dir, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := prepareAgentDir(link, uid, gid); err == nil {
+		t.Fatal("followed a symlink")
+	}
+	file := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := prepareAgentDir(file, uid, gid); err == nil {
+		t.Fatal("accepted a file")
 	}
 }

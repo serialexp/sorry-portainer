@@ -22,14 +22,15 @@ type ServerFile struct {
 	AdminPassword string `json:"admin_password"`
 	SessionTTL    string `json:"session_ttl"`
 	// StateDir defaults to the directory holding the config file.
-	StateDir string         `json:"state_dir"`
+	StateDir string         `json:"state_dir,omitempty"`
 	Control  ControlTLSFile `json:"control"`
 }
 type ControlTLSFile struct {
-	ListenAddr string `json:"listen_addr"`
-	CAFile     string `json:"ca_file"`
-	CertFile   string `json:"cert_file"`
-	KeyFile    string `json:"key_file"`
+	ListenAddr     string   `json:"listen_addr"`
+	CAFile         string   `json:"ca_file"`
+	CAKeyFile      string   `json:"ca_key_file"`
+	CredentialFile string   `json:"credential_file"`
+	ServerNames    []string `json:"server_names"`
 }
 
 func LoadServerFile(path string) (Server, ControlTLS, error) {
@@ -52,7 +53,7 @@ func LoadServerFile(path string) (Server, ControlTLS, error) {
 	if cfg.ListenAddr == "" {
 		cfg.ListenAddr = ":8080"
 	}
-	control := ControlTLS{ListenAddr: f.Control.ListenAddr, CAFile: f.Control.CAFile, CertFile: f.Control.CertFile, KeyFile: f.Control.KeyFile}
+	control := controlFromFile(f.Control)
 	if control.ListenAddr == "" {
 		control.ListenAddr = ":9443"
 	}
@@ -65,12 +66,18 @@ func LoadServerFile(path string) (Server, ControlTLS, error) {
 	return cfg, control, nil
 }
 
+func controlFromFile(f ControlTLSFile) ControlTLS {
+	return ControlTLS{ListenAddr: f.ListenAddr, CAFile: f.CAFile, CAKeyFile: f.CAKeyFile, CredentialFile: f.CredentialFile, ServerNames: f.ServerNames}
+}
+
+// ValidateControlFile checks a control section before provisioning writes it.
+func ValidateControlFile(f ControlTLSFile) error { return validateControl(controlFromFile(f)) }
+
 type AgentFile struct {
 	ServerURL       string `json:"server_url"`
 	HostID          string `json:"host_id"`
 	Prefix          string `json:"host_prefix"`
-	CertFile        string `json:"agent_cert"`
-	KeyFile         string `json:"agent_key"`
+	CredentialFile  string `json:"agent_credential"`
 	CAFile          string `json:"agent_ca"`
 	ServerName      string `json:"server_name"`
 	StateDir        string `json:"state_dir"`
@@ -84,7 +91,7 @@ func LoadAgentFile(path string) (Agent, error) {
 	if err := loadPrivate(path, &f); err != nil {
 		return Agent{}, err
 	}
-	a := Agent{ServerURL: f.ServerURL, HostID: f.HostID, Prefix: f.Prefix, CertFile: f.CertFile, KeyFile: f.KeyFile, CAFile: f.CAFile, ServerName: f.ServerName, StateDir: f.StateDir, ComposeProvider: f.ComposeProvider, SecretSocket: f.SecretSocket, OCIHooksDir: f.OCIHooksDir}
+	a := Agent{ServerURL: f.ServerURL, HostID: f.HostID, Prefix: f.Prefix, CredentialFile: f.CredentialFile, CAFile: f.CAFile, ServerName: f.ServerName, StateDir: f.StateDir, ComposeProvider: f.ComposeProvider, SecretSocket: f.SecretSocket, OCIHooksDir: f.OCIHooksDir}
 	if a.StateDir == "" {
 		a.StateDir = filepath.Dir(path)
 	}
@@ -93,6 +100,9 @@ func LoadAgentFile(path string) (Agent, error) {
 	}
 	if a.ComposeProvider == "" {
 		a.ComposeProvider = "/usr/bin/podman-compose"
+	}
+	if a.ServerName == "" {
+		a.ServerName = serverNameFromURL(a.ServerURL)
 	}
 	if err := validateAgent(a); err != nil {
 		return Agent{}, err
@@ -138,17 +148,6 @@ func validateServer(cfg Server) error {
 	}
 	return nil
 }
-func validateControl(c ControlTLS) error {
-	if c.ListenAddr == ":80" || c.ListenAddr == ":443" {
-		return errors.New("control listener must not use port 80 or 443")
-	}
-	for n, v := range map[string]string{"control CA": c.CAFile, "control certificate": c.CertFile, "control key": c.KeyFile} {
-		if v == "" {
-			return fmt.Errorf("%s is required", n)
-		}
-	}
-	return nil
-}
 func validateAgent(a Agent) error {
 	u, err := url.Parse(a.ServerURL)
 	if err != nil || u.Scheme != "wss" || u.Host == "" {
@@ -157,12 +156,18 @@ func validateAgent(a Agent) error {
 	if !protocol.ValidHostID(a.HostID) {
 		return errors.New("host_id must be 1-128 letters, digits, '.', '_' or '-', starting with a letter or digit")
 	}
+	if !protocol.ValidHostPrefix(a.Prefix) {
+		return errors.New("host_prefix must be 1-128 letters, digits, '.', '_' or '-', starting with a letter or digit")
+	}
+	if !ValidServerName(a.ServerName) {
+		return fmt.Errorf("server_name %q is not a DNS name or IP address", a.ServerName)
+	}
 	for n, v := range map[string]string{"secret_socket": a.SecretSocket, "oci_hooks_dir": a.OCIHooksDir} {
 		if v != "" && !filepath.IsAbs(v) {
 			return fmt.Errorf("%s must be an absolute path", n)
 		}
 	}
-	for n, v := range map[string]string{"server_url": a.ServerURL, "host_id": a.HostID, "host_prefix": a.Prefix, "agent_cert": a.CertFile, "agent_key": a.KeyFile, "agent_ca": a.CAFile, "state_dir": a.StateDir, "compose_provider": a.ComposeProvider} {
+	for n, v := range map[string]string{"server_url": a.ServerURL, "host_id": a.HostID, "host_prefix": a.Prefix, "agent_credential": a.CredentialFile, "agent_ca": a.CAFile, "state_dir": a.StateDir, "compose_provider": a.ComposeProvider} {
 		if v == "" {
 			return fmt.Errorf("%s is required", n)
 		}

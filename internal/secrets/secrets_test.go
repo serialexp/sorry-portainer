@@ -21,6 +21,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/serialexp/sorry-portainer/internal/protocol"
+	"github.com/serialexp/sorry-portainer/internal/unixsock"
 )
 
 func TestVaultReplaceReportsChangesAndZeroesOldValues(t *testing.T) {
@@ -135,7 +136,7 @@ func TestSocketServerAnswersOwnUser(t *testing.T) {
 		t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	}
 	path := filepath.Join(dir, "s", "h1.sock")
-	listener, err := Listen(path)
+	listener, err := unixsock.Listen(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +200,7 @@ func TestSocketServerAnswersOwnUser(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "s", "file.sock"), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Listen(filepath.Join(dir, "s", "file.sock")); err == nil {
+	if _, err := unixsock.Listen(filepath.Join(dir, "s", "file.sock")); err == nil {
 		t.Fatal("replaced a regular file")
 	}
 }
@@ -393,7 +394,7 @@ func TestHookInjectsIntoContainerTmpfs(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(socket), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	listener, err := Listen(socket)
+	listener, err := unixsock.Listen(socket)
 	if err != nil {
 		t.Fatal(err)
 	}

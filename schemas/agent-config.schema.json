@@ -4,7 +4,7 @@
   "title": "Sorry Portainer agent configuration",
   "type": "object",
   "additionalProperties": false,
-  "required": ["server_url", "host_id", "host_prefix", "agent_cert", "agent_key", "agent_ca"],
+  "required": ["server_url", "host_id", "host_prefix", "agent_credential", "agent_ca"],
   "properties": {
     "server_url": {
       "type": "string",
@@ -18,13 +18,15 @@
     },
     "host_prefix": {
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
     },
-    "agent_cert": { "type": "string", "minLength": 1 },
-    "agent_key": { "type": "string", "minLength": 1 },
+    "agent_credential": { "type": "string", "minLength": 1, "description": "The agent's key and certificate in one PEM file, replaced by the agent when it renews." },
     "agent_ca": { "type": "string", "minLength": 1 },
-    "server_name": { "type": "string", "minLength": 1 },
+    "server_name": { "type": "string", "minLength": 1, "description": "Name the master's certificate is checked for; defaults to the server URL's host." },
     "state_dir": { "type": "string", "minLength": 1 },
-    "compose_provider": { "type": "string", "minLength": 1, "default": "/usr/bin/podman-compose" }
+    "compose_provider": { "type": "string", "minLength": 1, "default": "/usr/bin/podman-compose" },
+    "secret_socket": { "type": "string", "pattern": "^/", "description": "Unix socket the OCI hook asks for stack secrets." },
+    "oci_hooks_dir": { "type": "string", "pattern": "^/", "description": "Directory for the agent's OCI hook JSON; must be in containers.conf hooks_dir." }
   }
 }

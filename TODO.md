@@ -1,8 +1,7 @@
 # Follow-up
 
-- Found during relay hardening (2026-09-24), not yet fixed:
-  - Both HTTP listeners in `cmd/sorry-portainer-server/main.go` use `http.ListenAndServe`/`http.Serve` with no `ReadHeaderTimeout`/`IdleTimeout`, so slow clients can hold connections open indefinitely.
-  - Server shutdown is not graceful: no signal handling, sessions are dropped by process exit.
+- Found during relay hardening (2026-09-24), narrowed 2026-11-05 (listener timeouts and SIGTERM handling now exist):
+  - Server shutdown gives in-flight web requests 10 seconds; a stack operation that runs longer is cut off when the process exits and the agent sessions close with it.
 
 - Expose actual Compose/Podman stack runtime status instead of the current `saved` metadata status. The stack list explicitly labels this limitation.
 - Verify `podman-compose` successful exit implies the intended workload was created and started; the installed provider has previously printed pull errors while returning exit code 0. Do not equate operation success with running containers until this check exists.
@@ -14,7 +13,6 @@
 
 - Found while building stack secrets (2026-09-24):
   - podman-compose 1.0.6 `down` leaves `<project>_default` networks behind. Older test runs left several `sorry-podman-test-*` and `sorry-local-a-podman-smoke-*` networks on Bart's machine (not removed; not mine). The secrets live test removes its own.
-  - Production agent layout: `oci_hooks_dir` defaults to `~/.local/share/sorry-portainer/oci-hooks` while `state_dir` is set separately; decide where each lives for the dedicated user.
   - Verify the hook with crun, and on Ubuntu 26.04 / Podman 5.x under the dedicated agent user.
   - UI prop drilling (Rule 9): `index.tsx` passes `state`/`setState` into `Dashboard`, and `StackList`/`StackEditor` take data props. The new secrets UI uses a Solid store (`src/secrets-store.ts`); moving the dashboard state to stores the same way is recommended before more UI work.
   - UI: the sidebar container count and host page don't refresh after a stack start; "Save and start" on the edit page saves a new revision even when nothing changed; the secrets panel's delivery line doesn't refresh after an unlock push.

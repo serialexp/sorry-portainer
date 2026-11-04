@@ -16,6 +16,7 @@ import (
 	"github.com/serialexp/sorry-portainer/internal/podman"
 	"github.com/serialexp/sorry-portainer/internal/protocol"
 	"github.com/serialexp/sorry-portainer/internal/secrets"
+	"github.com/serialexp/sorry-portainer/internal/unixsock"
 )
 
 // TestRealPodmanStackSecrets runs the whole secret path against rootless
@@ -74,7 +75,7 @@ func TestRealPodmanStackSecrets(t *testing.T) {
 	if _, err := secrets.WriteHookConfig(hooksDir, agentBinary, hostID, socket); err != nil {
 		t.Fatal(err)
 	}
-	listener, err := secrets.Listen(socket)
+	listener, err := unixsock.Listen(socket)
 	if err != nil {
 		t.Fatal(err)
 	}

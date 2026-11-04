@@ -1,8 +1,8 @@
 # Stack Secrets — Design
 
-Status: partial — phases 1 and 2 (rotation, agent restart, host reboot) implemented and tested end to end on rootless Podman 4.9.3/runc; production layout, stack deletion, crun and Ubuntu 26.04 outstanding
+Status: partial — phases 1 and 2 (rotation, agent restart, host reboot) implemented and tested end to end on rootless Podman 4.9.3/runc; stack deletion, crun and Ubuntu 26.04 outstanding
 Owner: Bart
-Last updated: 2026-09-25
+Last updated: 2026-11-05
 
 ## Implementation status
 
@@ -11,6 +11,7 @@ items as they land and move them to Done.
 
 ### Done
 
+- [x] **Production agent layout.** Settled by Bart on 2026-11-05 and implemented: the agent's config, credentials and state live in `/var/lib/sorry-portainer-agent` (owned by the agent user, 0700), which `setup` creates; the OCI hooks directory stays at `~/.local/share/sorry-portainer/oci-hooks`, next to the `containers.conf.d` drop-in setup writes. See `docs/design/agent-enrollment.md`.
 - [x] **Experiment — Podman native secrets.** Showed that rootless Podman writes every secret value to disk under the container's `userdata`, whatever the secret driver. Rejected. See [Experiment results](#experiment-results).
 - [x] **Experiment — tmpfs injection through an OCI hook.** A `createRuntime` hook writes secrets into the container's own tmpfs before the app starts, on every start path, and nothing reaches disk. Chosen mechanism.
 - [x] **Requirement — where secrets may live.** Bart (2026-09-24): secrets must not be kept on agent disks; they may live only in container memory or on the master.
@@ -41,7 +42,6 @@ items as they land and move them to Done.
 ### Outstanding
 
 - [ ] **Decision needed — one-off services after a reboot (not secret-specific).** Bringing a stack back runs `up`, which starts every stopped container of the stack, including one-off services that had exited on purpose (for example an init container that fixes volume permissions). Docker after a reboot only restarts containers with a restart policy. Options: (a) keep it: everything in the stack starts, as after a manual Start; (b) after a reboot, only start containers whose `restart:` policy is `always`, `unless-stopped` or `on-failure`, like Docker; (c) (a), plus a per-service opt-out label.
-- [ ] **Production agent layout.** The default hooks directory is `~/.local/share/sorry-portainer/oci-hooks` while `state_dir` is configured separately; settle where each lives for the dedicated agent user.
 - [ ] **Stack deletion.** No stack delete exists yet; when it does, it must delete the stack's secrets on the master and tell the agent to forget them.
 - [ ] **Verification — crun.** Tested on runc only; Ubuntu hosts may use crun, whose hook-time paths could differ.
 - [ ] **Verification — Ubuntu 26.04 / Podman 5.x and the dedicated agent user.** Re-run `experiments/stack-secrets/` and the live test there.

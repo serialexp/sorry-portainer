@@ -54,7 +54,12 @@ func NewRemote(options RemoteOptions) *Remote {
 // Serve runs one agent connection whose authenticated identity is hostID, until
 // the connection ends. The agent's hello must claim exactly that identity. A new
 // session for a host replaces, and fails the pending requests of, the previous one.
-func (r *Remote) Serve(conn *websocket.Conn, hostID string) error {
+//
+// admit, when not nil, is the final admission check. It runs while the
+// session is being registered, under the lock Disconnect takes, so a host
+// whose admission is revoked before Disconnect is called either is refused
+// here or is closed by Disconnect. It must not block.
+func (r *Remote) Serve(conn *websocket.Conn, hostID string, admit func() error) error {
 	if hostID == "" {
 		_ = conn.Close()
 		return errors.New("agent connection has no authenticated host identity")
@@ -66,6 +71,13 @@ func (r *Remote) Serve(conn *websocket.Conn, hostID string) error {
 	}
 	current := newSession(conn, info, r.heartbeat)
 	r.mu.Lock()
+	if admit != nil {
+		if err := admit(); err != nil {
+			r.mu.Unlock()
+			_ = conn.Close()
+			return fmt.Errorf("admission refused: %w", err)
+		}
+	}
 	previous := r.sessions[hostID]
 	r.sessions[hostID] = current
 	r.mu.Unlock()
@@ -85,6 +97,17 @@ func (r *Remote) Serve(conn *websocket.Conn, hostID string) error {
 	}
 	r.mu.Unlock()
 	return err
+}
+
+// Disconnect closes hostID's session, if any, failing its pending requests.
+// Change the admission state first, then call Disconnect.
+func (r *Remote) Disconnect(hostID string, cause error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if s := r.sessions[hostID]; s != nil {
+		delete(r.sessions, hostID)
+		s.close(cause)
+	}
 }
 
 func readHello(conn *websocket.Conn, hostID string) (protocol.HostInfo, error) {

@@ -60,7 +60,7 @@ func TestOnConnectPushesSecrets(t *testing.T) {
 		if err != nil {
 			return
 		}
-		_ = remote.Serve(conn, "local-b")
+		_ = remote.Serve(conn, "local-b", nil)
 	}))
 	t.Cleanup(server.Close)
 	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)

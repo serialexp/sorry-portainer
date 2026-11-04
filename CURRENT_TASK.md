@@ -1,4 +1,16 @@
-# Current task: survive agent restarts and host reboots — implemented; next is deploying to hel1/jp1
+# Current task: deploy sorry-portainer to jp1 (master) and hel1 — agent enrollment (Phase 1) done; release and rsansible role next
+
+## Agent enrollment, allowlisting and rotation (2026-11-05)
+
+Wheat change: "Agent enrollment with one-time tokens and host allowlisting" (`01a1a724…`). Design, checklist, review findings and measured performance: `docs/design/agent-enrollment.md`. Phase 1 is implemented; Phase 2 (web UI, rsansible role) is outstanding.
+
+- Bart's decisions: tokens over the network (option B); 90-day agent and server certificates with automatic renewal; tokens in memory only; agent layout `/var/lib/sorry-portainer-agent` (owned by the agent user, 0700); role in this repo with the inventory Wheat-ignored; master on jp1; binaries from the Gothab release workflow (needs a new tag, e.g. v0.2.0, since this adds code — confirm with Bart before publishing).
+- Packages: `internal/pki` (CA, issuance, CSR, bundles, pinning, `Fingerprint.Matches`), `internal/atomicfile` (durable write, `LockDir`), `internal/enrollment` (registry `hosts.json`, tokens, service), `internal/controlcert` (server certificate self-renewal via `GetCertificate`), `internal/agentcred` (holder, enroll, renew), `internal/admin` (admin socket server and client), `internal/unixsock` (shared with the secret socket), `internal/provision` (`Init`, `ResetPKI`), `internal/server/control.go` + `listeners.go`, `internal/relay` (`Serve` admit hook, `Disconnect`, agent drain + `RequestReconnect`), `internal/testcontrol` (test master).
+- Commands: `sorry-portainer-server init --server-name …` (repeatable), `pki reset`, `hosts token|list [--json]|remove`; `sorry-portainer-agent enroll --server-url … --host-id … --dir … --token-file -|PATH [--prefix --server-name --compose-provider --replace]`; `setup` creates the agent dir and prints the enroll step. `server agent --create` is gone.
+- Dev: `just dev-init` migrated `.dev/state` (old PKI in `.dev/state/pki-retired-20261104T160639Z/`), tightened it to 0700, and enrolled local-a/b/c; a second run is a no-op. All three online with stacks intact.
+- Tests: `GOFLAGS=-buildvcs=false go test -race ./...` green; benchmarks `go test -run '^$' -bench . ./internal/enrollment ./internal/integration`; six mutation checks recorded in the design doc.
+- Next: tag and release (ask Bart first), then the rsansible role in `deploy/rsansible` (inventory Wheat-ignored; look at `~/Projects/gothab/ansible/roles` and `~/Projects/rsansible` examples/`RSANSIBLE_IDIOMS.md`; invoke `~/.local/bin/rsansible`). The server CLI's `pki reset` and `init` must run as the server's account (they refuse a state dir owned by someone else); the role should use `become_user` for them and for `enroll` on agents.
+- Open questions for Bart before the role: how the web UI is routed on jp1 (caddy-docker-proxy only sees Docker containers; the server runs on the host), the control port and its exposure (default 9443), jp1 disk (94% full; reclaimable listed in the conversation, nothing deleted), and the one-off-services-after-reboot decision.
 
 ## Agent restart and reboot (2026-09-25)
 

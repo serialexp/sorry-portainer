@@ -10,14 +10,14 @@ func TestLoadAgentFileRequiresPrivatePermissions(t *testing.T) {
 	d := t.TempDir()
 	t.Setenv("HOME", "/home/agent")
 	p := filepath.Join(d, "agent.json")
-	if err := os.WriteFile(p, []byte(`{"server_url":"wss://x","host_id":"a","host_prefix":"a-","agent_cert":"c","agent_key":"k","agent_ca":"ca"}`), 0600); err != nil {
+	if err := os.WriteFile(p, []byte(`{"server_url":"wss://x","host_id":"a","host_prefix":"a-","agent_credential":"agent.pem","agent_ca":"ca"}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	cfg, err := LoadAgentFile(p)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.StateDir != d || cfg.ComposeProvider != "/usr/bin/podman-compose" || cfg.OCIHooksDir != "/home/agent/.local/share/sorry-portainer/oci-hooks" || cfg.SecretSocket != "" {
+	if cfg.StateDir != d || cfg.ComposeProvider != "/usr/bin/podman-compose" || cfg.OCIHooksDir != "/home/agent/.local/share/sorry-portainer/oci-hooks" || cfg.SecretSocket != "" || cfg.ServerName != "x" {
 		t.Fatalf("unexpected defaults: %+v", cfg)
 	}
 	if err := os.Chmod(p, 0644); err != nil {
@@ -30,7 +30,7 @@ func TestLoadAgentFileRequiresPrivatePermissions(t *testing.T) {
 func TestLoadAgentFileRejectsUnknownFields(t *testing.T) {
 	d := t.TempDir()
 	p := filepath.Join(d, "agent.json")
-	body := `{"server_url":"wss://x","host_id":"a","host_prefix":"a-","agent_cert":"c","agent_key":"k","agent_ca":"ca","unexpected":true}`
+	body := `{"server_url":"wss://x","host_id":"a","host_prefix":"a-","agent_credential":"agent.pem","agent_ca":"ca","unexpected":true}`
 	if err := os.WriteFile(p, []byte(body), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +42,7 @@ func TestLoadAgentFileRejectsUnknownFields(t *testing.T) {
 func TestLoadServerFile(t *testing.T) {
 	d := t.TempDir()
 	p := filepath.Join(d, "server.json")
-	body := `{"listen_addr":":8080","admin_password":"long-enough-admin-password","session_ttl":"1h","control":{"listen_addr":":9443","ca_file":"ca","cert_file":"cert","key_file":"key"}}`
+	body := `{"listen_addr":":8080","admin_password":"long-enough-admin-password","session_ttl":"1h","control":{"listen_addr":":9443","ca_file":"ca","ca_key_file":"ca.key","credential_file":"server.pem","server_names":["jp1.example"]}}`
 	if err := os.WriteFile(p, []byte(body), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,7 @@ func TestLoadServerFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.SessionTTL.Hours() != 1 || c.ListenAddr != ":9443" || s.StateDir != d {
+	if s.SessionTTL.Hours() != 1 || c.ListenAddr != ":9443" || s.StateDir != d || c.CAKeyFile != "ca.key" || c.ServerNames[0] != "jp1.example" {
 		t.Fatalf("server=%+v control=%+v", s, c)
 	}
 }

@@ -1,8 +1,8 @@
 # sorry-portainer Architecture — Design
 
-Status: partial — Podman agent/runtime, relay hardening, stack secrets and Gothab release builds landed; certificate allowlisting and service installation outstanding
+Status: partial — Podman agent/runtime, relay hardening, stack secrets, Gothab release builds and agent enrollment with allowlisting landed; service installation outstanding
 Owner: Bart
-Last updated: 2026-09-26
+Last updated: 2026-11-05
 
 ## Implementation status
 
@@ -16,31 +16,30 @@ Last updated: 2026-09-26
 - [x] **Phase 2 — stack-secret workflow.** Implemented 2026-09-24: an encrypted, passphrase-unlocked store on the master; protocol v4 `secrets.sync`/`secrets.retain` pushes into agent memory; an OCI `createRuntime` hook writes values into each container's `/run/secrets` tmpfs. Remaining work and two open decisions are in `docs/design/stack-secrets.md`.
 - [x] **Phase 2 — dashboard served by the server.** Added 2026-09-26: `pnpm build` writes into `internal/webui/dist`, which the server embeds and serves on its web listener next to `/api/` (hashed assets cached as immutable, the page revalidated, unknown `/api/` paths 404). Every server build needs the dashboard built first; `just build` does that. Development still uses the Vite server on 6201.
 - [x] **Phase 2 — Gothab release builds.** `.gothab/workflows/release.yml`, run by hand with an existing tag: type-checks and builds the dashboard, runs `go test ./...`, builds static linux/amd64 server and agent binaries plus `SHA256SUMS`, and publishes them with `gt release create`.
-
-### Outstanding
-
-- [ ] **Phase 2 — service installation from releases.** Install the released server and agent as system services with rsansible, pinned to a release's `SHA256SUMS`.
-
 - [x] **Phase 1 — mTLS agent transport.** Outbound WebSocket sessions, certificate identity mapping, hello/heartbeat, reconnect, and bounded message handling. See [Relay](#relay).
 - [x] **Phase 1 — WebSocket relay prototype.** Add versioned agent hello, host registration, request IDs, deadline-bounded inventory/start calls, and in-process round-trip coverage.
-- [x] **Phase 1 — mTLS control listener.** Dedicated control listener defaults to `:9443`, requires client certificates, and derives host identity from a `sorry-host://HOST_ID` URI or `host-HOST_ID` DNS SAN. The web API remains plain HTTP for reverse-proxy TLS termination.
+- [x] **Phase 1 — mTLS control listener.** Dedicated control listener defaults to `:9443`, requires client certificates, and derives host identity from a `sorry-host://HOST_ID` URI or `host-HOST_ID` DNS SAN. The web API remains plain HTTP for reverse-proxy TLS termination. Changed 2026-11-05: the listener verifies a client certificate when one is given (enrollment needs none), and identity comes from the URI SAN only.
 - [x] **Phase 1 — file configuration.** Server and agent commands accept permission-checked JSON config files via `--config`; environment loading remains a compatibility fallback, and certificate/private-key values are referenced by path.
 - [x] **Phase 1 — config schemas.** JSON Schema documents under `schemas/` describe the server and agent files; Go uses strict decoding and repeats semantic checks at startup.
-- [x] **Phase 1 — local certificate provisioning.** `server init` creates a private control CA, server certificate, server config, and restricted state directory; `server agent --create HOST_ID` creates a host URI-SAN certificate, client key, CA copy, and agent config.
+- [x] **Phase 1 — local certificate provisioning.** `server init` creates a private control CA, server certificate, server config, and restricted state directory; `server agent --create HOST_ID` creates a host URI-SAN certificate, client key, CA copy, and agent config. Superseded 2026-11-05: `server agent --create` is gone; agents enroll over the network with one-time tokens (`docs/design/agent-enrollment.md`), and the server issues its own certificate at startup.
 - [x] **Phase 1 — live relay hardening.** Protocol v3: multiplexed concurrent requests over one reader per session, server heartbeat on both ends, request cancellation reaching the agent, a 32-request in-flight window, pending-request cleanup and prompt host removal on disconnect, session replacement, and agent reconnect with jittered backoff. Relay failures map to 503/504 separately from operation failures.
-- [ ] **Phase 1 — certificate allowlisting.** Any certificate the control CA signed is accepted today; the server should only accept configured (or enrolled) host IDs, so a leaked CA-signed certificate for an unknown host is refused.
+- [x] **Phase 1 — certificate allowlisting.** Done 2026-11-05 through enrollment: the server admits only hosts in its registry (`<state_dir>/hosts.json`) presenting their current certificate, so a leaked CA-signed certificate for an unknown or removed host is refused. See `docs/design/agent-enrollment.md`.
 - [x] **Phase 1 — Podman agent runtime.** Run bounded Podman operations over the live relay, enforce Podman 4.7 or later, and authorize lifecycle actions by resolved container ownership.
 - [x] **Phase 1 — rootless Ubuntu setup.** Add an explicit plan/apply path for Ubuntu-compatible 24.04 and 26.04 native packages under a dedicated rootless user; live cross-release acceptance remains outstanding.
 - [x] **Phase 2 — Podman Compose stacks.** Invoke `podman compose` with an explicitly configured distro `podman-compose` provider while preserving bounded host-scoped stack lifecycle operations. Git sources, templates, UI stack editor, and live provider acceptance remain outstanding.
-- [ ] **Phase 2 — Podman operations.** Add logs, exec, images, volumes, networks, and harden `podman-compose` stack status/output with streaming and bounded resource use.
 - [x] **Phase 2 — frontend shell.** Add a SolidJS/Vite dashboard with centralized local state, login shell, host selection, container inventory, and host-routed start controls; it falls back to demo data while the API is offline.
 - [x] **Phase 2 — local development services.** Add a Wheat-ignored `.dev` state area, user-level systemd unit generation, and `just` recipes for server, three local agents, and UI on ports 6200/6201/6243.
 - [x] **Legacy — Docker agent filtering.** The superseded Docker agents filter inventory/start operations to their configured host prefix; local-a/b/c integration tests and live dev-agent checks cover that historical boundary.
 - [x] **Legacy — Docker volumes and images.** The superseded Docker implementation has read-only host volume inventory filtered by prefix and full image inventory without prefix filtering.
 - [x] **Legacy — Docker container lifecycle.** The superseded Docker implementation has host-prefix-protected start and stop operations through the agent, HTTP API, and host detail UI.
 - [x] **Legacy — isolated development namespaces.** Development agents use `sorry-local-a-`, `sorry-local-b-`, and `sorry-local-c-` prefixes so shared-daemon tests cannot be confused with unrelated legacy Docker resources.
+
+### Outstanding
+
+- [ ] **Phase 2 — service installation from releases.** Install the released server and agent as system services with rsansible, pinned to a release's `SHA256SUMS`.
+- [ ] **Phase 2 — Podman operations.** Add logs, exec, images, volumes, networks, and harden `podman-compose` stack status/output with streaming and bounded resource use.
 - [ ] **Phase 2 — frontend integration.** Replace the demo fallback with live API loading, add stores/modules as the UI grows, and add browser/component tests.
-- [ ] **Phase 3 — durable administration.** Persist host enrollment and metadata, add certificate rotation/revocation, durable sessions, and multi-user RBAC.
+- [ ] **Phase 3 — durable administration.** Persist host enrollment and metadata, add certificate rotation/revocation, durable sessions, and multi-user RBAC. Host enrollment, certificate rotation and revocation by removal landed 2026-11-05; host metadata beyond the registry, durable sessions and RBAC remain.
 
 ## Why this exists
 
@@ -180,6 +179,12 @@ to claim the same ID. Restricting that to configured host IDs is outstanding
 (see the allowlisting item above). Certificate
 enrollment, rotation, and revocation are later administrative features; no
 agent protocol is allowed to grant an administrative lease.
+
+Update 2026-11-05: enrollment, allowlisting and rotation are implemented.
+Hosts enroll with one-time tokens; the server admits only enrolled hosts
+presenting their current certificate; agent and server certificates last 90
+days and renew themselves; `hosts remove` revokes a host at once. The design
+is `docs/design/agent-enrollment.md`.
 
 ## Performance and failure behavior
 

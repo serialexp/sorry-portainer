@@ -64,6 +64,14 @@ func RunAgent(ctx context.Context, agent *Agent, options ReconnectOptions) error
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		if errors.Is(err, ErrReconnectRequested) {
+			// A deliberate reconnect, after the session drained: dial again at
+			// once, without touching the backoff.
+			if options.OnDisconnect != nil {
+				options.OnDisconnect(err, 0)
+			}
+			continue
+		}
 		if time.Since(started) >= options.StableAfter {
 			backoff = options.MinBackoff
 		}

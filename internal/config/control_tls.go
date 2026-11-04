@@ -1,45 +1,69 @@
 package config
 
 import (
-	"crypto/tls"
-	"crypto/x509"
 	"errors"
 	"fmt"
+	"net"
 	"os"
+	"regexp"
+	"strings"
 )
 
+// ControlTLS configures the mTLS control listener. The server issues its own
+// certificate from the CA for ServerNames and keeps it in CredentialFile.
 type ControlTLS struct {
-	ListenAddr string
-	CAFile     string
-	CertFile   string
-	KeyFile    string
+	ListenAddr     string
+	CAFile         string
+	CAKeyFile      string
+	CredentialFile string
+	// ServerNames are the DNS names and IP addresses agents use to reach the
+	// control listener.
+	ServerNames []string
 }
 
 func ControlTLSFromEnv() (ControlTLS, error) {
-	c := ControlTLS{ListenAddr: getenv("SORRY_PORTAINER_CONTROL_LISTEN", ":9443"), CAFile: os.Getenv("SORRY_PORTAINER_CONTROL_CA"), CertFile: os.Getenv("SORRY_PORTAINER_CONTROL_CERT"), KeyFile: os.Getenv("SORRY_PORTAINER_CONTROL_KEY")}
-	if c.ListenAddr == ":80" || c.ListenAddr == ":443" {
-		return ControlTLS{}, errors.New("control listener must not use port 80 or 443")
+	c := ControlTLS{
+		ListenAddr:     getenv("SORRY_PORTAINER_CONTROL_LISTEN", ":9443"),
+		CAFile:         os.Getenv("SORRY_PORTAINER_CONTROL_CA"),
+		CAKeyFile:      os.Getenv("SORRY_PORTAINER_CONTROL_CA_KEY"),
+		CredentialFile: os.Getenv("SORRY_PORTAINER_CONTROL_CREDENTIAL"),
 	}
-	for name, value := range map[string]string{"SORRY_PORTAINER_CONTROL_CA": c.CAFile, "SORRY_PORTAINER_CONTROL_CERT": c.CertFile, "SORRY_PORTAINER_CONTROL_KEY": c.KeyFile} {
-		if value == "" {
-			return ControlTLS{}, fmt.Errorf("%s is required", name)
-		}
+	if names := os.Getenv("SORRY_PORTAINER_CONTROL_SERVER_NAMES"); names != "" {
+		c.ServerNames = strings.Split(names, ",")
+	}
+	if err := validateControl(c); err != nil {
+		return ControlTLS{}, err
 	}
 	return c, nil
 }
 
-func LoadServerTLS(c ControlTLS) (*tls.Config, error) {
-	cert, err := tls.LoadX509KeyPair(c.CertFile, c.KeyFile)
-	if err != nil {
-		return nil, err
+var dnsNamePattern = regexp.MustCompile(`^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$`)
+
+// ValidServerName reports whether name can go in a certificate: a DNS name
+// or an IP address, never host:port.
+func ValidServerName(name string) bool {
+	if net.ParseIP(name) != nil {
+		return true
 	}
-	pem, err := os.ReadFile(c.CAFile)
-	if err != nil {
-		return nil, err
+	return len(name) <= 253 && dnsNamePattern.MatchString(name)
+}
+
+func validateControl(c ControlTLS) error {
+	if c.ListenAddr == ":80" || c.ListenAddr == ":443" {
+		return errors.New("control listener must not use port 80 or 443")
 	}
-	roots := x509.NewCertPool()
-	if !roots.AppendCertsFromPEM(pem) {
-		return nil, errors.New("control CA contains no certificates")
+	for n, v := range map[string]string{"control CA": c.CAFile, "control CA key": c.CAKeyFile, "control credential": c.CredentialFile} {
+		if v == "" {
+			return fmt.Errorf("%s is required", n)
+		}
 	}
-	return &tls.Config{Certificates: []tls.Certificate{cert}, ClientCAs: roots, ClientAuth: tls.RequireAndVerifyClientCert, MinVersion: tls.VersionTLS13}, nil
+	if len(c.ServerNames) == 0 {
+		return errors.New("control server names are required")
+	}
+	for _, name := range c.ServerNames {
+		if !ValidServerName(name) {
+			return fmt.Errorf("control server name %q is not a DNS name or IP address", name)
+		}
+	}
+	return nil
 }

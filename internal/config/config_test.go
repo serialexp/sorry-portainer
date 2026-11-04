@@ -13,8 +13,7 @@ func TestAgentFromEnvRequiresStateDir(t *testing.T) {
 	t.Setenv("SORRY_PORTAINER_SERVER_URL", "wss://control.example/agent")
 	t.Setenv("SORRY_PORTAINER_HOST_ID", "host-a")
 	t.Setenv("SORRY_PORTAINER_HOST_PREFIX", "host-a-")
-	t.Setenv("SORRY_PORTAINER_AGENT_CERT", "cert")
-	t.Setenv("SORRY_PORTAINER_AGENT_KEY", "key")
+	t.Setenv("SORRY_PORTAINER_AGENT_CREDENTIAL", "agent.pem")
 	t.Setenv("SORRY_PORTAINER_AGENT_CA", "ca")
 	if _, err := AgentFromEnv(); err == nil {
 		t.Fatal("expected missing state directory to fail")
@@ -24,8 +23,42 @@ func TestAgentFromEnvRequiresStateDir(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.ComposeProvider != "/usr/bin/podman-compose" {
-		t.Fatalf("compose provider = %q", cfg.ComposeProvider)
+	if cfg.ComposeProvider != "/usr/bin/podman-compose" || cfg.ServerName != "control.example" {
+		t.Fatalf("config = %+v", cfg)
+	}
+}
+
+func TestControlTLSFromEnvRequiresServerNames(t *testing.T) {
+	t.Setenv("SORRY_PORTAINER_CONTROL_CA", "ca.crt")
+	t.Setenv("SORRY_PORTAINER_CONTROL_CA_KEY", "ca.key")
+	t.Setenv("SORRY_PORTAINER_CONTROL_CREDENTIAL", "server.pem")
+	if _, err := ControlTLSFromEnv(); err == nil {
+		t.Fatal("expected missing server names to fail")
+	}
+	t.Setenv("SORRY_PORTAINER_CONTROL_SERVER_NAMES", "jp1.example,192.0.2.1")
+	c, err := ControlTLSFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.ServerNames) != 2 || c.ListenAddr != ":9443" {
+		t.Fatalf("control = %+v", c)
+	}
+	t.Setenv("SORRY_PORTAINER_CONTROL_SERVER_NAMES", "jp1.example:9443")
+	if _, err := ControlTLSFromEnv(); err == nil {
+		t.Fatal("accepted host:port as a server name")
+	}
+}
+
+func TestValidServerName(t *testing.T) {
+	for _, ok := range []string{"jp1.serial-experiments.com", "localhost", "127.0.0.1", "::1", "control.local"} {
+		if !ValidServerName(ok) {
+			t.Errorf("refused %q", ok)
+		}
+	}
+	for _, bad := range []string{"", "jp1:9443", "-bad.example", "a..b", "with space", "[::1]"} {
+		if ValidServerName(bad) {
+			t.Errorf("accepted %q", bad)
+		}
 	}
 }
 

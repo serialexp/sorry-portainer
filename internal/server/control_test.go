@@ -1,69 +1,34 @@
 package server
 
 import (
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"math/big"
-	"net/url"
+	"fmt"
+	"net/http"
 	"testing"
 	"time"
 )
 
-func TestCertificateIdentityUsesHostURI(t *testing.T) {
-	uri, err := url.Parse("sorry-host://local-b")
-	if err != nil {
-		t.Fatal(err)
+func TestFailureLogLimitsPerAddressAndIsBounded(t *testing.T) {
+	var lines []string
+	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	f := newFailureLog(2, time.Minute, func(format string, args ...any) { lines = append(lines, fmt.Sprintf(format, args...)) })
+	f.now = func() time.Time { return now }
+	from := func(addr string) *http.Request { return &http.Request{RemoteAddr: addr + ":1234"} }
+
+	f.log(from("192.0.2.1"), "refused")
+	f.log(from("192.0.2.1"), "refused")
+	f.log(from("192.0.2.1"), "refused")
+	if len(lines) != 1 {
+		t.Fatalf("%d lines within the interval: %v", len(lines), lines)
 	}
-	cert := &x509.Certificate{URIs: []*url.URL{uri}}
-	got, err := certificateIdentity(cert)
-	if err != nil || got != "local-b" {
-		t.Fatalf("identity=%q err=%v", got, err)
+	now = now.Add(time.Minute)
+	f.log(from("192.0.2.1"), "refused")
+	if len(lines) != 2 || lines[1] != "control 192.0.2.1: refused (2 similar from this address suppressed)" {
+		t.Fatalf("lines %v", lines)
 	}
-}
-func TestCertificateIdentityRejectsLookalikeSchemeAndUnsafeIDs(t *testing.T) {
-	for _, raw := range []string{"sorry-hostile://local-b", "sorry-host://..", "sorry-host:../escape"} {
-		uri, err := url.Parse(raw)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got, err := certificateIdentity(&x509.Certificate{URIs: []*url.URL{uri}}); err == nil {
-			t.Fatalf("%s: accepted identity %q", raw, got)
-		}
-	}
-	if got, err := certificateIdentity(&x509.Certificate{DNSNames: []string{"host-../x"}}); err == nil {
-		t.Fatalf("accepted DNS identity %q", got)
-	}
-}
-func TestCertificateIdentityRejectsMissingIdentity(t *testing.T) {
-	if _, err := certificateIdentity(&x509.Certificate{}); err == nil {
-		t.Fatal("expected missing identity error")
-	}
-}
-func TestCertificateIdentityCanUseHostDNSName(t *testing.T) {
-	got, err := certificateIdentity(&x509.Certificate{DNSNames: []string{"host-local-c"}})
-	if err != nil || got != "local-c" {
-		t.Fatalf("identity=%q err=%v", got, err)
-	}
-}
-func TestCertificateIdentityOnGeneratedCertificate(t *testing.T) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	serial, _ := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 64))
-	uri, _ := url.Parse("sorry-host://local-a")
-	der, err := x509.CreateCertificate(rand.Reader, &x509.Certificate{SerialNumber: serial, Subject: pkix.Name{CommonName: "local-a"}, URIs: []*url.URL{uri}, NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().Add(time.Hour)}, &x509.Certificate{SerialNumber: serial, NotAfter: time.Now().Add(time.Hour)}, &key.PublicKey, key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cert, err := x509.ParseCertificate(der)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, err := certificateIdentity(cert); err != nil || got != "local-a" {
-		t.Fatalf("identity=%q err=%v", got, err)
+	// The table holds two addresses; a third drops the oldest.
+	f.log(from("192.0.2.2"), "refused")
+	f.log(from("192.0.2.3"), "refused")
+	if len(f.entries) != 2 || f.entries["192.0.2.1"] != nil {
+		t.Fatalf("table %v", f.entries)
 	}
 }

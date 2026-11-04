@@ -21,20 +21,47 @@ install-spa:
     mkdir -p "{{home_directory()}}/.local/bin"
     go build -buildvcs=false -o "{{home_directory()}}/.local/bin/sorry-portainer-agent" ./cmd/sorry-portainer-agent
 
-# Create local development CA, server certificate, and three agent bundles.
-# Override PASSWORD when invoking this recipe; it is never committed.
+# Create the development server state, start the server, and enroll the three
+# local agents with one-time tokens. Idempotent: hosts that already have a
+# credential are left alone, and agent stack state is always kept. State from
+# before enrollment gets a new CA once (`pki reset`; old files are moved to
+# pki-retired-*). Override PASSWORD when invoking this recipe; it is never
+# committed.
 dev-init PASSWORD="dev-admin-password-change-me": build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    server="{{bin_dir}}/sorry-portainer-server"
+    agent="{{bin_dir}}/sorry-portainer-agent"
+    state="{{state_dir}}"
     test "{{PASSWORD}}" != "dev-admin-password-change-me" || echo "warning: using the documented development password"
-    mkdir -p "{{state_dir}}"
-    if [[ ! -f "{{state_dir}}/server.json" ]]; then \
-      "{{bin_dir}}/sorry-portainer-server" init --state-dir "{{state_dir}}" --admin-password "{{PASSWORD}}" --server-name control.local --control-listen 127.0.0.1:6243 --web-listen 127.0.0.1:6200; \
+    mkdir -p "$state"
+    # The state holds the CA key; the server refuses a directory others can read.
+    chmod 700 "$state"
+    if [[ ! -f "$state/server.json" ]]; then
+      "$server" init --state-dir "$state" --admin-password "{{PASSWORD}}" --server-name 127.0.0.1 --control-listen 127.0.0.1:6243 --web-listen 127.0.0.1:6200
+    elif ! jq -e '.control.server_names | length > 0' "$state/server.json" >/dev/null; then
+      systemctl --user stop sorry-portainer-server.service || true
+      "$server" pki reset --state-dir "$state" --server-name 127.0.0.1
     fi
-    for host in a b c; do \
-      if [[ ! -f "{{state_dir}}/agents/local-$host/agent.json" ]]; then \
-        "{{bin_dir}}/sorry-portainer-server" agent --state-dir "{{state_dir}}" --create "local-$host" --prefix "sorry-local-$host-" --server-url "wss://127.0.0.1:6243/control/agent" --server-name control.local; \
-      fi; \
-    done
     just install-dev-services
+    systemctl --user start sorry-portainer-server.service
+    for _ in $(seq 100); do
+      "$server" hosts list --state-dir "$state" >/dev/null 2>&1 && break
+      sleep 0.1
+    done
+    "$server" hosts list --state-dir "$state" >/dev/null
+    for host in a b c; do
+      dir="$state/agents/local-$host"
+      [[ -f "$dir/agent.pem" ]] && continue
+      mkdir -p -m 700 "$dir"
+      replace=()
+      [[ -f "$dir/agent.json" ]] && replace=(--replace)
+      "$server" hosts token --state-dir "$state" --host "local-$host" \
+        | "$agent" enroll --server-url wss://127.0.0.1:6243/control/agent --host-id "local-$host" --dir "$dir" --prefix "sorry-local-$host-" --token-file - "${replace[@]}"
+      # Credentials from before enrollment, signed by the retired CA.
+      rm -f "$dir/agent.crt" "$dir/agent.key"
+      systemctl --user try-restart "sorry-portainer-agent-$host.service"
+    done
 
 # Write user-level systemd units pointing at this checkout. The agents get
 # Podman's OCI hooks directory through CONTAINERS_CONF_OVERRIDE, so

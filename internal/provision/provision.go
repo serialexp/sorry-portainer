@@ -1,28 +1,48 @@
+// Package provision creates and resets a server's state directory.
 package provision
 
 import (
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"fmt"
-	"math/big"
-	"net/url"
+	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
+	"syscall"
 	"time"
 
-	"github.com/serialexp/sorry-portainer/internal/protocol"
+	"github.com/serialexp/sorry-portainer/internal/atomicfile"
+	"github.com/serialexp/sorry-portainer/internal/config"
+	"github.com/serialexp/sorry-portainer/internal/enrollment"
+	"github.com/serialexp/sorry-portainer/internal/pki"
 )
 
-type InitOptions struct{ StateDir, AdminPassword, ServerName, ControlListen, WebListen string }
-type AgentOptions struct{ StateDir, HostID, Prefix, ServerURL, ServerName, ComposeProvider string }
+// The state directory layout.
+const (
+	ConfigFile     = "server.json"
+	LockFile       = "server.lock"
+	RegistryFile   = "hosts.json"
+	CAFile         = "control-ca.crt"
+	CAKeyFile      = "control-ca.key"
+	CredentialFile = "control-server.pem"
+)
 
+// legacyFiles are what provisioning before enrollment wrote; a reset retires
+// them along with the current ones.
+var legacyFiles = []string{"control-server.crt", "control-server.key"}
+
+type InitOptions struct {
+	StateDir, AdminPassword string
+	// ServerNames are the DNS names and IP addresses agents reach the
+	// control listener by; the server certificate covers all of them.
+	ServerNames              []string
+	ControlListen, WebListen string
+	Now                      func() time.Time
+}
+
+// Init creates a new state directory: the control CA, an empty host
+// registry and server.json. The server certificate is issued when the
+// server starts.
 func Init(o InitOptions) error {
 	if o.StateDir == "" || o.AdminPassword == "" {
 		return errors.New("state directory and admin password are required")
@@ -30,186 +50,178 @@ func Init(o InitOptions) error {
 	if len(o.AdminPassword) < 12 {
 		return errors.New("admin password must be at least 12 characters")
 	}
-	if o.ServerName == "" {
-		o.ServerName = "control.local"
-	}
 	if o.ControlListen == "" {
 		o.ControlListen = ":9443"
 	}
 	if o.WebListen == "" {
 		o.WebListen = ":8080"
 	}
-	if o.ControlListen == ":80" || o.ControlListen == ":443" {
-		return errors.New("control listener must not use port 80 or 443")
+	if o.Now == nil {
+		o.Now = time.Now
 	}
-	if err := os.MkdirAll(o.StateDir, 0700); err != nil {
+	control := controlSection(o.StateDir, o.ControlListen, o.ServerNames)
+	if err := config.ValidateControlFile(control); err != nil {
 		return err
 	}
-	if _, err := os.Stat(filepath.Join(o.StateDir, "control-ca.key")); err == nil {
-		return errors.New("server state already initialized")
-	} else if !os.IsNotExist(err) {
+	if err := os.MkdirAll(o.StateDir, 0o700); err != nil {
 		return err
 	}
-	caKey, caCert, err := newCA()
+	if err := checkPrivateDir(o.StateDir); err != nil {
+		return err
+	}
+	lock, err := atomicfile.LockDir(o.StateDir, LockFile)
 	if err != nil {
 		return err
 	}
-	serverKey, serverCert, err := newLeaf(caKey, caCert, o.ServerName, false)
-	if err != nil {
-		return err
-	}
-	if err = writeKeyPair(o.StateDir, "control-ca", caKey, caCert); err != nil {
-		return err
-	}
-	if err = writeKeyPair(o.StateDir, "control-server", serverKey, serverCert); err != nil {
-		return err
-	}
-	cfg := map[string]any{"listen_addr": o.WebListen, "admin_password": o.AdminPassword, "session_ttl": "12h", "control": map[string]string{"listen_addr": o.ControlListen, "ca_file": filepath.Join(o.StateDir, "control-ca.crt"), "cert_file": filepath.Join(o.StateDir, "control-server.crt"), "key_file": filepath.Join(o.StateDir, "control-server.key")}}
-	return writeJSON(filepath.Join(o.StateDir, "server.json"), cfg)
-}
-func CreateAgent(o AgentOptions) error {
-	if o.StateDir == "" || o.HostID == "" {
-		return errors.New("state directory and host ID are required")
-	}
-	// The host ID becomes a directory name and a certificate URI.
-	if !protocol.ValidHostID(o.HostID) {
-		return fmt.Errorf("invalid host ID %q", o.HostID)
-	}
-	if o.Prefix == "" {
-		o.Prefix = o.HostID + "-"
-	}
-	if o.ServerName == "" {
-		o.ServerName = "control.local"
-	}
-	if o.ServerURL == "" {
-		o.ServerURL = "wss://" + o.ServerName + ":9443/control/agent"
-	}
-	if !strings.HasPrefix(o.ServerURL, "wss://") {
-		return errors.New("server URL must use wss://")
-	}
-	caKey, caCert, err := readCA(o.StateDir)
-	if err != nil {
-		return err
-	}
-	key, cert, err := newLeaf(caKey, caCert, o.HostID, true)
-	if err != nil {
-		return err
-	}
-	dir := filepath.Join(o.StateDir, "agents", o.HostID)
-	if err = os.MkdirAll(dir, 0700); err != nil {
-		return err
-	}
-	if err = writeKeyPair(dir, "agent", key, cert); err != nil {
-		return err
-	}
-	if err = copyFile(filepath.Join(o.StateDir, "control-ca.crt"), filepath.Join(dir, "control-ca.crt"), 0600); err != nil {
-		return err
-	}
-	if o.ComposeProvider == "" {
-		o.ComposeProvider = "/usr/bin/podman-compose"
-	}
-	cfg := map[string]string{"server_url": o.ServerURL, "host_id": o.HostID, "host_prefix": o.Prefix, "agent_cert": filepath.Join(dir, "agent.crt"), "agent_key": filepath.Join(dir, "agent.key"), "agent_ca": filepath.Join(dir, "control-ca.crt"), "server_name": o.ServerName, "state_dir": dir, "compose_provider": o.ComposeProvider}
-	return writeJSON(filepath.Join(dir, "agent.json"), cfg)
-}
-func newCA() (*ecdsa.PrivateKey, *x509.Certificate, error) {
-	k, e := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if e != nil {
-		return nil, nil, e
-	}
-	c, e := makeCertificate(pkix.Name{CommonName: "sorry-portainer control CA"}, k, k, nil, true, "", nil)
-	return k, c, e
-}
-func newLeaf(caKey *ecdsa.PrivateKey, ca *x509.Certificate, name string, agent bool) (*ecdsa.PrivateKey, *x509.Certificate, error) {
-	k, e := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if e != nil {
-		return nil, nil, e
-	}
-	var uri *url.URL
-	if agent {
-		uri, _ = url.Parse("sorry-host://" + name)
-	}
-	c, e := makeCertificate(pkix.Name{CommonName: name}, k, caKey, ca, false, name, uri)
-	return k, c, e
-}
-func makeCertificate(subject pkix.Name, key, issuerKey *ecdsa.PrivateKey, issuer *x509.Certificate, ca bool, dns string, uri *url.URL) (*x509.Certificate, error) {
-	serial, e := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 120))
-	if e != nil {
-		return nil, e
-	}
-	tmpl := &x509.Certificate{SerialNumber: serial, Subject: subject, NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().AddDate(10, 0, 0), BasicConstraintsValid: true, IsCA: ca, KeyUsage: x509.KeyUsageDigitalSignature}
-	if ca {
-		tmpl.KeyUsage |= x509.KeyUsageCertSign
-	} else {
-		tmpl.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth}
-		tmpl.DNSNames = []string{dns}
-		if uri != nil {
-			tmpl.URIs = []*url.URL{uri}
+	defer lock.Release()
+	for _, name := range []string{ConfigFile, CAKeyFile, RegistryFile} {
+		if _, err := os.Lstat(filepath.Join(o.StateDir, name)); err == nil {
+			return fmt.Errorf("server state already initialized: %s exists", filepath.Join(o.StateDir, name))
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return err
 		}
 	}
-	parent := tmpl
-	if issuer != nil {
-		parent = issuer
+	if err := writePKI(o.StateDir, o.Now()); err != nil {
+		return err
 	}
-	signer := key
-	if issuerKey != nil {
-		signer = issuerKey
+	cfg := config.ServerFile{ListenAddr: o.WebListen, AdminPassword: o.AdminPassword, SessionTTL: "12h", Control: control}
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
 	}
-	der, e := x509.CreateCertificate(rand.Reader, tmpl, parent, &key.PublicKey, signer)
-	if e != nil {
-		return nil, e
-	}
-	return x509.ParseCertificate(der)
+	return atomicfile.Write(filepath.Join(o.StateDir, ConfigFile), append(data, '\n'), 0o600)
 }
-func writeKeyPair(dir, name string, key *ecdsa.PrivateKey, cert *x509.Certificate) error {
-	kb, e := x509.MarshalPKCS8PrivateKey(key)
-	if e != nil {
-		return e
-	}
-	if e = writeFile(filepath.Join(dir, name+".key"), pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: kb}), 0600); e != nil {
-		return e
-	}
-	return writeFile(filepath.Join(dir, name+".crt"), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw}), 0600)
+
+type ResetOptions struct {
+	StateDir string
+	// ServerNames replace the configured names; they are required when
+	// server.json has none, as before enrollment existed.
+	ServerNames []string
+	Now         func() time.Time
 }
-func writeFile(path string, b []byte, mode os.FileMode) error { return os.WriteFile(path, b, mode) }
-func writeJSON(path string, v any) error {
-	b, e := json.MarshalIndent(v, "", "  ")
-	if e != nil {
-		return e
+
+// ResetPKI replaces the control CA and the host registry with new, empty
+// ones, moving the old files into pki-retired-<timestamp>/. The control
+// section of server.json is rewritten; every other setting is kept. Every
+// agent must enroll again afterwards. The server must be stopped: the reset
+// takes the state lock.
+func ResetPKI(o ResetOptions) (retired string, err error) {
+	if o.Now == nil {
+		o.Now = time.Now
 	}
-	return writeFile(path, append(b, '\n'), 0600)
+	if err := checkPrivateDir(o.StateDir); err != nil {
+		return "", err
+	}
+	lock, err := atomicfile.LockDir(o.StateDir, LockFile)
+	if err != nil {
+		return "", err
+	}
+	defer lock.Release()
+	configPath := filepath.Join(o.StateDir, ConfigFile)
+	// Read loosely: the control section may be from an older version, and
+	// everything else is carried over untouched.
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return "", err
+	}
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(data, &top); err != nil {
+		return "", fmt.Errorf("parse %s: %w", configPath, err)
+	}
+	var old struct {
+		ListenAddr  string   `json:"listen_addr"`
+		ServerNames []string `json:"server_names"`
+	}
+	if raw, ok := top["control"]; ok {
+		if err := json.Unmarshal(raw, &old); err != nil {
+			return "", fmt.Errorf("parse %s control section: %w", configPath, err)
+		}
+	}
+	names := o.ServerNames
+	if len(names) == 0 {
+		names = old.ServerNames
+	}
+	if len(names) == 0 {
+		return "", errors.New("server.json has no control server names; pass --server-name")
+	}
+	listen := old.ListenAddr
+	if listen == "" {
+		listen = ":9443"
+	}
+	control := controlSection(o.StateDir, listen, names)
+	if err := config.ValidateControlFile(control); err != nil {
+		return "", err
+	}
+	if top["control"], err = json.Marshal(control); err != nil {
+		return "", err
+	}
+	updated, err := json.MarshalIndent(top, "", "  ")
+	if err != nil {
+		return "", err
+	}
+
+	now := o.Now()
+	retired = filepath.Join(o.StateDir, "pki-retired-"+now.UTC().Format("20060102T150405Z"))
+	if err := os.Mkdir(retired, 0o700); err != nil {
+		return "", err
+	}
+	for _, name := range append([]string{CAFile, CAKeyFile, CredentialFile, RegistryFile}, legacyFiles...) {
+		err := os.Rename(filepath.Join(o.StateDir, name), filepath.Join(retired, name))
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return "", err
+		}
+	}
+	if err := atomicfile.SyncDir(retired); err != nil {
+		return "", err
+	}
+	if err := atomicfile.SyncDir(o.StateDir); err != nil {
+		return "", err
+	}
+	if err := writePKI(o.StateDir, now); err != nil {
+		return "", err
+	}
+	if err := atomicfile.Write(configPath, append(updated, '\n'), 0o600); err != nil {
+		return "", err
+	}
+	return retired, nil
 }
-func copyFile(src, dst string, mode os.FileMode) error {
-	b, e := os.ReadFile(src)
-	if e != nil {
-		return e
+
+func controlSection(stateDir, listen string, names []string) config.ControlTLSFile {
+	return config.ControlTLSFile{
+		ListenAddr:     listen,
+		CAFile:         filepath.Join(stateDir, CAFile),
+		CAKeyFile:      filepath.Join(stateDir, CAKeyFile),
+		CredentialFile: filepath.Join(stateDir, CredentialFile),
+		ServerNames:    names,
 	}
-	return writeFile(dst, b, mode)
 }
-func readCA(dir string) (*ecdsa.PrivateKey, *x509.Certificate, error) {
-	kb, e := os.ReadFile(filepath.Join(dir, "control-ca.key"))
-	if e != nil {
-		return nil, nil, e
+
+func writePKI(stateDir string, now time.Time) error {
+	ca, err := pki.NewCA(now)
+	if err != nil {
+		return err
 	}
-	block, _ := pem.Decode(kb)
-	if block == nil {
-		return nil, nil, errors.New("invalid CA key PEM")
+	if err := ca.WriteFiles(filepath.Join(stateDir, CAFile), filepath.Join(stateDir, CAKeyFile)); err != nil {
+		return err
 	}
-	raw, e := x509.ParsePKCS8PrivateKey(block.Bytes)
-	if e != nil {
-		return nil, nil, e
+	return enrollment.CreateRegistry(filepath.Join(stateDir, RegistryFile))
+}
+
+// checkPrivateDir refuses a state directory others can read or that belongs
+// to another account: it holds the CA key.
+func checkPrivateDir(dir string) error {
+	st, err := os.Stat(dir)
+	if err != nil {
+		return err
 	}
-	key, ok := raw.(*ecdsa.PrivateKey)
-	if !ok {
-		return nil, nil, errors.New("CA key is not ECDSA")
+	if !st.IsDir() {
+		return fmt.Errorf("%s is not a directory", dir)
 	}
-	cb, e := os.ReadFile(filepath.Join(dir, "control-ca.crt"))
-	if e != nil {
-		return nil, nil, e
+	if st.Mode().Perm()&0o077 != 0 {
+		return fmt.Errorf("%s must not be group/world accessible (mode %04o)", dir, st.Mode().Perm())
 	}
-	certBlock, _ := pem.Decode(cb)
-	if certBlock == nil {
-		return nil, nil, errors.New("invalid CA certificate PEM")
+	if sys, ok := st.Sys().(*syscall.Stat_t); ok && int(sys.Uid) != os.Getuid() {
+		return fmt.Errorf("%s belongs to uid %d, not to this account (uid %d)", dir, sys.Uid, os.Getuid())
 	}
-	cert, e := x509.ParseCertificate(certBlock.Bytes)
-	return key, cert, e
+	return nil
 }

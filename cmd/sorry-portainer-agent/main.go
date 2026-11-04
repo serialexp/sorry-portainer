@@ -14,12 +14,14 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/serialexp/sorry-portainer/internal/agentcred"
 	"github.com/serialexp/sorry-portainer/internal/config"
 	"github.com/serialexp/sorry-portainer/internal/podman"
 	"github.com/serialexp/sorry-portainer/internal/protocol"
 	"github.com/serialexp/sorry-portainer/internal/relay"
 	"github.com/serialexp/sorry-portainer/internal/secrets"
 	"github.com/serialexp/sorry-portainer/internal/stacks"
+	"github.com/serialexp/sorry-portainer/internal/unixsock"
 )
 
 func main() {
@@ -37,6 +39,12 @@ func main() {
 	}
 	if len(os.Args) > 1 && os.Args[1] == "oci-hook" {
 		os.Exit(runOCIHook(os.Args[2:]))
+	}
+	if len(os.Args) > 1 && os.Args[1] == "enroll" {
+		if err := runEnroll(os.Args[2:], os.Stdin, os.Stdout); err != nil {
+			log.Fatal(err)
+		}
+		return
 	}
 	if err := detachFromServiceUnit(); err != nil {
 		log.Fatal(err)
@@ -57,10 +65,17 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	tlsConfig, err := config.LoadClientTLS(cfg)
+	holder, err := agentcred.LoadHolder(cfg.CredentialFile)
 	if err != nil {
 		log.Fatal(err)
 	}
+	ca, err := agentcred.ReadCA(cfg.CAFile)
+	if err != nil {
+		log.Fatal(err)
+	}
+	// The holder is read at every handshake, so a renewed certificate is
+	// used from the next connection on.
+	tlsConfig := agentcred.ClientTLS(ca, cfg.ServerName, holder, time.Now)
 	// SIGTERM from systemd cancels in-flight operations and waits for them.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -81,6 +96,16 @@ func main() {
 	// wait for the master's push, which arrives once the relay connects.
 	go manager.Resume(ctx)
 	agent := &relay.Agent{HostID: cfg.HostID, Prefix: cfg.Prefix, Handler: client, Stacks: manager, Describe: describeHost}
+	renewer := &agentcred.Renewer{HostID: cfg.HostID, ServerURL: cfg.ServerURL, ServerName: cfg.ServerName, CA: ca,
+		Dir: filepath.Dir(cfg.CredentialFile), CredentialFile: cfg.CredentialFile, Holder: holder,
+		// The master promotes the new certificate when the agent connects
+		// with it, so reconnect once current work has drained.
+		OnRenewed: agent.RequestReconnect, Logf: log.Printf}
+	go func() {
+		if err := renewer.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			log.Printf("certificate renewal stopped: %v", err)
+		}
+	}()
 	err = relay.RunAgent(ctx, agent, relay.ReconnectOptions{
 		Dial: func(ctx context.Context) (*websocket.Conn, error) {
 			return relay.DialAgent(ctx, cfg.ServerURL, tlsConfig)
@@ -137,7 +162,7 @@ func startSecretSupport(ctx context.Context, cfg config.Agent) (*secrets.Vault, 
 	if executable, err = filepath.EvalSymlinks(executable); err != nil {
 		return nil, err
 	}
-	listener, err := secrets.Listen(socket)
+	listener, err := unixsock.Listen(socket)
 	if err != nil {
 		return nil, fmt.Errorf("listen on %s: %w", socket, err)
 	}

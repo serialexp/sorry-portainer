@@ -25,6 +25,35 @@ type Agent struct {
 	// Describe, when set, adds agent-side facts (swap, secret readiness) to
 	// the host info sent in each hello.
 	Describe func(*protocol.HostInfo)
+	// DrainTimeout bounds how long a requested reconnect waits for in-flight
+	// operations; zero selects DefaultDrainTimeout.
+	DrainTimeout time.Duration
+
+	reconnectOnce sync.Once
+	reconnect     chan struct{}
+}
+
+// DefaultDrainTimeout is how long a reconnect waits for running operations.
+const DefaultDrainTimeout = 5 * time.Minute
+
+// ErrReconnectRequested ends a session that drained because RequestReconnect
+// was called; RunAgent dials again at once.
+var ErrReconnectRequested = errors.New("reconnect requested")
+
+func (a *Agent) reconnectSignal() chan struct{} {
+	a.reconnectOnce.Do(func() { a.reconnect = make(chan struct{}, 1) })
+	return a.reconnect
+}
+
+// RequestReconnect makes the current session stop taking requests, wait for
+// the running ones (up to DrainTimeout), and end, so the next connection is
+// made with the agent's current credentials. A request made while no session
+// runs applies to the next one.
+func (a *Agent) RequestReconnect() {
+	select {
+	case a.reconnectSignal() <- struct{}{}:
+	default:
+	}
 }
 
 var errStacksUnavailable = errors.New("stack agent unavailable")
@@ -41,6 +70,7 @@ type agentSession struct {
 	mu       sync.Mutex
 	inFlight map[string]context.CancelFunc
 	workers  sync.WaitGroup
+	draining bool
 }
 
 // Serve runs one connection until it fails or ctx ends. In-flight operations are
@@ -80,6 +110,25 @@ func (a *Agent) Serve(ctx context.Context, conn *websocket.Conn) error {
 	// Closing the connection is the only way to interrupt a blocked read.
 	stopWatch := context.AfterFunc(sessionCtx, func() { _ = conn.Close() })
 	defer stopWatch()
+	drained := make(chan struct{})
+	go func() {
+		select {
+		case <-sessionCtx.Done():
+			return
+		case <-a.reconnectSignal():
+		}
+		s.drain(sessionCtx, a.drainTimeout())
+		close(drained)
+		cancel()
+	}()
+	ended := func(err error) error {
+		select {
+		case <-drained:
+			return ErrReconnectRequested
+		default:
+			return err
+		}
+	}
 
 	conn.SetReadLimit(protocol.MaxMessageSize)
 	alive := func() error { return conn.SetReadDeadline(time.Now().Add(heartbeatMisses * heartbeat)) }
@@ -102,7 +151,7 @@ func (a *Agent) Serve(ctx context.Context, conn *websocket.Conn) error {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			return err
+			return ended(err)
 		}
 		message, err := protocol.Decode(data)
 		if err != nil {
@@ -119,12 +168,47 @@ func (a *Agent) Serve(ctx context.Context, conn *websocket.Conn) error {
 	}
 }
 
+func (a *Agent) drainTimeout() time.Duration {
+	if a.DrainTimeout > 0 {
+		return a.DrainTimeout
+	}
+	return DefaultDrainTimeout
+}
+
+// drain stops new requests, waits for the running ones up to timeout, and
+// closes the connection with a normal close frame.
+func (s *agentSession) drain(ctx context.Context, timeout time.Duration) {
+	s.mu.Lock()
+	s.draining = true
+	s.mu.Unlock()
+	idle := make(chan struct{})
+	go func() {
+		s.workers.Wait()
+		close(idle)
+	}()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-idle:
+	case <-timer.C:
+	case <-ctx.Done():
+		return
+	}
+	// WriteControl may run concurrently with other writes.
+	_ = s.conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "reconnecting"), time.Now().Add(writeTimeout))
+}
+
 func (s *agentSession) start(ctx context.Context, request protocol.Message) {
 	timeout := time.Duration(request.TimeoutMS) * time.Millisecond
 	if timeout <= 0 {
 		timeout = DefaultRequestTimeout
 	}
 	s.mu.Lock()
+	if s.draining {
+		s.mu.Unlock()
+		s.respondError(request.ID, &protocol.Error{Code: protocol.CodeBusy, Message: "agent is reconnecting", Retryable: true})
+		return
+	}
 	if _, duplicate := s.inFlight[request.ID]; duplicate || len(s.inFlight) >= protocol.MaxInFlight {
 		s.mu.Unlock()
 		s.respondError(request.ID, &protocol.Error{Code: protocol.CodeBusy, Message: "agent is at its concurrent request limit", Retryable: true})

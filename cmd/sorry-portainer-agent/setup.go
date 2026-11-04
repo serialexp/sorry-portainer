@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	osuser "os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/serialexp/sorry-portainer/internal/agentsetup"
@@ -17,6 +18,10 @@ import (
 
 const systemAgentBinary = "/usr/local/bin/sorry-portainer-agent"
 const systemAgentUnit = "/etc/systemd/system/sorry-portainer-agent.service"
+
+// systemAgentDir holds the agent's configuration, credentials and state. The
+// agent user owns it, because the agent replaces its own certificate.
+const systemAgentDir = "/var/lib/sorry-portainer-agent"
 
 type setupEnvironment struct {
 	readOSRelease func() ([]byte, error)
@@ -193,8 +198,21 @@ func runSetupWithEnvironment(ctx context.Context, args []string, stdout io.Write
 	}
 	fmt.Fprintln(stdout, "Done!")
 	fmt.Fprintln(stdout)
+	fmt.Fprint(stdout, enrollInstructions(*user))
+	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Happy using!")
 	return nil
+}
+
+// enrollInstructions is the next step after setup: the agent starts once it
+// has been enrolled.
+func enrollInstructions(user string) string {
+	return fmt.Sprintf(`Next, enroll this host. On the master, as the server's account:
+  sorry-portainer-server hosts token --host HOST_ID
+Then here, giving the token on stdin:
+  sudo runuser -u %s -- %s enroll --server-url wss://MASTER:9443/control/agent --host-id HOST_ID --dir %s --token-file -
+  sudo systemctl enable --now sorry-portainer-agent
+`, user, systemAgentBinary, systemAgentDir)
 }
 
 func installAgentService(sourceBinary, user string) error {
@@ -205,26 +223,22 @@ func installAgentService(sourceBinary, user string) error {
 	if err := writeAtomic(systemAgentBinary, binary, 0755); err != nil {
 		return fmt.Errorf("install agent binary: %w", err)
 	}
-	home := filepath.Join("/home", user)
-	unit := fmt.Sprintf(`[Unit]
-Description=Sorry Portainer Podman agent
-After=network-online.target
-Wants=network-online.target
-ConditionPathExists=/etc/sorry-portainer/agent.json
-
-[Service]
-Type=simple
-User=%s
-Group=%s
-Environment=HOME=%s
-Environment=XDG_RUNTIME_DIR=/run/user/%%U
-ExecStart=%s --config /etc/sorry-portainer/agent.json
-Restart=on-failure
-RestartSec=2
-
-[Install]
-WantedBy=multi-user.target
-`, user, user, home, systemAgentBinary)
+	account, err := osuser.Lookup(user)
+	if err != nil {
+		return fmt.Errorf("look up agent user: %w", err)
+	}
+	uid, err := strconv.Atoi(account.Uid)
+	if err != nil {
+		return fmt.Errorf("agent user %s has uid %q: %w", user, account.Uid, err)
+	}
+	gid, err := strconv.Atoi(account.Gid)
+	if err != nil {
+		return fmt.Errorf("agent user %s has gid %q: %w", user, account.Gid, err)
+	}
+	if err := prepareAgentDir(systemAgentDir, uid, gid); err != nil {
+		return fmt.Errorf("prepare %s: %w", systemAgentDir, err)
+	}
+	unit := agentUnit(user, filepath.Join("/home", user), systemAgentBinary, systemAgentDir)
 	if err := writeAtomic(systemAgentUnit, []byte(unit), 0644); err != nil {
 		return fmt.Errorf("install agent systemd service: %w", err)
 	}
@@ -233,6 +247,51 @@ WantedBy=multi-user.target
 		return fmt.Errorf("reload systemd after installing agent service: %w: %s", err, strings.TrimSpace(string(output)))
 	}
 	return nil
+}
+
+// agentUnit is the system service. It waits for enrollment: without
+// agent.json it does not start.
+func agentUnit(user, home, binary, dir string) string {
+	config := filepath.Join(dir, "agent.json")
+	return fmt.Sprintf(`[Unit]
+Description=Sorry Portainer Podman agent
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=%s
+
+[Service]
+Type=simple
+User=%s
+Group=%s
+Environment=HOME=%s
+Environment=XDG_RUNTIME_DIR=/run/user/%%U
+ExecStart=%s --config %s
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+`, config, user, user, home, binary, config)
+}
+
+// prepareAgentDir creates the agent directory, or brings an existing one to
+// owner uid:gid and mode 0700. A symlink or a non-directory is refused, so
+// nothing is redirected through it.
+func prepareAgentDir(path string, uid, gid int) error {
+	if err := os.Mkdir(path, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
+		return err
+	}
+	st, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !st.IsDir() {
+		return fmt.Errorf("%s exists and is not a directory", path)
+	}
+	if err := os.Lchown(path, uid, gid); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0o700)
 }
 
 func writeAtomic(path string, data []byte, mode os.FileMode) error {

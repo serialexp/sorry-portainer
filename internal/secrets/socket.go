@@ -6,16 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"log"
 	"net"
 	"os"
 	"path/filepath"
 	"time"
 
-	"golang.org/x/sys/unix"
-
 	"github.com/serialexp/sorry-portainer/internal/protocol"
+	"github.com/serialexp/sorry-portainer/internal/unixsock"
 )
 
 // hookRequest is what the OCI hook asks the agent over its Unix socket.
@@ -57,40 +55,6 @@ type SocketServer struct {
 	Vault  *Vault
 	// Logf logs deliveries (names only, never values). Nil uses log.Printf.
 	Logf func(format string, args ...any)
-}
-
-// Listen creates the socket at path, replacing a stale socket but never any
-// other kind of file. The directory is created with mode 0700.
-func Listen(path string) (*net.UnixListener, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return nil, err
-	}
-	info, err := os.Stat(filepath.Dir(path))
-	if err != nil {
-		return nil, err
-	}
-	if info.Mode().Perm()&0o077 != 0 {
-		return nil, fmt.Errorf("secret socket directory %s must not be group/world accessible (mode %04o)", filepath.Dir(path), info.Mode().Perm())
-	}
-	if existing, err := os.Lstat(path); err == nil {
-		if existing.Mode().Type() != fs.ModeSocket {
-			return nil, fmt.Errorf("%s exists and is not a socket", path)
-		}
-		if err := os.Remove(path); err != nil {
-			return nil, err
-		}
-	} else if !errors.Is(err, fs.ErrNotExist) {
-		return nil, err
-	}
-	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
-	if err != nil {
-		return nil, err
-	}
-	if err := os.Chmod(path, 0o600); err != nil {
-		_ = listener.Close()
-		return nil, err
-	}
-	return listener, nil
 }
 
 // Serve answers connections until ctx ends. Each connection carries one
@@ -145,7 +109,7 @@ func (s *SocketServer) handle(conn *net.UnixConn) {
 }
 
 func (s *SocketServer) answer(conn *net.UnixConn) hookResponse {
-	uid, err := peerUID(conn)
+	uid, err := unixsock.PeerUID(conn)
 	if err != nil {
 		return hookResponse{Error: err.Error()}
 	}
@@ -175,24 +139,6 @@ func (s *SocketServer) answer(conn *net.UnixConn) hookResponse {
 	}
 	s.logf("secret socket: delivered %d secret(s) of stack %s to container %.12s", len(values), request.Stack, request.ContainerID)
 	return hookResponse{Values: values}
-}
-
-func peerUID(conn *net.UnixConn) (int, error) {
-	raw, err := conn.SyscallConn()
-	if err != nil {
-		return 0, err
-	}
-	var cred *unix.Ucred
-	var credErr error
-	if err := raw.Control(func(fd uintptr) {
-		cred, credErr = unix.GetsockoptUcred(int(fd), unix.SOL_SOCKET, unix.SO_PEERCRED)
-	}); err != nil {
-		return 0, err
-	}
-	if credErr != nil {
-		return 0, credErr
-	}
-	return int(cred.Uid), nil
 }
 
 // request asks the agent at path for values. It is the hook's client side.

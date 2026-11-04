@@ -58,6 +58,8 @@ type harness struct {
 	remote *Remote
 	url    string
 	served chan error
+	// admit, when set, is passed to Serve.
+	admit atomic.Pointer[func() error]
 }
 
 func newHarness(t testing.TB, heartbeat time.Duration) *harness {
@@ -69,7 +71,11 @@ func newHarness(t testing.TB, heartbeat time.Duration) *harness {
 		if err != nil {
 			return
 		}
-		h.served <- h.remote.Serve(conn, r.URL.Query().Get("host"))
+		var admit func() error
+		if p := h.admit.Load(); p != nil {
+			admit = *p
+		}
+		h.served <- h.remote.Serve(conn, r.URL.Query().Get("host"), admit)
 	}))
 	t.Cleanup(server.Close)
 	h.url = "ws" + strings.TrimPrefix(server.URL, "http")

@@ -22,6 +22,11 @@
       "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)$",
       "default": "12h"
     },
+    "state_dir": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Durable state (host registry, secret store); defaults to the config file's directory."
+    },
     "control": {
       "$ref": "#/$defs/control"
     }
@@ -30,16 +35,22 @@
     "control": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["ca_file", "cert_file", "key_file"],
+      "required": ["ca_file", "ca_key_file", "credential_file", "server_names"],
       "properties": {
         "listen_addr": {
           "type": "string",
           "default": ":9443",
           "pattern": "^(?!(.*:)?(80|443)$).+"
         },
-        "ca_file": { "type": "string", "minLength": 1 },
-        "cert_file": { "type": "string", "minLength": 1 },
-        "key_file": { "type": "string", "minLength": 1 }
+        "ca_file": { "type": "string", "minLength": 1, "description": "Control CA certificate." },
+        "ca_key_file": { "type": "string", "minLength": 1, "description": "Control CA private key; the server signs agent and its own certificates with it." },
+        "credential_file": { "type": "string", "minLength": 1, "description": "The server's own key and certificate chain in one PEM file, re-issued automatically." },
+        "server_names": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "DNS names and IP addresses agents use to reach the control listener."
+        }
       }
     }
   }

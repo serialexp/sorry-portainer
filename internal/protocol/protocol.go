@@ -17,6 +17,10 @@ var (
 // certificate URIs, relay messages, and master-side directory names.
 func ValidHostID(id string) bool { return hostIDPattern.MatchString(id) }
 
+// ValidHostPrefix reports whether p is a valid resource prefix: the start of
+// every Podman name an agent manages.
+func ValidHostPrefix(p string) bool { return hostIDPattern.MatchString(p) }
+
 // ValidStackName reports whether n is a valid stack name. Stack names become
 // directory names and Compose project suffixes.
 func ValidStackName(n string) bool { return stackNamePattern.MatchString(n) }
