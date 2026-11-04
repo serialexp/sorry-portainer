@@ -65,7 +65,7 @@ func TestAgentURL(t *testing.T) {
 }
 
 func TestValidServerName(t *testing.T) {
-	for _, ok := range []string{"jp1.serial-experiments.com", "localhost", "127.0.0.1", "::1", "control.local"} {
+	for _, ok := range []string{"control.example.com", "localhost", "127.0.0.1", "::1", "control.local"} {
 		if !ValidServerName(ok) {
 			t.Errorf("refused %q", ok)
 		}

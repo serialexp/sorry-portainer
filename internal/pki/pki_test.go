@@ -76,12 +76,12 @@ func TestLeafNeverOutlivesCA(t *testing.T) {
 func TestIssueServerCertificateNames(t *testing.T) {
 	ca := newCA(t)
 	key := newKey(t)
-	names := []string{"jp1.serial-experiments.com", "139.162.110.118", "::1"}
+	names := []string{"control.example.com", "203.0.113.10", "::1"}
 	cert, err := ca.IssueServer(&key.PublicKey, names, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cert.DNSNames) != 1 || len(cert.IPAddresses) != 2 || !cert.IPAddresses[0].Equal(net.ParseIP("139.162.110.118")) {
+	if len(cert.DNSNames) != 1 || len(cert.IPAddresses) != 2 || !cert.IPAddresses[0].Equal(net.ParseIP("203.0.113.10")) {
 		t.Fatalf("names %v %v", cert.DNSNames, cert.IPAddresses)
 	}
 	if !ServerCovers(cert, names) {

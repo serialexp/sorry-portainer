@@ -29,7 +29,7 @@ test("certificate state follows the agent's renewal window", () => {
 });
 
 test("host IDs follow the master's rule", () => {
-  for (const id of ["hel1", "jp1.serial-experiments.com", "a", "A_b-9", "x".repeat(128)]) assert.ok(hostIDPattern.test(id), id);
+  for (const id of ["hel1", "jp1.example.com", "a", "A_b-9", "x".repeat(128)]) assert.ok(hostIDPattern.test(id), id);
   for (const id of ["", "-a", ".a", "a b", "a/b", "x".repeat(129), "ä"]) assert.ok(!hostIDPattern.test(id), id);
 });
 
