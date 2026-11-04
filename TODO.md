@@ -14,7 +14,12 @@
 - Found while building stack secrets (2026-09-24):
   - podman-compose 1.0.6 `down` leaves `<project>_default` networks behind. Older test runs left several `sorry-podman-test-*` and `sorry-local-a-podman-smoke-*` networks on Bart's machine (not removed; not mine). The secrets live test removes its own.
   - Verify the hook with crun, and on Ubuntu 26.04 / Podman 5.x under the dedicated agent user.
-  - UI prop drilling (Rule 9): `index.tsx` passes `state`/`setState` into `Dashboard`, and `StackList`/`StackEditor` take data props. The new secrets UI uses a Solid store (`src/secrets-store.ts`); moving the dashboard state to stores the same way is recommended before more UI work.
   - UI: the sidebar container count and host page don't refresh after a stack start; "Save and start" on the edit page saves a new revision even when nothing changed; the secrets panel's delivery line doesn't refresh after an unlock push.
   - Stack deletion doesn't exist yet; when added it must delete the stack's secrets on the master and make the agent forget them.
   - Backups of the master's sealed secret store (`<state_dir>/secrets`) are undecided.
+
+- Found while moving the dashboard state into stores (2026-11-05); these matter before the dashboard is public on jp1:
+  - "Sign out" only hides the dashboard: there is no logout endpoint, the session stays valid, and a reload signs straight back in.
+  - The session cookie is `Secure` only when the request itself arrived over TLS (`r.TLS != nil`); behind Caddy the dashboard is served over plain HTTP on 127.0.0.1, so the cookie is never `Secure`.
+  - `/api/session/login` has no rate limit or backoff against password guessing.
+  - `Sessions.max` (4096) only triggers pruning of expired sessions; when none have expired the map keeps growing.

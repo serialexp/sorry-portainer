@@ -1,6 +1,7 @@
-import { A, useNavigate } from "@solidjs/router";
+import { A, useLocation, useNavigate } from "@solidjs/router";
 import { createEffect, createSignal, For, Show } from "solid-js";
-import { editStackPath, hostPath, newStackPath } from "./host-route";
+import { filteredStacks, fleet, loadStacks, searchTerm } from "./fleet-store";
+import { editStackPath, hostPath, newStackPath, parseHostPath } from "./host-route";
 import { StackSecretsPanel } from "./secrets-ui";
 import { setReferencedSecrets } from "./secrets-store";
 import {
@@ -14,21 +15,11 @@ import {
   type Stack,
 } from "./stack-api";
 
-type StackListProps = {
-  hostID: string;
-  stacks: Stack[];
-  loading: boolean;
-  error: string;
-  query: string;
-  refresh: () => void;
-};
-
-export function StackList(props: StackListProps) {
+/** The selected host's stacks. */
+export function StackList() {
   const [busy, setBusy] = createSignal("");
   const [operationError, setOperationError] = createSignal("");
   const [operationOutput, setOperationOutput] = createSignal("");
-  const filtered = () =>
-    props.stacks.filter((stack) => `${stack.name} ${stack.project}`.toLowerCase().includes(props.query));
   const [busyOperation, setBusyOperation] = createSignal<"up" | "down">("up");
   async function run(name: string, operation: "up" | "down") {
     const verb = operation === "up" ? "start" : "stop";
@@ -38,18 +29,18 @@ export function StackList(props: StackListProps) {
     setBusyOperation(operation);
     setOperationError("");
     setOperationOutput("");
-    const hostID = props.hostID;
+    const hostID = fleet.selectedHost;
     try {
       const result = operation === "up" ? await deployStack(hostID, name) : await stopStack(hostID, name);
-      if (props.hostID !== hostID) return;
+      if (fleet.selectedHost !== hostID) return;
       setOperationOutput(result.output || `${name}: ${verb} command completed.`);
     } catch (cause) {
-      if (props.hostID === hostID)
+      if (fleet.selectedHost === hostID)
         setOperationError(cause instanceof Error ? cause.message : `Could not ${verb} stack.`);
     } finally {
       setBusy("");
       // A failed start still changes what the stack comes back to after a reboot.
-      if (props.hostID === hostID) props.refresh();
+      if (fleet.selectedHost === hostID) void loadStacks();
     }
   }
   const busyLabel = (name: string, operation: "up" | "down", idle: string, active: string) =>
@@ -58,39 +49,39 @@ export function StackList(props: StackListProps) {
     <section class="panel resource-page">
       <div class="panel-heading">
         <div>
-          <p class="eyebrow">{props.hostID} / STACKS</p>
+          <p class="eyebrow">{fleet.selectedHost} / STACKS</p>
           <h2>Compose stacks</h2>
         </div>
         <div class="stack-actions">
-          <button class="add-button" type="button" onClick={props.refresh} disabled={props.loading}>
+          <button class="add-button" type="button" onClick={() => loadStacks()} disabled={fleet.stacksLoading}>
             Refresh
           </button>
-          <A class="add-button" href={newStackPath(props.hostID)}>
+          <A class="add-button" href={newStackPath(fleet.selectedHost)}>
             Create stack
           </A>
         </div>
       </div>
-      <Show when={props.error || operationError()}>
+      <Show when={fleet.stacksError || operationError()}>
         <p class="form-error" role="alert">
-          {props.error || operationError()}
+          {fleet.stacksError || operationError()}
         </p>
       </Show>
       <Show when={operationOutput()}>
         <pre class="stack-output">{operationOutput()}</pre>
       </Show>
       <Show
-        when={props.loading}
+        when={fleet.stacksLoading}
         fallback={
           <Show
-            when={filtered().length}
+            when={filteredStacks().length}
             fallback={
               <div class="resource-empty">
-                {props.query ? "No stacks match this search." : "No saved stacks on this host."}
+                {searchTerm() ? "No stacks match this search." : "No saved stacks on this host."}
               </div>
             }
           >
             <div class="resource-list">
-              <For each={filtered()}>
+              <For each={filteredStacks()}>
                 {(stack) => (
                   <div class="resource-row">
                     <span class="resource-icon">▤</span>
@@ -104,7 +95,7 @@ export function StackList(props: StackListProps) {
                     <span class="resource-count">
                       v{stack.version || 1} · {rebootLabel(stack)}
                     </span>
-                    <A class="add-button" href={editStackPath(props.hostID, stack.name)}>
+                    <A class="add-button" href={editStackPath(fleet.selectedHost, stack.name)}>
                       Edit
                     </A>
                     <button class="start" type="button" disabled={!!busy()} onClick={() => run(stack.name, "up")}>
@@ -130,14 +121,12 @@ export function StackList(props: StackListProps) {
   );
 }
 
-type StackEditorProps = {
-  hostID: string;
-  stackName?: string;
-  onSaved: () => void;
-};
-
-export function StackEditor(props: StackEditorProps) {
+/** Creates a stack on the selected host, or edits the one the URL names. */
+export function StackEditor() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const currentHost = () => fleet.selectedHost;
+  const editedStack = () => parseHostPath(location.pathname)?.stackName;
   const [name, setName] = createSignal("");
   const [compose, setCompose] = createSignal("");
   const [version, setVersion] = createSignal(0);
@@ -149,8 +138,8 @@ export function StackEditor(props: StackEditorProps) {
   const [deployOutput, setDeployOutput] = createSignal("");
   const busy = () => saving() || deploying() || loading();
   createEffect(() => {
-    const hostID = props.hostID;
-    const stackName = props.stackName;
+    const hostID = currentHost();
+    const stackName = editedStack();
     setName(stackName ?? "");
     setCompose("");
     setVersion(0);
@@ -164,17 +153,17 @@ export function StackEditor(props: StackEditorProps) {
     setLoading(true);
     void getStack(hostID, stackName)
       .then((stack) => {
-        if (props.hostID !== hostID || props.stackName !== stackName) return;
+        if (currentHost() !== hostID || editedStack() !== stackName) return;
         setCompose(stack.compose_yaml ?? "");
         setVersion(stack.version);
         setReferencedSecrets(hostID, stackName, stack.secrets ?? []);
       })
       .catch((cause) => {
-        if (props.hostID === hostID && props.stackName === stackName)
+        if (currentHost() === hostID && editedStack() === stackName)
           setError(cause instanceof Error ? cause.message : "Could not load stack.");
       })
       .finally(() => {
-        if (props.hostID === hostID && props.stackName === stackName) setLoading(false);
+        if (currentHost() === hostID && editedStack() === stackName) setLoading(false);
       });
   });
 
@@ -192,15 +181,15 @@ export function StackEditor(props: StackEditorProps) {
     }
     setError("");
     setSaving(true);
-    const hostID = props.hostID;
+    const hostID = currentHost();
     try {
       if (!saved()) {
-        if (props.stackName) {
+        if (editedStack()) {
           await updateStack(hostID, stackName, compose(), version());
           setVersion(version() + 1);
         } else await createStack(hostID, stackName, compose());
         setSaved(true);
-        props.onSaved();
+        void loadStacks();
       }
       navigate(hostPath(hostID, "stacks"));
     } catch (cause) {
@@ -233,16 +222,16 @@ export function StackEditor(props: StackEditorProps) {
     }
     setError("");
     setDeploying(true);
-    const hostID = props.hostID;
+    const hostID = currentHost();
     try {
       if (!saved()) {
-        if (props.stackName) {
+        if (editedStack()) {
           await updateStack(hostID, stackName, compose(), version());
           setVersion(version() + 1);
         } else await createStack(hostID, stackName, compose());
         setSaved(true);
-        props.onSaved();
-        if (props.stackName) await refreshReferencedSecrets(hostID, stackName);
+        void loadStacks();
+        if (editedStack()) await refreshReferencedSecrets(hostID, stackName);
       }
       const result = await deployStack(hostID, stackName);
       setDeployOutput(result.output || "Deployment command completed.");
@@ -257,10 +246,10 @@ export function StackEditor(props: StackEditorProps) {
 
   return (
     <section class="panel resource-page stack-create">
-      <A href={hostPath(props.hostID, "stacks")}>← Back to stacks</A>
-      <h2>{props.stackName ? `Edit ${props.stackName}` : `Create stack on ${props.hostID}`}</h2>
+      <A href={hostPath(currentHost(), "stacks")}>← Back to stacks</A>
+      <h2>{editedStack() ? `Edit ${editedStack()}` : `Create stack on ${currentHost()}`}</h2>
       <p class="subtitle">
-        {props.stackName
+        {editedStack()
           ? `Editing version ${version()}. Saving creates a new revision.`
           : "Save and start deploys to this host. You can also save a draft without starting it."}
         {saved() ? " Changes saved. You can retry Start without saving another version." : ""}
@@ -277,7 +266,7 @@ export function StackEditor(props: StackEditorProps) {
             pattern="[a-z0-9][a-z0-9_-]{0,62}"
             value={name()}
             onInput={(event) => setName(event.currentTarget.value)}
-            readOnly={!!props.stackName}
+            readOnly={!!editedStack()}
             disabled={busy()}
             placeholder="my-stack"
           />
@@ -310,17 +299,17 @@ export function StackEditor(props: StackEditorProps) {
             class="primary"
             type="button"
             onClick={saveAndStart}
-            disabled={busy() || (!!props.stackName && !version())}
+            disabled={busy() || (!!editedStack() && !version())}
           >
             {deploying() ? "Starting…" : saved() ? "Retry start" : "Save and start"}
           </button>
-          <button class="add-button" type="submit" disabled={busy() || (!!props.stackName && !version())}>
+          <button class="add-button" type="submit" disabled={busy() || (!!editedStack() && !version())}>
             {saving() ? "Saving…" : "Save without starting"}
           </button>
         </div>
       </form>
       <Show
-        when={props.stackName}
+        when={editedStack()}
         fallback={
           <p class="stack-note">
             Stacks can use Compose <code>secrets:</code>. Save the stack, then set the secret values on its edit page
@@ -328,7 +317,7 @@ export function StackEditor(props: StackEditorProps) {
           </p>
         }
       >
-        {(stackName) => <StackSecretsPanel hostID={props.hostID} stackName={stackName()} />}
+        {(stackName) => <StackSecretsPanel hostID={currentHost()} stackName={stackName()} />}
       </Show>
     </section>
   );
