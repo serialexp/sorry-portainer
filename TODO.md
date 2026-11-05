@@ -19,7 +19,9 @@
   - Backups of the master's sealed secret store (`<state_dir>/secrets`) are undecided.
 
 - Found while deploying to jp1 and hel1 (2026-11-05):
-  - jp1's root filesystem is 94% full (about 4.6 GB free). Nothing was cleaned up; that needs Bart.
+  - jp1's disk: unused Docker images pruned with Bart's approval (18.8 GB; 94% → 68% used). Still open: the uncapped journal (4 GB), no Docker log rotation, the orphaned `captain--onedev` volume (1 GB). `homes_mysql-data` (19 GB, cached pages) Bart clears himself. Docker images keep accumulating until jp1 moves to Podman.
+  - Image pruning in the agent: Podman only. First piece, agreed in principle: `images.prune` on command (`podman image prune -a`) with confirmation in the Images tab, a deadline and bounded output, reporting the space freed. Possible later: scheduled prune (`--filter until=`), disk-usage warning in host info.
+  - Moving jp1 from Docker to Podman (Bart hopes within days): Caddy (caddy-docker-proxy reads Docker labels; rootless ports 80/443 need `ip_unprivileged_port_start`), the dashboard's listen address and label container in the role, copying 24.8 GB of volumes, Portainer stacks becoming sorry-portainer stacks (podman-compose differences), and `jp1-` container name prefixes.
   - Not yet tested: a reboot of jp1. The dashboard listens on the Caddy network's gateway address, which exists only once Docker is up. The unit is ordered `After=docker.service` and restarts every 5 s if the bind fails, so it should recover either way. Check the journal after the next reboot.
   - Every release means copying asset URLs and checksums into `deploy/rsansible/vars/release.yml` by hand, because Gothab has no by-tag download URL. Either Gothab gets one, or a small script fills the file from `gt release view`.
   - The role doesn't remove hosts or the label container; removing a host is `hosts remove` by hand.
