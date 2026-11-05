@@ -1,4 +1,11 @@
-# Current task: deploy sorry-portainer to jp1 (master) and hel1 — deployed with the rsansible role (v0.2.2)
+# Current task: deploy sorry-portainer to jp1 (master) and hel1 — deployed with the rsansible role (v0.2.2); next, move jp1 from Docker to Podman 6
+
+## Podman 6 packages and the jp1 move (2026-11-06)
+
+- Plan (docs/design/caddy-podman.md): Caddy runs as a stack under the agent user, behind `{{upstreams}}` labels; big-bang switch; accounts become `sorry-portainer-master` and `sorry-portainer-agent` (hel1 renamed in place). Client addresses need Podman 6's `rootless_port_forwarder = "pasta"`, so we build Podman 6 ourselves. The design doc doesn't yet record that decision.
+- `~/Projects/podman-ubuntu` (git, one local commit, **no remote yet**): ten packages for 24.04 and 26.04, versions `<upstream>-1000sp<REV>~ubuntu<rel>` (above Ubuntu's: 26.04's catatonit is `0.2.1-2build1`). Includes `containers-storage` (storage.conf only), because Podman 6 applies a system storage.conf's graphroot to rootless users, and 26.04's sets one. Local builds pass for both releases; `smoke.sh fresh|upgrade` passes up to its rootless pasta check, which fails locally only because this workstation's old passt AppArmor profile confines the new pasta. The Check workflow is meant to prove the rootless check on Gothab CI.
+- Gothab apt registry: draft requirements REQ-53 to REQ-61 on gothab.io, implementation record `~/Projects/gothab/docs/design/apt-registry.md` (committed, not pushed). For another agent; until it lands, hosts pin release assets (`scripts/pins.sh <tag>`).
+- Next: create `serialexp/podman-ubuntu` on Gothab (ask Bart: public?), push, watch Check, tag `v6.1.4-1`, release. Then retest client address and host loopback with pasta on jp1, update caddy-podman.md, fix agent `setup` (install our debs, account rename), switch the role to the pinned debs, and do the cutover.
 
 ## Deployment (2026-11-05)
 
