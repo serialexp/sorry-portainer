@@ -10,8 +10,6 @@
     fail_msg: "agent hosts run Ubuntu, a release named in sorry_portainer_ubuntu_versions"
   tags: [sorry-portainer, podman]
 
-# The release's version stays a lookup: set_fact would turn "26.04" into
-# a number, which no longer names the packages.
 - name: Pick this release's Podman package directory
   set_fact:
     sorry_portainer_podman_dir: "/var/cache/podman-ubuntu/{{ podman_ubuntu_release }}"
