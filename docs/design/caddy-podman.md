@@ -1,8 +1,8 @@
 # Caddy on Podman (jp1 cutover) — Design
 
-Status: draft, not yet implemented — experiment done 2026-11-05; one decision (client addresses) open
+Status: draft, not yet implemented — decisions made; Podman 6 packages built (serialexp/podman-ubuntu), jp1 retest outstanding
 Owner: Bart
-Last updated: 2026-11-05
+Last updated: 2026-11-06
 
 ## Implementation status
 
@@ -18,11 +18,15 @@ they land and move them to Done.
 - [x] **Experiment — rootless Caddy on Podman 4.9.** Run on jp1 under a throwaway account on 2026-11-05, then removed; [results](#experiment-results-2026-11-05).
 - [x] **Decision — accounts.** Bart (2026-11-05): `sorry-portainer-master` for the server and `sorry-portainer-agent` for the agent, on every host. hel1's existing `sorry-portainer` account, with its rootless storage, is renamed rather than recreated.
 
+- [x] **Decision — client addresses.** Bart (2026-11-05): option (3), Podman 6 with `rootless_port_forwarder = "pasta"`, built by us; see [Podman 6](#podman-6-2026-11-06).
+- [x] **Podman 6 packages.** `serialexp/podman-ubuntu` on Gothab builds ten packages for 24.04 and 26.04; its smoke test checks, fresh and over Ubuntu's Podman, that a rootless published port sees an off-host client's address with pasta (CI, 2026-11-06). Release `v6.1.4-1`.
+
 ### Outstanding
 
-- [ ] **Decision — client addresses.** On a rootless bridge network Caddy sees every visitor as an internal address; see [Experiment results](#experiment-results-2026-11-05) for the options.
+- [ ] **Experiment — Podman 6 on jp1.** Install the `v6.1.4-1` packages and repeat results 1–3 with `rootless_port_forwarder = "pasta"`. Host loopback especially: the `allow_host_loopback` route in result 3 is a slirp4netns option, and Podman 6 removed slirp4netns, so the bridge-network path to the master's 127.0.0.1:6200 must be found again with pasta.
+- [ ] **Hosts install the pinned packages.** The roles install the `v6.1.4-1` assets (`scripts/pins.sh` in podman-ubuntu) until Gothab has apt repositories (REQ-55 in serialexp/gothab), then a sources entry.
 - [ ] **Experiment — reboot.** Question 5 (lingering brings Caddy and the stacks back after a reboot) needs a jp1 reboot; do it in the switch window.
-- [ ] **Agent setup on Ubuntu 24.04 installs a complete Podman.** apt satisfies `crun | runc` with Docker's `runc` (`containerd.io`), which goes with Docker, and 24.04's podman doesn't recommend netavark, so it falls back to CNI. `setup` must install `crun`, `netavark`, `aardvark-dns` and `passt` explicitly, and configure `runtime = "crun"` and `network_backend = "netavark"`.
+- [ ] **Agent setup on Ubuntu 24.04 installs a complete Podman.** apt satisfies `crun | runc` with Docker's `runc` (`containerd.io`), which goes with Docker, and 24.04's podman doesn't recommend netavark, so it falls back to CNI. With our packages `podman` depends on `crun`, `netavark`, `aardvark-dns` and `passt` directly, so this becomes: `setup` checks for Podman 6 and the forwarder setting rather than installing Ubuntu's.
 - [ ] **Phase 1 — account rename.** Agent default user `sorry-portainer-agent` in `internal/agentsetup`; the roles use both names; jp1's server account and hel1's agent account (home, subuid/subgid, linger, unit) migrated; release.
 - [ ] **Phase 2 — agent on jp1.** `setup`, enrollment, through the rsansible role.
 - [ ] **Phase 3 — big-bang switch.** In one window: stop the Docker stacks; copy volumes and `caddy_data`; start Caddy and every stack as sorry-portainer stacks with `jp1-` names; point the master's web listener at 127.0.0.1 (or containerize it).
@@ -260,3 +264,32 @@ set, because it can't find a network called `host`.
 - **(3) Podman 6 from upstream** with `rootless_port_forwarder = "pasta"`.
   Keeps labels and client addresses, but breaks the native-packages rule and
   depends on an experimental feature.
+
+## Podman 6 (2026-11-06)
+
+Bart chose option (3), with our own build. No supported repository has
+Podman 6 for Ubuntu (24.04 has 4.9.3, 26.04 has 5.7.0; Kubic is
+discontinued), so `serialexp/podman-ubuntu` builds it from pinned upstream
+tags: podman 6.1.4, crun 1.30.1, conmon 2.2.1, netavark and aardvark-dns
+2.1.0, passt 2026-10-02 (with pesto), catatonit 0.2.1, and the container-libs
+configuration as `golang-github-containers-common`, `-image` and
+`containers-storage`. They keep Ubuntu's package names and paths, so they
+replace Ubuntu's in place, and use versions `<upstream>-1000sp<n>~ubuntu<rel>`
+so they sort above Ubuntu's even at equal upstream versions.
+
+Found while building:
+
+- Podman 6's storage library applies a system `storage.conf`'s `graphroot`
+  to rootless users. 26.04's `containers-storage` sets one, so after an
+  upgrade every rootless user pointed at root's store. Our
+  `containers-storage` ships upstream's file, which sets none.
+- pasta gives a connection from one of the host's own addresses a
+  link-local source (169.254.1.2) instead of the real one. Only off-host
+  clients keep their address, which is what Caddy needs; a test from the
+  host itself shows the link-local address.
+- On CI, with a client in its own network namespace, `rootlessport` shows
+  `10.89.0.2` and pasta shows the client's `192.0.2.2`, on both releases,
+  fresh and over Ubuntu's Podman.
+
+This goes against the project's rule of native Ubuntu packages for agents
+(CLAUDE.md); that rule needs updating to name these packages.
