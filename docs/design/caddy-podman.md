@@ -35,6 +35,7 @@ they land and move them to Done.
 - [ ] **Experiment — reboot.** Question 5 (lingering brings Caddy and the stacks back after a reboot) needs a jp1 reboot; do it in the switch window.
 - [ ] **Gothab apt repository.** Replace the pinned `.deb` downloads with a sources entry once Gothab has apt repositories (REQ-55 in serialexp/gothab).
 - [ ] **CLAUDE.md native-packages rule.** The project rule still says agents use Ubuntu's native packages; it should name the podman-ubuntu packages. Waiting on Bart.
+- [ ] **Phase 3 preparation.** Survey done 2026-11-07 ([Phase 3 survey](#phase-3-survey-2026-11-07)); waiting on Bart's choices there (stack import route, inline credentials, disk), then converted stacks, the Caddy stack, the volume move script and a dry run with Docker still up.
 - [ ] **Phase 3 — big-bang switch.** In one window: stop the Docker stacks; copy volumes and `caddy_data`; start Caddy and every stack as sorry-portainer stacks with `jp1-` names; point the master's web listener at 127.0.0.1 (or containerize it).
 - [ ] **Phase 4 — retire Docker on jp1.** Portainer, the label container and the role's Docker tasks go; Docker is removed once the switch has held.
 
@@ -336,3 +337,73 @@ With both fixes applied by hand:
    127.0.0.1 at 169.254.1.3. That opens every loopback service on the host to
    every container of that user, as `allow_host_loopback` did on 4.9.
 4. Teardown is clean: pasta exits when the last container goes, no denials.
+
+## Phase 3 survey (2026-11-07)
+Read-only, with Docker running. Compose files were read structurally:
+service keys, images, ports, mounts, networks and labels. Only the names of
+environment variables were printed, never their values.
+
+**Stacks.** Portainer runs 11 stacks from
+`/var/lib/docker/volumes/portainer_data/_data/compose/<id>/[vN/]docker-compose.yml`:
+caddy-proxy (1), foundryvtt (21), foundryvtt2 (25), superchat (73: server,
+archiver, marketing), binschema (79), crossnotifier (80), timestables (81),
+homes (85: app, worker, mysql, redis), shipbreaking (86), relay (95) and
+groovewhale (97: postgres, media-http, realtime-core, web). Besides those, only
+`portainer` and the `sorry-portainer-caddy` label container run.
+
+**What each conversion needs:**
+
+- **Fully qualified images.** jp1's `registries.conf` has no unqualified-search
+  registries, so `mysql:8` and `aeolun/homes` must become `docker.io/…`.
+- **No `container_name`.** relay sets `container_name: relay`. The agent only
+  manages names with `jp1-`, so the line goes; podman-compose then names it
+  `jp1-relay_relay_1`. Caddy's `{{upstreams}}` don't depend on names.
+- **Credentials written inline.** foundry, foundryvtt2, superchat, crossnotifier
+  and homes put credentials straight into `environment:` (no `${VAR}`).
+  timestables and groovewhale read a `stack.env`. homes and shipbreaking
+  reference `${…}` without a `stack.env`, so those values are in Portainer's
+  database. The agent takes a stack's environment (`env.json`) only at
+  creation. The master's secret store doesn't fit, because these apps read
+  environment variables, not `/run/secrets` files.
+- **`depends_on` conditions are ignored.** podman-compose 1.0.6 (jp1)
+  translates `depends_on` into `--requires`, which only orders the starts.
+  `condition: service_healthy` (homes, groovewhale) is dropped, so an app can
+  start before its database is ready and relies on `restart: unless-stopped`.
+  It does honour `init`, `pull_policy`, healthchecks, and service-name network
+  aliases on every network. Those aliases keep groovewhale's routes
+  (`media-http:8081`, `realtime-core:8080`, `web:8080`) resolving on `caddy`.
+  Two stacks have a service called `app` on `caddy`, but nothing routes by
+  that name.
+- **Networks.** The external `caddy` network has to exist under the agent user
+  first (`podman network create caddy`). Other networks become
+  `jp1-<stack>_<net>`. groovewhale's `internal` stays `internal: true`.
+- **Caddy itself.** Mount `/run/user/1000/podman/podman.sock` (the agent
+  user's `podman.socket` is enabled) as `/var/run/docker.sock`, and set
+  `CADDY_DOCKER_NO_SCOPE=true`. Ports 80 and 443 need
+  `net.ipv4.ip_unprivileged_port_start=80`, which is 1024 today; 8080 doesn't.
+- **Dashboard.** Through `--map-host-loopback`, the host sees Caddy's
+  connections from 127.0.0.1, so `trusted_proxies` becomes `127.0.0.1/32`
+  and the web listener `127.0.0.1:6200`. Every agent-user container then
+  counts as a trusted proxy and could set `X-Forwarded-For` itself, so the
+  sign-in limiter trusts all of them.
+
+**Volumes and disk.** `/` has 24 GB free. Docker's in-use volumes:
+homes_mysql-data 15 GB (11 GB `homes` schema, 3.8 GB in 9 binlogs),
+foundryvtt2 3.9 GB, foundryvtt 275 MB, groovewhale postgres 65 MB, and a few
+MB for the rest. The images the stacks use take about 4 GB.
+Copying everything (about 19 GB) plus pulling the images (about 4 GB) would
+leave under 1 GB. The data is owned by container uids (mysql 999, postgres 70,
+foundry 421, caddy 0). Under the agent user, container uid `u` is host
+`100000+u-1`, and 0 is host 1000. So a volume has to be streamed through
+Podman's namespace (`podman volume import`, a copy) or moved and its owners
+shifted (no copy, but rollback has to shift them back). Unused volumes:
+`directus_*` (1 MB) and `captain--onedev` (1 GB).
+
+**Importing stacks.** Neither the server's admin socket nor the agent's CLI
+has stack commands, and the dashboard password stays unread. Choices:
+
+- (A) Bart creates the stacks in the dashboard from prepared files.
+- (B) The admin socket gets `stacks save/up/list --host`, so root on the
+  master can script it. This is new code and a release.
+- (C) Root writes the stack directories in the agent's on-disk format and
+  brings them up through the agent. This bypasses the API.
