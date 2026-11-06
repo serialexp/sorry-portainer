@@ -1,6 +1,6 @@
 # Editable stack environment — Design
 
-Status: implemented, not released; one open question
+Status: released in v0.2.5 (deployed 2026-11-07); one open question
 Owner: Bart
 Last updated: 2026-11-07
 
