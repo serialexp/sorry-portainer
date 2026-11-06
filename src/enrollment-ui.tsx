@@ -132,16 +132,18 @@ function EnrollForm() {
     if (await issueToken(id, ttl())) setHostID("");
   }
   return (
-    <section class="panel">
-      <div class="panel-heading">
-        <div>
-          <p class="eyebrow">NEW HOST</p>
-          <h2>Enroll a host</h2>
+    <section class="panel dark-panel">
+      <div class="dark-intro">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">NEW HOST</p>
+            <h2>Enroll a host</h2>
+          </div>
         </div>
+        <p class="subtitle">
+          A token lets one agent enroll once as the host ID you choose. The host ID is how the dashboard names the host.
+        </p>
       </div>
-      <p class="subtitle">
-        A token lets one agent enroll once as the host ID you choose. The host ID is how the dashboard names the host.
-      </p>
       <form class="enroll-form" onSubmit={submit}>
         <label>
           Host ID

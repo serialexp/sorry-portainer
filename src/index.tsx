@@ -99,12 +99,15 @@ function Dashboard() {
         <header>
           <div>
             <p class="eyebrow">{heading().eyebrow}</p>
-            <h1>
-              {heading().title} <span>✦</span>
-            </h1>
+            <h1>{heading().title}</h1>
             <p class="subtitle">{heading().subtitle}</p>
           </div>
           <div class="header-actions">
+            <Show when={!route() && !enrolling()}>
+              <A class="add-button solid" href={enrollmentPath}>
+                Enroll host
+              </A>
+            </Show>
             <label class="search-box">
               <span>⌕</span>
               <input
@@ -191,39 +194,57 @@ function pageHeading(pathname: string): { eyebrow: string; title: string; subtit
 function Overview() {
   const navigate = useNavigate();
   return (
-    <>
-      <section class="panel">
-        <div class="panel-heading">
-          <div>
-            <p class="eyebrow">YOUR FLEET</p>
-            <h2>Podman hosts</h2>
-          </div>
-          <A class="add-button" href={enrollmentPath}>
-            Enroll a host
-          </A>
-        </div>
-        <div class="host-list">
-          <For each={filteredHosts()}>
-            {(host) => (
-              <button class="host-row" onClick={() => navigate(hostPath(host.host_id, "containers"))}>
-                <span class="host-icon">⌂</span>
-                <span class="host-copy">
-                  <strong>{host.host_id}</strong>
-                  <small>
-                    {host.hostname} · Podman {host.engine_version}
-                    {host.swap_active ? " · swap active" : ""}
-                  </small>
-                </span>
+    <section class="fleet-section" aria-labelledby="fleet-heading">
+      <div class="section-heading">
+        <h2 id="fleet-heading">Podman hosts</h2>
+        <p>
+          {filteredHosts().length} {filteredHosts().length === 1 ? "host" : "hosts"}
+        </p>
+      </div>
+      <div class="host-grid">
+        <For each={filteredHosts()}>
+          {(host) => (
+            <button class="host-card" onClick={() => navigate(hostPath(host.host_id, "containers"))}>
+              <div class="host-card-top">
+                <div class="host-name">
+                  <span class="host-icon" aria-hidden="true">
+                    ⌂
+                  </span>
+                  <div>
+                    <strong>{host.host_id}</strong>
+                    <small>{host.hostname}</small>
+                  </div>
+                </div>
                 <span class="online">
                   <i class="dot green"></i>Online
                 </span>
-                <span class="chevron">›</span>
-              </button>
-            )}
-          </For>
-        </div>
-      </section>
-    </>
+              </div>
+              <dl class="host-meta">
+                <div>
+                  <dt>Podman</dt>
+                  <dd>{host.engine_version}</dd>
+                </div>
+                <div>
+                  <dt>Prefix</dt>
+                  <dd class="mono">{host.prefix}</dd>
+                </div>
+              </dl>
+              <div class="host-foot">
+                <span>Browse resources</span>
+                {host.swap_active ? <span class="warn-chip">Swap active</span> : <span aria-hidden="true">→</span>}
+              </div>
+            </button>
+          )}
+        </For>
+        <A class="enroll-tile" href={enrollmentPath}>
+          <span class="host-icon" aria-hidden="true">
+            +
+          </span>
+          <strong>Enroll a host</strong>
+          <small>Create a one-time token, then run the agent's enroll command on the new machine.</small>
+        </A>
+      </div>
+    </section>
   );
 }
 function HostPage() {
@@ -250,35 +271,59 @@ function HostPage() {
           </>
         )}
       </Show>
-      <section class="panel resource-preview">
+      <section class="panel resource-preview" aria-labelledby="containers-heading">
         <div class="panel-heading">
-          <h2>Containers</h2>
+          <div>
+            <h2 id="containers-heading">All containers</h2>
+          </div>
           <span class="resource-count">{filteredContainers().length}</span>
         </div>
-        <div class="container-list">
-          <For each={filteredContainers()}>
-            {(container) => (
-              <div class="container-row">
-                <span class={`container-icon ${container.state === "running" ? "running" : "stopped"}`}>▣</span>
-                <span class="container-copy">
-                  <strong>{container.name}</strong>
-                  <small>
-                    {container.image} · {container.status}
-                  </small>
-                </span>
-                <span class={`state ${container.state}`}>{container.state === "running" ? "Running" : "Stopped"}</span>
-                <button class="start" disabled={!!fleet.busyContainer} onClick={() => toggleContainer(container)}>
-                  {fleet.busyContainer === container.id
-                    ? container.state === "running"
-                      ? "Stopping…"
-                      : "Starting…"
-                    : container.state === "running"
-                      ? "Stop"
-                      : "Start"}
-                </button>
-              </div>
-            )}
-          </For>
+        <div class="data-scroll">
+          <div class="data-table cols-containers">
+            <div class="data-head">
+              <span>Name</span>
+              <span>Image</span>
+              <span>State</span>
+              <span>Uptime</span>
+              <span class="right">Action</span>
+            </div>
+            <For
+              each={filteredContainers()}
+              fallback={<div class="resource-empty">No containers match this search.</div>}
+            >
+              {(container) => {
+                const running = () => container.state === "running";
+                const busy = () => fleet.busyContainer === container.id;
+                return (
+                  <div class="data-row">
+                    <div class="cell-name">
+                      <span class="resource-icon" aria-hidden="true">
+                        ▣
+                      </span>
+                      <div>
+                        <strong>{container.name}</strong>
+                      </div>
+                    </div>
+                    <span class="chip-code">{container.image}</span>
+                    <span class={`state ${running() ? "running" : "stopped"}`}>
+                      <i class={`dot ${running() ? "green" : "grey"}`}></i>
+                      {running() ? "Running" : "Stopped"}
+                    </span>
+                    <span class="cell-value">{running() ? container.status : "—"}</span>
+                    <div class="cell-actions">
+                      <button
+                        class={running() ? "stop" : "start"}
+                        disabled={!!fleet.busyContainer}
+                        onClick={() => toggleContainer(container)}
+                      >
+                        {busy() ? (running() ? "Stopping…" : "Starting…") : running() ? "Stop" : "Start"}
+                      </button>
+                    </div>
+                  </div>
+                );
+              }}
+            </For>
+          </div>
         </div>
       </section>
     </>
@@ -286,79 +331,164 @@ function HostPage() {
 }
 function ResourcePage(props: { kind: "images" | "volumes" }) {
   const isImages = props.kind === "images";
-  const items = () => (isImages ? filteredImages() : filteredVolumes());
+  const count = () => (isImages ? filteredImages().length : filteredVolumes().length);
   return (
-    <section class="resource-page panel">
+    <section class="resource-page panel" aria-label={isImages ? "Images" : "Volumes"}>
       <div class="panel-heading">
         <div>
-          <p class="eyebrow">{isImages ? "SHARED INSTALLATION" : `${fleet.selectedHost} / PREFIXED STORAGE`}</p>
-          <h2>{isImages ? "Podman images" : "Podman volumes"}</h2>
+          <h2>{isImages ? "All images" : "All volumes"}</h2>
         </div>
-        <span class="resource-count">{items().length}</span>
+        <span class="resource-count">{count()}</span>
       </div>
-      <div class="resource-list">
-        <Show when={items().length} fallback={<div class="resource-empty">No {props.kind} match this search.</div>}>
-          <For each={items()}>
-            {(item) => (
-              <div class="resource-row">
-                <span class={`resource-icon ${isImages ? "image" : ""}`}>{isImages ? "◈" : "◫"}</span>
-                <span class="resource-copy">
-                  <strong>{isImages ? ((item as Image).tags?.[0] ?? "untagged image") : (item as Volume).name}</strong>
-                  <small>
-                    {isImages
-                      ? `${(item as Image).id.slice(0, 19)} · ${formatBytes((item as Image).size)}`
-                      : `${(item as Volume).driver} · ${(item as Volume).mountpoint || "Podman managed"}`}
-                  </small>
-                </span>
+      <Show when={count()} fallback={<div class="resource-empty">No {props.kind} match this search.</div>}>
+        <div class="data-scroll">
+          <Show
+            when={isImages}
+            fallback={
+              <div class="data-table cols-volumes">
+                <div class="data-head">
+                  <span>Volume</span>
+                  <span>Driver</span>
+                  <span>Mountpoint</span>
+                </div>
+                <For each={filteredVolumes()}>
+                  {(volume) => (
+                    <div class="data-row">
+                      <div class="cell-name">
+                        <span class="resource-icon" aria-hidden="true">
+                          ◫
+                        </span>
+                        <div>
+                          <strong>{volume.name}</strong>
+                        </div>
+                      </div>
+                      <span class="chip-code">{volume.driver}</span>
+                      <span class="cell-muted" title={volume.mountpoint}>
+                        {volume.mountpoint || "Podman managed"}
+                      </span>
+                    </div>
+                  )}
+                </For>
               </div>
-            )}
-          </For>
-        </Show>
-      </div>
+            }
+          >
+            <div class="data-table cols-images">
+              <div class="data-head">
+                <span>Image</span>
+                <span>ID</span>
+                <span>Size</span>
+              </div>
+              <For each={filteredImages()}>
+                {(image) => (
+                  <div class="data-row">
+                    <div class="cell-name">
+                      <span class="resource-icon image" aria-hidden="true">
+                        ◈
+                      </span>
+                      <div>
+                        <strong>{image.tags?.[0] ?? "untagged image"}</strong>
+                      </div>
+                    </div>
+                    <span class="cell-muted">{image.id.slice(0, 19)}</span>
+                    <span class="cell-value">{formatBytes(image.size)}</span>
+                  </div>
+                )}
+              </For>
+            </div>
+          </Show>
+        </div>
+      </Show>
     </section>
   );
 }
 function Login() {
   const [password, setPassword] = createSignal("");
+  const [showPassword, setShowPassword] = createSignal(false);
+  // The design's status grid: 96 dots, a few lit, one blinking.
+  const dots = Array.from({ length: 96 }, (_, i) => {
+    const r = (i * 37 + (i % 7) * 11) % 23;
+    if (r === 7) return "amber blink";
+    if (r === 3 || r === 11 || r === 17) return "lit";
+    if (r === 19) return "faint";
+    return "";
+  });
   return (
     <div class="login-page">
-      <div class="login-card">
+      <section class="login-hero" aria-hidden="true">
         <div class="brand">
           <span class="brand-mark">✦</span>
           <span>
             sorry,<strong>portainer</strong>
           </span>
         </div>
-        <p class="eyebrow">WELCOME BACK</p>
-        <h1>A calmer Podman dashboard.</h1>
-        <p class="subtitle">Sign in to see what’s happening across your hosts.</p>
-        <form
-          onSubmit={async (event) => {
-            event.preventDefault();
-            await signIn(password());
-            setPassword("");
-          }}
-        >
-          <label>
-            Admin password
-            <input
-              type="password"
-              value={password()}
-              onInput={(event) => setPassword(event.currentTarget.value)}
-              disabled={fleet.signingIn}
-              placeholder="Enter your password"
-            />
-          </label>
-          <Show when={fleet.loginError}>
-            <p class="form-error" role="alert">
-              {fleet.loginError}
-            </p>
-          </Show>
-          <button class="primary" type="submit" disabled={fleet.signingIn}>
-            {fleet.signingIn ? "Signing in…" : "Open dashboard"} <span>→</span>
-          </button>
-        </form>
-        <small class="login-note">Demo mode opens if the master cannot be reached.</small>
+        <div class="login-copy">
+          <span class="eyebrow">Welcome back</span>
+          <p class="login-headline">A calmer Podman dashboard.</p>
+          <p class="login-lede">Sign in to see what’s happening across your hosts.</p>
+        </div>
+        <div class="dot-grid">
+          <For each={dots}>{(dot) => <span class={dot}></span>}</For>
+        </div>
+      </section>
+      <div class="login-side">
+        <div class="login-form">
+          <div>
+            <h1>Sign in</h1>
+            <p class="subtitle">Use the admin password set when the master was installed.</p>
+          </div>
+          <form
+            onSubmit={async (event) => {
+              event.preventDefault();
+              await signIn(password());
+              setPassword("");
+            }}
+          >
+            <label for="admin-password">
+              Admin password
+              <span class={`field ${fleet.loginError ? "error" : ""}`}>
+                <input
+                  id="admin-password"
+                  type={showPassword() ? "text" : "password"}
+                  autocomplete="current-password"
+                  value={password()}
+                  onInput={(event) => setPassword(event.currentTarget.value)}
+                  disabled={fleet.signingIn}
+                  placeholder="Enter your password"
+                  aria-describedby="login-error"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword())}
+                  aria-label={showPassword() ? "Hide password" : "Show password"}
+                >
+                  <svg
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"></path>
+                    <circle cx="12" cy="12" r="3"></circle>
+                  </svg>
+                </button>
+              </span>
+            </label>
+            <Show when={fleet.loginError}>
+              <p class="form-error" id="login-error" role="alert">
+                {fleet.loginError}
+              </p>
+            </Show>
+            <button class="primary" type="submit" disabled={fleet.signingIn}>
+              {fleet.signingIn ? "Signing in…" : "Open dashboard"} <span>→</span>
+            </button>
+          </form>
+          <small class="login-note">Demo mode opens if the master cannot be reached.</small>
+        </div>
       </div>
     </div>
   );
