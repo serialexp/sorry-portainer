@@ -75,7 +75,7 @@ func TestEnrollmentTokenLifecycle(t *testing.T) {
 	if until := time.Until(created.ExpiresAt); until < 29*time.Minute || until > 30*time.Minute {
 		t.Fatalf("expires in %s", until)
 	}
-	want := "sudo runuser -u sorry-portainer -- /usr/local/bin/sorry-portainer-agent enroll --server-url wss://jp1.example:9443/control/agent --host-id hel1 --dir /var/lib/sorry-portainer-agent --token-file -"
+	want := "sudo runuser -u sorry-portainer-agent -- /usr/local/bin/sorry-portainer-agent enroll --server-url wss://jp1.example:9443/control/agent --host-id hel1 --dir /var/lib/sorry-portainer-agent --token-file -"
 	if created.Command != want || created.Reenroll {
 		t.Fatalf("command %q, reenroll %v", created.Command, created.Reenroll)
 	}

@@ -43,7 +43,7 @@ func TestPodmanVersionBoundary(t *testing.T) {
 }
 
 func TestBuildPlanCompleteStateIsIdempotent(t *testing.T) {
-	state := State{OSID: "ubuntu", OSVersion: "24.04", PodmanInstalled: true, PodmanComposeInstalled: true, PodmanMajor: 4, PodmanMinor: 7, UserExists: true, LingerEnabled: true, SocketEnabled: true, SocketActive: true}
+	state := State{OSID: "ubuntu", OSVersion: "24.04", PodmanInstalled: true, PodmanMajor: 4, PodmanMinor: 7, UserExists: true, LingerEnabled: true, SocketEnabled: true, SocketActive: true}
 	plan, err := BuildPlan(state, DefaultUser)
 	if err != nil {
 		t.Fatal(err)
@@ -54,13 +54,13 @@ func TestBuildPlanCompleteStateIsIdempotent(t *testing.T) {
 }
 
 func TestBuildPlanUsesDirectArgumentVectors(t *testing.T) {
-	plan, err := BuildPlan(State{OSID: "ubuntu", OSVersion: "26.04"}, "agent_user")
+	plan, err := BuildPlan(State{OSID: "ubuntu", OSVersion: "26.04", MissingPackages: RequiredPackages}, "agent_user")
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := []Command{
 		{"apt-get", []string{"update"}},
-		{"apt-get", []string{"install", "-y", "podman", "podman-compose"}},
+		{"apt-get", []string{"install", "-y", "podman", "podman-compose", "crun", "netavark", "aardvark-dns", "passt"}},
 		{"useradd", []string{"--create-home", "--user-group", "--shell", "/usr/sbin/nologin", "agent_user"}},
 		{"loginctl", []string{"enable-linger", "agent_user"}},
 		{"systemctl", []string{"--user", "--machine", "agent_user@", "enable", "podman.socket"}},
@@ -75,6 +75,26 @@ func TestBuildPlanUsesDirectArgumentVectors(t *testing.T) {
 	}
 }
 
+func TestBuildPlanInstallsOnlyMissingPackages(t *testing.T) {
+	state := State{OSID: "ubuntu", OSVersion: "24.04", PodmanInstalled: true, PodmanMajor: 4, PodmanMinor: 9, MissingPackages: []string{"netavark", "aardvark-dns"}, UserExists: true, LingerEnabled: true, SocketEnabled: true, SocketActive: true}
+	plan, err := BuildPlan(state, DefaultUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Actions) != 2 || !reflect.DeepEqual(plan.Actions[1].Command.Args, []string{"install", "-y", "netavark", "aardvark-dns"}) || plan.Actions[1].Progress != "Installing netavark, aardvark-dns" {
+		t.Fatalf("actions = %#v", plan.Actions)
+	}
+	// A too old podman is upgraded along with what is missing.
+	state.PodmanMinor = 6
+	plan, err = BuildPlan(state, DefaultUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Actions) != 2 || !reflect.DeepEqual(plan.Actions[1].Command.Args, []string{"install", "-y", "podman", "netavark", "aardvark-dns"}) {
+		t.Fatalf("actions = %#v", plan.Actions)
+	}
+}
+
 func TestInvalidUserCannotBecomeAnArgument(t *testing.T) {
 	if _, err := BuildPlan(State{OSID: "ubuntu", OSVersion: "24.04"}, "bad;user"); err == nil {
 		t.Fatal("expected invalid user error")
@@ -82,12 +102,13 @@ func TestInvalidUserCannotBecomeAnArgument(t *testing.T) {
 }
 
 func TestDetectAcceptsUbuntuDerivative(t *testing.T) {
-	probe := &fakeProbe{responses: []fakeResponse{{}, {}, {exit: 1}}}
+	// dpkg-query exits 0 with an empty status for a package it only knows of.
+	probe := &fakeProbe{responses: []fakeResponse{{}, {}, {}, {}, {}, {}, {exit: 1}}}
 	state, err := Detect(context.Background(), probe, []byte("ID=pop\nID_LIKE=\"ubuntu debian\"\nVERSION_ID=24.04\n"), DefaultUser)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state.OSID != "ubuntu" || state.OSVersion != "24.04" {
+	if state.OSID != "ubuntu" || state.OSVersion != "24.04" || state.PodmanInstalled || !reflect.DeepEqual(state.MissingPackages, RequiredPackages) {
 		t.Fatalf("state = %+v", state)
 	}
 }
@@ -141,7 +162,7 @@ func TestDetectRejectsUnsupportedHostBeforeProbing(t *testing.T) {
 }
 
 func TestDetectAcceptsUbuntuCompatibleDerivative(t *testing.T) {
-	probe := &fakeProbe{responses: []fakeResponse{{exit: 1}, {exit: 1}, {exit: 1}}}
+	probe := &fakeProbe{responses: []fakeResponse{{exit: 1}, {exit: 1}, {exit: 1}, {exit: 1}, {exit: 1}, {exit: 1}, {exit: 1}}}
 	state, err := Detect(context.Background(), probe, []byte("ID=pop\nID_LIKE=\"ubuntu debian\"\nVERSION_ID=24.04\n"), DefaultUser)
 	if err != nil {
 		t.Fatal(err)
@@ -153,15 +174,23 @@ func TestDetectAcceptsUbuntuCompatibleDerivative(t *testing.T) {
 
 func TestDetectCompleteHost(t *testing.T) {
 	probe := &fakeProbe{responses: []fakeResponse{
-		{output: "ii  ", exit: 0}, {output: "ii  ", exit: 0},
-		{output: "podman version 5.4.0"}, {}, {output: "yes\n"}, {}, {},
+		{output: "ii  "}, {output: "ii  "}, {output: "ii  "}, {output: "ii  "}, {output: "ii  "}, {output: "ii  "},
+		{output: "podman version 6.1.4"}, {}, {output: "yes\n"}, {}, {},
 	}}
 	state, err := Detect(context.Background(), probe, []byte("ID=ubuntu\nVERSION_ID=26.04\n"), DefaultUser)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !state.PodmanInstalled || !state.PodmanComposeInstalled || state.PodmanMajor != 5 || !state.UserExists || !state.LingerEnabled || !state.SocketEnabled || !state.SocketActive {
+	if !state.PodmanInstalled || len(state.MissingPackages) != 0 || state.PodmanMajor != 6 || !state.UserExists || !state.LingerEnabled || !state.SocketEnabled || !state.SocketActive {
 		t.Fatalf("state = %+v", state)
+	}
+	for i, name := range RequiredPackages {
+		if got := probe.calls[i]; got.name != "dpkg-query" || got.args[len(got.args)-1] != name {
+			t.Fatalf("probe %d = %#v, want dpkg-query for %s", i, got, name)
+		}
+	}
+	if got := probe.calls[len(RequiredPackages)+1]; !reflect.DeepEqual(got.args, []string{"-u", DefaultUser}) {
+		t.Fatalf("user probe = %#v", got)
 	}
 	for _, call := range probe.calls {
 		if call.name == "sh" || call.name == "bash" {
@@ -172,7 +201,7 @@ func TestDetectCompleteHost(t *testing.T) {
 
 func TestInstallerRequiresRootBeforeExecuting(t *testing.T) {
 	probe := &fakeProbe{}
-	err := (Installer{Probe: probe, EUID: func() int { return 1000 }}).Apply(context.Background(), Plan{Actions: []Action{{Progress: "test", Command: Command{Name: "apt-get"}}}})
+	_, err := (Installer{Probe: probe, EUID: func() int { return 1000 }}).Apply(context.Background(), Plan{Actions: []Action{{Progress: "test", Command: Command{Name: "apt-get"}}}})
 	if err == nil || !strings.Contains(err.Error(), "requires root") {
 		t.Fatalf("error = %v", err)
 	}
@@ -183,7 +212,7 @@ func TestInstallerRequiresRootBeforeExecuting(t *testing.T) {
 
 func TestInstallerStopsOnCommandFailure(t *testing.T) {
 	probe := &fakeProbe{responses: []fakeResponse{{output: "locked", exit: 100}}}
-	err := (Installer{Probe: probe, EUID: func() int { return 0 }}).Apply(context.Background(), Plan{Actions: []Action{{Progress: "refresh", Command: Command{Name: "apt-get", Args: []string{"update"}}}, {Progress: "install", Command: Command{Name: "apt-get"}}}})
+	_, err := (Installer{Probe: probe, EUID: func() int { return 0 }}).Apply(context.Background(), Plan{Actions: []Action{{Progress: "refresh", Command: Command{Name: "apt-get", Args: []string{"update"}}}, {Progress: "install", Command: Command{Name: "apt-get"}}}})
 	if err == nil || !strings.Contains(err.Error(), "status 100") {
 		t.Fatalf("error = %v", err)
 	}
@@ -195,11 +224,18 @@ func TestInstallerStopsOnCommandFailure(t *testing.T) {
 func TestInstallerVerifiesMinimumVersionAfterActions(t *testing.T) {
 	probe := &fakeProbe{responses: []fakeResponse{{}, {output: "podman version 4.6.2"}}}
 	plan := Plan{Actions: []Action{{Progress: "install", Command: Command{Name: "apt-get"}}}}
-	err := (Installer{Probe: probe, EUID: func() int { return 0 }}).Apply(context.Background(), plan)
+	_, err := (Installer{Probe: probe, EUID: func() int { return 0 }}).Apply(context.Background(), plan)
 	if err == nil || !strings.Contains(err.Error(), "4.7 or later") {
 		t.Fatalf("error = %v", err)
 	}
 	if got := probe.calls[1]; got.name != "podman" || !reflect.DeepEqual(got.args, []string{"--version"}) {
 		t.Fatalf("verification call = %#v", got)
+	}
+}
+func TestInstallerReportsTheVerifiedVersion(t *testing.T) {
+	probe := &fakeProbe{responses: []fakeResponse{{output: "podman version 6.1.4\n"}}}
+	version, err := (Installer{Probe: probe, EUID: func() int { return 0 }}).Apply(context.Background(), Plan{})
+	if err != nil || version != (Version{6, 1}) {
+		t.Fatalf("version = %v, %v", version, err)
 	}
 }

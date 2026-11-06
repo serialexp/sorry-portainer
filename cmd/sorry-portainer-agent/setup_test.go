@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -42,8 +43,33 @@ func testSetupEnvironment(probe agentsetup.Probe) setupEnvironment {
 		installFiles: func(string, string) error {
 			return nil
 		},
-		configureHooks: func(context.Context, string, string) error { return nil },
+		configureContainers: func(context.Context, string, agentsetup.ContainersConf) error { return nil },
+		containersConfCurrent: func(context.Context, string, string, agentsetup.ContainersConf) (bool, error) {
+			return false, errors.New("unexpected drop-in check")
+		},
+		lookupHome: func(user string) (string, error) { return "/home/" + user, nil },
 	}
+}
+
+// completeHost answers Detect's probes for a host with every package,
+// Podman at version, and the user's services set up.
+func completeHost(version string) []setupResponse {
+	responses := make([]setupResponse, 0, len(agentsetup.RequiredPackages)+5)
+	for range agentsetup.RequiredPackages {
+		responses = append(responses, setupResponse{output: "ii "})
+	}
+	return append(responses,
+		setupResponse{output: "podman version " + version},
+		setupResponse{}, setupResponse{output: "yes\n"}, setupResponse{}, setupResponse{})
+}
+
+// bareHost answers Detect's probes for a host with no packages and no user.
+func bareHost() []setupResponse {
+	responses := make([]setupResponse, 0, len(agentsetup.RequiredPackages)+1)
+	for range agentsetup.RequiredPackages {
+		responses = append(responses, setupResponse{exit: 1})
+	}
+	return append(responses, setupResponse{exit: 1})
 }
 
 func TestSetupRejectsUnexpectedArgumentsBeforeHostInspection(t *testing.T) {
@@ -67,8 +93,16 @@ func TestSetupAutomaticallyRelaunchesWithSudo(t *testing.T) {
 	if err := runSetupWithEnvironment(context.Background(), nil, &out, environment); err != nil {
 		t.Fatal(err)
 	}
-	if executable == "" || strings.Join(arguments, " ") != "--user sorry-portainer --oci-hooks-dir /home/sorry-portainer/.local/share/sorry-portainer/oci-hooks" {
+	// The hooks directory defaults under the home, which only root can look up.
+	if executable == "" || strings.Join(arguments, " ") != "--user sorry-portainer-agent" {
 		t.Fatalf("sudo relaunch = %q %#v", executable, arguments)
+	}
+	// The host loopback address goes along, canonical.
+	if err := runSetupWithEnvironment(context.Background(), []string{"--map-host-loopback", "fd00::0:3"}, &out, environment); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(arguments, " "); !strings.HasSuffix(got, " --map-host-loopback fd00::3") {
+		t.Fatalf("sudo relaunch = %q", got)
 	}
 	if got := out.String(); !strings.Contains(got, "Detected OS: Pop!_OS 24.04 (ubuntu mode)") || !strings.Contains(got, "automatically relaunching with sudo") {
 		t.Fatalf("output = %q", got)
@@ -76,37 +110,38 @@ func TestSetupAutomaticallyRelaunchesWithSudo(t *testing.T) {
 }
 
 func TestElevatedSetupReportsConciseProgressAndInstallsService(t *testing.T) {
-	probe := &setupProbe{responses: []setupResponse{
-		{exit: 1}, {exit: 1}, {exit: 1}, // package and user probes
-		{}, {}, {}, {}, {}, {}, // setup actions
-		{output: "podman version 4.9.3"}, // verification
-	}}
+	responses := append(bareHost(),
+		setupResponse{}, setupResponse{}, setupResponse{}, setupResponse{}, setupResponse{}, setupResponse{}, // setup actions
+		setupResponse{output: "podman version 6.1.4"}, // verification
+	)
+	probe := &setupProbe{responses: responses}
 	environment := testSetupEnvironment(probe)
 	environment.euid = func() int { return 0 }
 	installed := false
 	environment.installFiles = func(source, user string) error {
-		installed = source != "" && user == "sorry-portainer"
+		installed = source != "" && user == "sorry-portainer-agent"
 		return nil
 	}
-	hooks := ""
-	environment.configureHooks = func(_ context.Context, user, dir string) error {
+	var configured *agentsetup.ContainersConf
+	configuredUser := ""
+	environment.configureContainers = func(_ context.Context, user string, conf agentsetup.ContainersConf) error {
 		if !installed {
-			t.Error("hooks configured before the agent binary was installed")
+			t.Error("Podman configured before the agent binary was installed")
 		}
-		hooks = user + " " + dir
+		configured, configuredUser = &conf, user
 		return nil
 	}
 	var out strings.Builder
-	if err := runSetupWithEnvironment(context.Background(), []string{"--elevated", "--oci-hooks-dir", "/srv/hooks"}, &out, environment); err != nil {
+	if err := runSetupWithEnvironment(context.Background(), []string{"--elevated", "--oci-hooks-dir", "/srv/hooks", "--map-host-loopback", "169.254.1.3"}, &out, environment); err != nil {
 		t.Fatal(err)
 	}
 	got := out.String()
 	for _, wanted := range []string{
 		"Detected OS: Pop!_OS 24.04 (ubuntu mode)",
 		"Updating apt",
-		"Installing podman and podman-compose",
+		"Installing podman, podman-compose, crun, netavark, aardvark-dns, passt",
 		"Installing system service for spa",
-		"Configuring Podman OCI hooks for stack secrets (/srv/hooks)",
+		"Configuring Podman for sorry-portainer-agent: OCI hooks for stack secrets (/srv/hooks), pasta port forwarding, host loopback at 169.254.1.3",
 		"Done!",
 		"enroll --server-url wss://MASTER:9443/control/agent --host-id HOST_ID --dir /var/lib/sorry-portainer-agent --token-file -",
 		"Happy using!",
@@ -115,11 +150,75 @@ func TestElevatedSetupReportsConciseProgressAndInstallsService(t *testing.T) {
 			t.Fatalf("output missing %q: %q", wanted, got)
 		}
 	}
-	if strings.Contains(got, "apt-get") || !installed {
-		t.Fatalf("raw commands leaked or service not installed: output=%q installed=%v", got, installed)
+	if strings.Contains(got, "apt-get") || strings.Contains(got, "rootlessport") || !installed {
+		t.Fatalf("raw commands leaked, forwarder note on Podman 6, or service not installed: output=%q installed=%v", got, installed)
 	}
-	if hooks != "sorry-portainer /srv/hooks" {
-		t.Fatalf("hooks configured as %q", hooks)
+	want := agentsetup.ContainersConf{HooksDir: "/srv/hooks", Forwarder: agentsetup.ForwarderPasta, HostLoopback: "169.254.1.3"}
+	if configuredUser != "sorry-portainer-agent" || configured == nil || *configured != want {
+		t.Fatalf("configured %s with %+v", configuredUser, configured)
+	}
+}
+
+func TestSetupOnOlderPodman(t *testing.T) {
+	run := func(version string, args ...string) (string, *agentsetup.ContainersConf, error) {
+		environment := testSetupEnvironment(&setupProbe{responses: append(completeHost(version), setupResponse{output: "podman version " + version})})
+		environment.euid = func() int { return 0 }
+		var configured *agentsetup.ContainersConf
+		environment.configureContainers = func(_ context.Context, _ string, conf agentsetup.ContainersConf) error {
+			configured = &conf
+			return nil
+		}
+		var out strings.Builder
+		err := runSetupWithEnvironment(context.Background(), append([]string{"--elevated"}, args...), &out, environment)
+		return out.String(), configured, err
+	}
+	// Podman 5 keeps rootlessport and says what that costs; host loopback works.
+	out, conf, err := run("5.7.0", "--map-host-loopback", "169.254.1.3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if conf == nil || conf.Forwarder != agentsetup.ForwarderRootlessport || conf.HostLoopback != "169.254.1.3" || !strings.Contains(out, "Note: Podman 5.7 forwards published ports through rootlessport") {
+		t.Fatalf("conf %+v, output %q", conf, out)
+	}
+	// Podman 4 cannot map host loopback, and nothing is configured.
+	if _, conf, err = run("4.9.3", "--map-host-loopback", "169.254.1.3"); err == nil || !strings.Contains(err.Error(), "needs Podman 5") || conf != nil {
+		t.Fatalf("Podman 4: %v, configured %+v", err, conf)
+	}
+	if _, conf, err = run("4.9.3"); err != nil || conf == nil || conf.Forwarder != agentsetup.ForwarderRootlessport {
+		t.Fatalf("Podman 4 without loopback: %v, %+v", err, conf)
+	}
+}
+
+func TestSetupDefaultsTheHooksDirUnderTheAccountsHome(t *testing.T) {
+	environment := testSetupEnvironment(&setupProbe{responses: append(completeHost("6.1.4"), setupResponse{output: "podman version 6.1.4"})})
+	environment.euid = func() int { return 0 }
+	environment.lookupHome = func(user string) (string, error) { return "/srv/" + user, nil }
+	var configured agentsetup.ContainersConf
+	environment.configureContainers = func(_ context.Context, _ string, conf agentsetup.ContainersConf) error {
+		configured = conf
+		return nil
+	}
+	var out strings.Builder
+	if err := runSetupWithEnvironment(context.Background(), []string{"--elevated"}, &out, environment); err != nil {
+		t.Fatal(err)
+	}
+	if configured.HooksDir != "/srv/sorry-portainer-agent/.local/share/sorry-portainer/oci-hooks" {
+		t.Fatalf("hooks dir %q", configured.HooksDir)
+	}
+	environment = testSetupEnvironment(&setupProbe{responses: append(completeHost("6.1.4"), setupResponse{output: "podman version 6.1.4"})})
+	environment.euid = func() int { return 0 }
+	environment.lookupHome = func(string) (string, error) { return "", errors.New("no such user") }
+	if err := runSetupWithEnvironment(context.Background(), []string{"--elevated"}, &out, environment); err == nil || !strings.Contains(err.Error(), "no such user") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestSetupRejectsBadHostLoopback(t *testing.T) {
+	var out strings.Builder
+	for _, bad := range []string{"localhost", "127.0.0.1", "169.254.1.2"} {
+		if err := runSetupWithEnvironment(context.Background(), []string{"--map-host-loopback", bad}, &out, testSetupEnvironment(&setupProbe{})); err == nil {
+			t.Errorf("accepted %q", bad)
+		}
 	}
 }
 
@@ -131,25 +230,60 @@ func TestSetupRejectsRelativeHooksDir(t *testing.T) {
 	}
 }
 
-func TestSetupHooksConfPrint(t *testing.T) {
+func noContainers() (bool, error) { return false, nil }
+
+func TestSetupContainersConfPrint(t *testing.T) {
 	var out strings.Builder
-	if err := runSetupHooksConf([]string{"--print", "--oci-hooks-dir", "/srv/hooks"}, &out); err != nil {
+	if err := runSetupContainersConf([]string{"--print", "--oci-hooks-dir", "/srv/hooks", "--port-forwarder", "pasta", "--map-host-loopback", "169.254.1.3"}, &out, noContainers); err != nil {
 		t.Fatal(err)
 	}
-	want, _ := agentsetup.HooksDropIn("/srv/hooks")
+	want, _ := agentsetup.ContainersConf{HooksDir: "/srv/hooks", Forwarder: agentsetup.ForwarderPasta, HostLoopback: "169.254.1.3"}.Render()
 	if out.String() != want {
 		t.Fatalf("printed %q", out.String())
 	}
-	if err := runSetupHooksConf([]string{"--print", "extra"}, &out); err == nil {
-		t.Fatal("accepted extra arguments")
+	for _, bad := range [][]string{
+		{"--print", "extra"},
+		{"--print", "--oci-hooks-dir", "relative"},
+		{"--print", "--port-forwarder", "slirp"},
+		{"--print", "--map-host-loopback", "127.0.0.1"},
+		{"--print", "--check"},
+	} {
+		if err := runSetupContainersConf(bad, &out, noContainers); err == nil {
+			t.Errorf("accepted %q", bad)
+		}
 	}
-	if err := runSetupHooksConf([]string{"--print", "--oci-hooks-dir", "relative"}, &out); err == nil {
-		t.Fatal("accepted a relative hooks dir")
+}
+
+func TestSetupContainersConfCheck(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("refuses to run as root")
+	}
+	home := t.TempDir()
+	args := []string{"--port-forwarder", "pasta"}
+	check := func() string {
+		var out strings.Builder
+		if err := setupContainersConfIn(home, append(args, "--check"), &out, noContainers); err != nil {
+			t.Fatal(err)
+		}
+		return out.String()
+	}
+	if got := check(); got != "stale\n" {
+		t.Fatalf("before writing: %q", got)
+	}
+	var out strings.Builder
+	if err := setupContainersConfIn(home, args, &out, noContainers); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(agentsetup.DefaultOCIHooksDir(home)); err != nil {
+		t.Fatalf("default hooks dir under home: %v", err)
+	}
+	if got := check(); got != "current\n" {
+		t.Fatalf("after writing: %q", got)
 	}
 }
 
 func TestSetupDryRunUsesHumanProgressOnly(t *testing.T) {
-	probe := &setupProbe{responses: []setupResponse{{exit: 1}, {exit: 1}, {exit: 1}}}
+	probe := &setupProbe{responses: bareHost()}
 	environment := testSetupEnvironment(probe)
 	var out strings.Builder
 	if err := runSetupWithEnvironment(context.Background(), []string{"--dry-run"}, &out, environment); err != nil {
@@ -157,6 +291,48 @@ func TestSetupDryRunUsesHumanProgressOnly(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "apt-get") || !strings.Contains(out.String(), "Updating apt") {
 		t.Fatalf("output = %q", out.String())
+	}
+}
+
+func TestSetupDryRunChecksTheDropInAsRoot(t *testing.T) {
+	for _, tc := range []struct {
+		current bool
+		want    string
+	}{
+		{true, noChanges},
+		{false, "Configuring Podman for sorry-portainer-agent: OCI hooks for stack secrets (/home/sorry-portainer-agent/.local/share/sorry-portainer/oci-hooks), pasta port forwarding, host loopback at 169.254.1.3"},
+	} {
+		environment := testSetupEnvironment(&setupProbe{responses: completeHost("6.1.4")})
+		environment.euid = func() int { return 0 }
+		var checked agentsetup.ContainersConf
+		environment.containersConfCurrent = func(_ context.Context, executable, user string, conf agentsetup.ContainersConf) (bool, error) {
+			if executable != "/home/bart/.local/bin/sorry-portainer-agent" || user != "sorry-portainer-agent" {
+				t.Errorf("checked with %s as %s", executable, user)
+			}
+			checked = conf
+			return tc.current, nil
+		}
+		var out strings.Builder
+		if err := runSetupWithEnvironment(context.Background(), []string{"--dry-run", "--map-host-loopback", "169.254.1.3"}, &out, environment); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(out.String(), tc.want) || tc.current && strings.Contains(out.String(), "Configuring") {
+			t.Fatalf("current=%v: output %q", tc.current, out.String())
+		}
+		if checked.Forwarder != agentsetup.ForwarderPasta || checked.HostLoopback != "169.254.1.3" {
+			t.Fatalf("checked %+v", checked)
+		}
+	}
+}
+
+func TestSetupDryRunWithoutRootAssumesTheDropInChanges(t *testing.T) {
+	environment := testSetupEnvironment(&setupProbe{responses: completeHost("6.1.4")})
+	var out strings.Builder
+	if err := runSetupWithEnvironment(context.Background(), []string{"--dry-run"}, &out, environment); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), noChanges) || !strings.Contains(out.String(), "Configuring Podman for sorry-portainer-agent") {
+		t.Fatalf("output %q", out.String())
 	}
 }
 

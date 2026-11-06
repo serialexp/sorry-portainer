@@ -13,10 +13,23 @@ import (
 )
 
 const (
-	DefaultUser    = "sorry-portainer"
+	DefaultUser    = "sorry-portainer-agent"
 	MinPodmanMajor = 4
 	MinPodmanMinor = 7
 )
+
+// RequiredPackages make a complete rootless Podman. On Ubuntu 24.04 apt
+// satisfies podman's "crun | runc" with Docker's runc where Docker is
+// installed, and podman doesn't pull in netavark, so it would fall back to
+// CNI; naming them all avoids both.
+var RequiredPackages = []string{"podman", "podman-compose", "crun", "netavark", "aardvark-dns", "passt"}
+
+// Version is a Podman major.minor version.
+type Version struct {
+	Major, Minor int
+}
+
+func (v Version) String() string { return fmt.Sprintf("%d.%d", v.Major, v.Minor) }
 
 // Command is an executable plus an argument vector. It is intentionally not a
 // shell command: arguments are always passed directly to exec.CommandContext.
@@ -31,16 +44,17 @@ type Action struct {
 }
 
 type State struct {
-	OSID                   string
-	OSVersion              string
-	PodmanInstalled        bool
-	PodmanComposeInstalled bool
-	PodmanMajor            int
-	PodmanMinor            int
-	UserExists             bool
-	LingerEnabled          bool
-	SocketEnabled          bool
-	SocketActive           bool
+	OSID      string
+	OSVersion string
+	// MissingPackages are the RequiredPackages not installed, in order.
+	MissingPackages []string
+	PodmanInstalled bool
+	PodmanMajor     int
+	PodmanMinor     int
+	UserExists      bool
+	LingerEnabled   bool
+	SocketEnabled   bool
+	SocketActive    bool
 }
 
 type Plan struct {
@@ -97,10 +111,16 @@ func BuildPlan(state State, user string) (Plan, error) {
 	}
 
 	plan := Plan{User: user}
-	if !state.PodmanInstalled || !state.PodmanComposeInstalled || !PodmanSupported(state.PodmanMajor, state.PodmanMinor) {
+	packages := append([]string(nil), state.MissingPackages...)
+	if state.PodmanInstalled && !PodmanSupported(state.PodmanMajor, state.PodmanMinor) {
+		// An installed but too old podman is upgraded if apt has a newer one.
+		packages = append([]string{"podman"}, packages...)
+	}
+	if len(packages) > 0 {
+		install := append([]string{"install", "-y"}, packages...)
 		plan.Actions = append(plan.Actions,
 			Action{"Updating apt", Command{"apt-get", []string{"update"}}},
-			Action{"Installing podman and podman-compose", Command{"apt-get", []string{"install", "-y", "podman", "podman-compose"}}},
+			Action{"Installing " + strings.Join(packages, ", "), Command{"apt-get", install}},
 		)
 	}
 	if !state.UserExists {
@@ -161,13 +181,17 @@ func Detect(ctx context.Context, probe Probe, osRelease []byte, user string) (St
 		return State{}, err
 	}
 	state := State{OSID: platform.Mode, OSVersion: platform.Version}
-	state.PodmanInstalled, err = packageInstalled(ctx, probe, "podman")
-	if err != nil {
-		return State{}, err
-	}
-	state.PodmanComposeInstalled, err = packageInstalled(ctx, probe, "podman-compose")
-	if err != nil {
-		return State{}, err
+	for _, name := range RequiredPackages {
+		installed, err := packageInstalled(ctx, probe, name)
+		if err != nil {
+			return State{}, err
+		}
+		if name == "podman" {
+			state.PodmanInstalled = installed
+		}
+		if !installed {
+			state.MissingPackages = append(state.MissingPackages, name)
+		}
 	}
 	if state.PodmanInstalled {
 		out, exit, runErr := probe.Run(ctx, "podman", "--version")
@@ -270,7 +294,9 @@ type Installer struct {
 	Progress func(string)
 }
 
-func (i Installer) Apply(ctx context.Context, plan Plan) error {
+// Apply runs the plan's actions and returns the Podman version it then
+// finds, which must be a supported one.
+func (i Installer) Apply(ctx context.Context, plan Plan) (Version, error) {
 	if i.EUID == nil {
 		i.EUID = os.Geteuid
 	}
@@ -278,7 +304,7 @@ func (i Installer) Apply(ctx context.Context, plan Plan) error {
 		i.Probe = ExecProbe{}
 	}
 	if i.EUID() != 0 {
-		return errors.New("agent host setup requires root; rerun the explicit setup command as root")
+		return Version{}, errors.New("agent host setup requires root; rerun the explicit setup command as root")
 	}
 	lastProgress := ""
 	for _, action := range plan.Actions {
@@ -288,25 +314,25 @@ func (i Installer) Apply(ctx context.Context, plan Plan) error {
 		}
 		out, exit, err := i.Probe.Run(ctx, action.Command.Name, action.Command.Args...)
 		if err != nil {
-			return fmt.Errorf("%s: %w", action.Progress, err)
+			return Version{}, fmt.Errorf("%s: %w", action.Progress, err)
 		}
 		if exit != 0 {
-			return fmt.Errorf("%s: %s exited with status %d: %s", action.Progress, action.Command.Name, exit, strings.TrimSpace(string(out)))
+			return Version{}, fmt.Errorf("%s: %s exited with status %d: %s", action.Progress, action.Command.Name, exit, strings.TrimSpace(string(out)))
 		}
 	}
 	out, exit, err := i.Probe.Run(ctx, "podman", "--version")
 	if err != nil {
-		return fmt.Errorf("verify installed Podman: %w", err)
+		return Version{}, fmt.Errorf("verify installed Podman: %w", err)
 	}
 	if exit != 0 {
-		return fmt.Errorf("verify installed Podman: exited with status %d: %s", exit, strings.TrimSpace(string(out)))
+		return Version{}, fmt.Errorf("verify installed Podman: exited with status %d: %s", exit, strings.TrimSpace(string(out)))
 	}
 	major, minor, err := ParsePodmanVersion(string(out))
 	if err != nil {
-		return fmt.Errorf("verify installed Podman: %w", err)
+		return Version{}, fmt.Errorf("verify installed Podman: %w", err)
 	}
 	if !PodmanSupported(major, minor) {
-		return fmt.Errorf("installed Podman %d.%d is unsupported: version 4.7 or later is required", major, minor)
+		return Version{}, fmt.Errorf("installed Podman %d.%d is unsupported: version 4.7 or later is required", major, minor)
 	}
-	return nil
+	return Version{major, minor}, nil
 }

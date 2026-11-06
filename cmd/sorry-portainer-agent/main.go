@@ -32,8 +32,8 @@ func main() {
 		}
 		return
 	}
-	if len(os.Args) > 1 && os.Args[1] == "setup-hooks-conf" {
-		if err := runSetupHooksConf(os.Args[2:], os.Stdout); err != nil {
+	if len(os.Args) > 1 && os.Args[1] == "setup-containers-conf" {
+		if err := runSetupContainersConf(os.Args[2:], os.Stdout, podmanRunning); err != nil {
 			log.Fatal(err)
 		}
 		return

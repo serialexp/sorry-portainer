@@ -52,14 +52,14 @@ func TestRealPodmanStackSecrets(t *testing.T) {
 	// Setup's drop-in, in a throwaway config home Podman reads instead of ~/.config.
 	configHome := filepath.Join(work, "config")
 	hooksDir := filepath.Join(work, "oci-hooks")
-	dropIn, err := agentsetup.HooksDropIn(hooksDir)
+	dropIn, err := agentsetup.ContainersConf{HooksDir: hooksDir}.Render()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(configHome, "containers", "containers.conf.d"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(configHome, "containers", "containers.conf.d", agentsetup.HooksDropInName), []byte(dropIn), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(configHome, "containers", "containers.conf.d", agentsetup.ContainersConfName), []byte(dropIn), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("XDG_CONFIG_HOME", configHome)

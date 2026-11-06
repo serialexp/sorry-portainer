@@ -29,9 +29,25 @@ type setupEnvironment struct {
 	runSudo       func(context.Context, string, []string, io.Writer) error
 	probe         agentsetup.Probe
 	installFiles  func(string, string) error
-	// configureHooks writes the agent user's containers.conf hooks drop-in,
-	// running as that user.
-	configureHooks func(ctx context.Context, user, hooksDir string) error
+	// configureContainers writes the agent user's containers.conf drop-in,
+	// running the installed agent as that user.
+	configureContainers func(ctx context.Context, user string, conf agentsetup.ContainersConf) error
+	// containersConfCurrent reports, for a dry run as root, whether the
+	// user's drop-in already matches; it runs executable as that user.
+	containersConfCurrent func(ctx context.Context, executable, user string, conf agentsetup.ContainersConf) (bool, error)
+	// lookupHome is the user's home directory, from the account database.
+	lookupHome func(user string) (string, error)
+}
+
+func lookupHome(user string) (string, error) {
+	account, err := osuser.Lookup(user)
+	if err != nil {
+		return "", err
+	}
+	if !filepath.IsAbs(account.HomeDir) {
+		return "", fmt.Errorf("%s's home directory %q is not absolute", user, account.HomeDir)
+	}
+	return account.HomeDir, nil
 }
 
 func defaultSetupEnvironment() setupEnvironment {
@@ -47,56 +63,166 @@ func defaultSetupEnvironment() setupEnvironment {
 			command.Stderr = os.Stderr
 			return command.Run()
 		},
-		installFiles:   installAgentService,
-		configureHooks: configureHooksAsUser,
+		installFiles:          installAgentService,
+		configureContainers:   configureContainersAsUser,
+		containersConfCurrent: containersConfCurrentAsUser,
+		lookupHome:            lookupHome,
 	}
 }
 
-// configureHooksAsUser runs the installed agent as the service user to write
-// its containers.conf drop-in. Doing the write as the user means files the
-// user controls cannot redirect a root write elsewhere.
-func configureHooksAsUser(ctx context.Context, user, hooksDir string) error {
-	command := exec.CommandContext(ctx, "runuser", "-u", user, "--", systemAgentBinary, "setup-hooks-conf", "--oci-hooks-dir", hooksDir)
+// containersConfArgs are the setup-containers-conf flags for conf.
+func containersConfArgs(conf agentsetup.ContainersConf) []string {
+	args := []string{"--oci-hooks-dir", conf.HooksDir}
+	if conf.Forwarder != "" {
+		args = append(args, "--port-forwarder", conf.Forwarder)
+	}
+	if conf.HostLoopback != "" {
+		args = append(args, "--map-host-loopback", conf.HostLoopback)
+	}
+	return args
+}
+
+// asUser runs executable's setup-containers-conf as user. Running as the
+// user means files the user controls cannot redirect a root write
+// elsewhere. runuser sets no runtime directory or session bus, and the
+// subcommand asks the user's Podman whether containers run, so both are
+// passed explicitly.
+func asUser(ctx context.Context, executable, user string, args []string) ([]byte, error) {
+	account, err := osuser.Lookup(user)
+	if err != nil {
+		return nil, fmt.Errorf("look up agent user: %w", err)
+	}
+	command := exec.CommandContext(ctx, "runuser", append([]string{"-u", user, "--", executable, "setup-containers-conf"}, args...)...)
 	command.Dir = "/"
-	if output, err := command.CombinedOutput(); err != nil {
-		return fmt.Errorf("configure Podman OCI hooks for %s: %w: %s", user, err, strings.TrimSpace(string(output)))
+	runtime := "/run/user/" + account.Uid
+	command.Env = []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "XDG_RUNTIME_DIR=" + runtime, "DBUS_SESSION_BUS_ADDRESS=unix:path=" + runtime + "/bus"}
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return output, fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return output, nil
+}
+
+// configureContainersAsUser has the installed agent write the user's
+// drop-in.
+func configureContainersAsUser(ctx context.Context, user string, conf agentsetup.ContainersConf) error {
+	if _, err := asUser(ctx, systemAgentBinary, user, containersConfArgs(conf)); err != nil {
+		return fmt.Errorf("configure Podman for %s: %w", user, err)
 	}
 	return nil
 }
 
-// runSetupHooksConf is the unprivileged half of setup: it writes the drop-in
-// into the current user's home.
-func runSetupHooksConf(args []string, stdout io.Writer) error {
-	flags := flag.NewFlagSet("setup-hooks-conf", flag.ContinueOnError)
+func containersConfCurrentAsUser(ctx context.Context, executable, user string, conf agentsetup.ContainersConf) (bool, error) {
+	output, err := asUser(ctx, executable, user, append(containersConfArgs(conf), "--check"))
+	if err != nil {
+		return false, fmt.Errorf("check %s's Podman configuration: %w", user, err)
+	}
+	switch strings.TrimSpace(string(output)) {
+	case "current":
+		return true, nil
+	case "stale":
+		return false, nil
+	}
+	return false, fmt.Errorf("check %s's Podman configuration: unexpected output %q", user, output)
+}
+
+// podmanRunning reports whether any of the current user's containers run.
+func podmanRunning() (bool, error) {
+	output, err := exec.Command("podman", "ps", "--quiet").Output()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return false, fmt.Errorf("podman ps: %w: %s", err, strings.TrimSpace(string(exitErr.Stderr)))
+		}
+		return false, fmt.Errorf("podman ps: %w", err)
+	}
+	return strings.TrimSpace(string(output)) != "", nil
+}
+
+// runSetupContainersConf is the unprivileged half of setup: it writes the
+// drop-in into the current user's home, or with --check reports whether
+// it is "current" or "stale". running is asked before the port forwarder
+// changes.
+func runSetupContainersConf(args []string, stdout io.Writer, running func() (bool, error)) error {
+	current, err := osuser.Current()
+	if err != nil {
+		return err
+	}
+	return setupContainersConfIn(current.HomeDir, args, stdout, running)
+}
+
+func setupContainersConfIn(home string, args []string, stdout io.Writer, running func() (bool, error)) error {
+	flags := flag.NewFlagSet("setup-containers-conf", flag.ContinueOnError)
 	hooksDir := flags.String("oci-hooks-dir", "", "directory the agent writes its OCI hook JSON to")
+	forwarder := flags.String("port-forwarder", agentsetup.ForwarderRootlessport, "rootless port forwarder: rootlessport or pasta (Podman 6)")
+	hostLoopback := flags.String("map-host-loopback", "", "address at which containers reach the host's 127.0.0.1")
 	printOnly := flags.Bool("print", false, "print the drop-in instead of installing it (for CONTAINERS_CONF_OVERRIDE in development)")
+	check := flags.Bool("check", false, `print "current" or "stale" instead of installing the drop-in`)
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if flags.NArg() > 0 {
 		return fmt.Errorf("unexpected arguments: %v", flags.Args())
 	}
-	current, err := osuser.Current()
-	if err != nil {
-		return err
+	if *printOnly && *check {
+		return errors.New("--print and --check exclude each other")
 	}
 	if *hooksDir == "" {
-		*hooksDir = agentsetup.DefaultOCIHooksDir(current.HomeDir)
+		*hooksDir = agentsetup.DefaultOCIHooksDir(home)
 	}
+	conf := agentsetup.ContainersConf{HooksDir: *hooksDir, Forwarder: *forwarder, HostLoopback: *hostLoopback}
 	if *printOnly {
-		content, err := agentsetup.HooksDropIn(*hooksDir)
+		content, err := conf.Render()
 		if err != nil {
 			return err
 		}
 		_, err = io.WriteString(stdout, content)
 		return err
 	}
-	path, err := agentsetup.WriteHooksDropIn(current.HomeDir, *hooksDir)
+	if *check {
+		matches, err := agentsetup.ContainersConfCurrent(home, conf)
+		if err != nil {
+			return err
+		}
+		if matches {
+			fmt.Fprintln(stdout, "current")
+		} else {
+			fmt.Fprintln(stdout, "stale")
+		}
+		return nil
+	}
+	path, err := agentsetup.WriteContainersConf(home, conf, running)
 	if err != nil {
 		return err
 	}
 	fmt.Fprintf(stdout, "wrote %s\n", path)
 	return nil
+}
+
+// containersConfFor is the drop-in for a Podman version: pasta forwards
+// ports on Podman 6, which keeps clients' addresses, and a host loopback
+// address needs Podman 5's pasta networking.
+func containersConfFor(version agentsetup.Version, hooksDir, hostLoopback string) (agentsetup.ContainersConf, error) {
+	conf := agentsetup.ContainersConf{HooksDir: hooksDir, Forwarder: agentsetup.ForwarderRootlessport, HostLoopback: hostLoopback}
+	if version.Major >= agentsetup.MinPastaForwarderMajor {
+		conf.Forwarder = agentsetup.ForwarderPasta
+	}
+	if hostLoopback != "" && version.Major < agentsetup.MinHostLoopbackMajor {
+		return agentsetup.ContainersConf{}, fmt.Errorf("--map-host-loopback needs Podman %d or later; this host has %s", agentsetup.MinHostLoopbackMajor, version)
+	}
+	return conf, nil
+}
+
+// describeContainersConf is setup's progress line for conf.
+func describeContainersConf(user string, conf agentsetup.ContainersConf) string {
+	parts := []string{"OCI hooks for stack secrets (" + conf.HooksDir + ")"}
+	if conf.Forwarder == agentsetup.ForwarderPasta {
+		parts = append(parts, "pasta port forwarding")
+	}
+	if conf.HostLoopback != "" {
+		parts = append(parts, "host loopback at "+conf.HostLoopback)
+	}
+	return fmt.Sprintf("Configuring Podman for %s: %s", user, strings.Join(parts, ", "))
 }
 
 // runSetup performs setup by default. The private --elevated flag marks the
@@ -111,15 +237,22 @@ func runSetupWithEnvironment(ctx context.Context, args []string, stdout io.Write
 	user := flags.String("user", agentsetup.DefaultUser, "dedicated rootless service user")
 	dryRun := flags.Bool("dry-run", false, "show the required setup steps without applying them")
 	elevated := flags.Bool("elevated", false, "internal: setup is running with elevated privileges")
-	hooksDir := flags.String("oci-hooks-dir", "", "OCI hook directory for stack secrets (default /home/USER/.local/share/sorry-portainer/oci-hooks; must match the agent's oci_hooks_dir)")
+	hooksDir := flags.String("oci-hooks-dir", "", "OCI hook directory for stack secrets (default ~USER/.local/share/sorry-portainer/oci-hooks; must match the agent's oci_hooks_dir)")
+	hostLoopback := flags.String("map-host-loopback", "", "address at which the agent user's containers reach the host's 127.0.0.1 (Podman 5 or later); every one of them can then reach the host's loopback services")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if *hooksDir == "" {
-		*hooksDir = agentsetup.DefaultOCIHooksDir(filepath.Join("/home", *user))
+	if *hostLoopback != "" {
+		canonical, err := agentsetup.ParseHostLoopback(*hostLoopback)
+		if err != nil {
+			return err
+		}
+		*hostLoopback = canonical
 	}
-	if _, err := agentsetup.HooksDropIn(*hooksDir); err != nil {
-		return err
+	if *hooksDir != "" {
+		if err := (agentsetup.ContainersConf{HooksDir: *hooksDir}).Validate(); err != nil {
+			return err
+		}
 	}
 	if flags.NArg() != 0 {
 		return fmt.Errorf("setup: unexpected arguments: %s", strings.Join(flags.Args(), " "))
@@ -144,7 +277,13 @@ func runSetupWithEnvironment(ctx context.Context, args []string, stdout io.Write
 			return fmt.Errorf("locate current executable: %w", err)
 		}
 		fmt.Fprintln(stdout, "Setup requires sudo; automatically relaunching with sudo.")
-		forwarded := []string{"--user", *user, "--oci-hooks-dir", *hooksDir}
+		forwarded := []string{"--user", *user}
+		if *hooksDir != "" {
+			forwarded = append(forwarded, "--oci-hooks-dir", *hooksDir)
+		}
+		if *hostLoopback != "" {
+			forwarded = append(forwarded, "--map-host-loopback", *hostLoopback)
+		}
 		return environment.runSudo(ctx, executable, forwarded, stdout)
 	}
 
@@ -156,21 +295,27 @@ func runSetupWithEnvironment(ctx context.Context, args []string, stdout io.Write
 	if err != nil {
 		return err
 	}
+	// The hooks directory defaults to one under the user's home, which
+	// useradd puts in /home for a user setup creates.
+	resolveHooksDir := func() (string, error) {
+		if *hooksDir != "" {
+			return *hooksDir, nil
+		}
+		if *dryRun && !state.UserExists {
+			return agentsetup.DefaultOCIHooksDir(filepath.Join("/home", *user)), nil
+		}
+		home, err := environment.lookupHome(*user)
+		if err != nil {
+			return "", fmt.Errorf("look up agent user: %w", err)
+		}
+		return agentsetup.DefaultOCIHooksDir(home), nil
+	}
 	if *dryRun {
-		if len(plan.Actions) == 0 {
-			fmt.Fprintln(stdout, "No package or rootless Podman changes are required.")
-			return nil
+		dir, err := resolveHooksDir()
+		if err != nil {
+			return err
 		}
-		lastProgress := ""
-		for _, action := range plan.Actions {
-			if action.Progress != lastProgress {
-				fmt.Fprintln(stdout, action.Progress)
-				lastProgress = action.Progress
-			}
-		}
-		fmt.Fprintln(stdout, "Installing system service for spa")
-		fmt.Fprintf(stdout, "Configuring Podman OCI hooks for stack secrets (%s)\n", *hooksDir)
-		return nil
+		return reportDryRun(ctx, stdout, environment, state, plan, dir, *hostLoopback)
 	}
 
 	installer := agentsetup.Installer{
@@ -180,7 +325,16 @@ func runSetupWithEnvironment(ctx context.Context, args []string, stdout io.Write
 			fmt.Fprintln(stdout, message)
 		},
 	}
-	if err := installer.Apply(ctx, plan); err != nil {
+	version, err := installer.Apply(ctx, plan)
+	if err != nil {
+		return err
+	}
+	dir, err := resolveHooksDir()
+	if err != nil {
+		return err
+	}
+	conf, err := containersConfFor(version, dir, *hostLoopback)
+	if err != nil {
 		return err
 	}
 	executable, err := environment.executable()
@@ -191,15 +345,66 @@ func runSetupWithEnvironment(ctx context.Context, args []string, stdout io.Write
 	if err := environment.installFiles(executable, *user); err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "Configuring Podman OCI hooks for stack secrets (%s)\n", *hooksDir)
-	if err := environment.configureHooks(ctx, *user, *hooksDir); err != nil {
+	fmt.Fprintln(stdout, describeContainersConf(*user, conf))
+	if err := environment.configureContainers(ctx, *user, conf); err != nil {
 		return err
+	}
+	if conf.Forwarder != agentsetup.ForwarderPasta {
+		fmt.Fprintf(stdout, "Note: Podman %s forwards published ports through rootlessport, so containers see an internal source address instead of the client's; Podman %d keeps it.\n", version, agentsetup.MinPastaForwarderMajor)
 	}
 	fmt.Fprintln(stdout, "Done!")
 	fmt.Fprintln(stdout)
 	fmt.Fprint(stdout, enrollInstructions(*user))
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Happy using!")
+	return nil
+}
+
+// noChanges is the dry run's report for a host setup would leave alone.
+// The rsansible role looks for it.
+const noChanges = "No package or rootless Podman changes are required."
+
+// reportDryRun prints what setup would do. Only root can see the agent
+// user's drop-in, and only when no package changes first, so otherwise the
+// configuration step is assumed.
+func reportDryRun(ctx context.Context, stdout io.Writer, environment setupEnvironment, state agentsetup.State, plan agentsetup.Plan, hooksDir, hostLoopback string) error {
+	configure := true
+	var conf agentsetup.ContainersConf
+	if len(plan.Actions) == 0 {
+		var err error
+		conf, err = containersConfFor(agentsetup.Version{Major: state.PodmanMajor, Minor: state.PodmanMinor}, hooksDir, hostLoopback)
+		if err != nil {
+			return err
+		}
+		if environment.euid() == 0 {
+			executable, err := environment.executable()
+			if err != nil {
+				return fmt.Errorf("locate current executable: %w", err)
+			}
+			current, err := environment.containersConfCurrent(ctx, executable, plan.User, conf)
+			if err != nil {
+				return err
+			}
+			configure = !current
+		}
+		if !configure {
+			fmt.Fprintln(stdout, noChanges)
+			return nil
+		}
+	}
+	lastProgress := ""
+	for _, action := range plan.Actions {
+		if action.Progress != lastProgress {
+			fmt.Fprintln(stdout, action.Progress)
+			lastProgress = action.Progress
+		}
+	}
+	fmt.Fprintln(stdout, "Installing system service for spa")
+	if len(plan.Actions) == 0 {
+		fmt.Fprintln(stdout, describeContainersConf(plan.User, conf))
+	} else {
+		fmt.Fprintf(stdout, "Configuring Podman for %s (OCI hooks for stack secrets (%s), and the settings the installed Podman supports)\n", plan.User, hooksDir)
+	}
 	return nil
 }
 
@@ -238,7 +443,10 @@ func installAgentService(sourceBinary, user string) error {
 	if err := prepareAgentDir(systemAgentDir, uid, gid); err != nil {
 		return fmt.Errorf("prepare %s: %w", systemAgentDir, err)
 	}
-	unit := agentUnit(user, uid, filepath.Join("/home", user), systemAgentBinary, systemAgentDir)
+	if !filepath.IsAbs(account.HomeDir) {
+		return fmt.Errorf("agent user %s's home directory %q is not absolute", user, account.HomeDir)
+	}
+	unit := agentUnit(user, uid, account.HomeDir, systemAgentBinary, systemAgentDir)
 	if err := writeAtomic(systemAgentUnit, []byte(unit), 0644); err != nil {
 		return fmt.Errorf("install agent systemd service: %w", err)
 	}
