@@ -33,3 +33,4 @@
   - Any 503 sets the enrollment page to "unavailable", which hides Refresh, so a transient 503 leaves no retry.
   - Reported but not verified: repeated immediate renewals once the CA has under 30 days left; a 128-character host ID gets a 129-character default prefix.
   - Deployment note: the default web listen address `:8080` binds every interface.
+- [ ] Agent: `stacks.inspect` for a missing stack answers `open /var/lib/sorry-portainer-agent/stacks/NAME/compose.yaml: no such file or directory`. Answer "stack NAME does not exist" instead, without the agent's paths (seen through the CLI, 2026-11-07; the dashboard shows the same).

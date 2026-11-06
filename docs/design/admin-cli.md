@@ -1,6 +1,6 @@
 # Remote CLI over SSH — Design
 
-Status: partial — phase 1 implemented, not released; phase 2 outstanding
+Status: partial — phases 1 and 2 released in v0.2.4 and deployed; the jp1 import is outstanding
 Owner: Bart
 Last updated: 2026-11-07
 
@@ -37,12 +37,17 @@ Tick items as they land and move them to Done.
   `/usr/local/bin/sorry-portainer` from `sorry_portainer_cli_binary_url` and
   `sorry_portainer_cli_binary_sha256`.
 
+- [x] **Phase 2 — release and pin.** v0.2.4 released and pinned in
+  `deploy/rsansible/vars/release.yml`, deployed on 2026-11-07 (a second run
+  changes nothing). From the workstation, `--master ssh://root@jp1…`
+  `hosts list` and `stacks list` for both hosts work, a missing stack exits
+  1 and a usage error 2; `sorry-portainer hosts list` works on jp1 itself.
+  Not yet exercised for real: create, update, up, down and restart (there is
+  no stack deletion yet, so a test stack would stay behind); the jp1 import
+  will exercise them.
+
 ### Outstanding
 
-- [ ] **Phase 2 — release and pin.** Release v0.2.4 (ask Bart), pin the
-  CLI's asset URL and SHA-256 in `deploy/rsansible/vars/release.yml` (the
-  server role fails until they are there), run the server role on jp1, and
-  try a remote `hosts list`.
 - [ ] **Phase 2 — jp1 import.** The phase 3 migration in `caddy-podman.md`
   creates its stacks with the CLI on jp1, against the local socket, so the
   environment values never leave jp1.

@@ -21,10 +21,7 @@
   - a relay fix: failed Compose runs keep their output.
 
   `go test -race -count=1 ./...` and `go vet` pass.
-- **Admin CLI phase 2, in progress (Wheat change "Release and install the sorry-portainer CLI"):** the release workflow builds `sorry-portainer`, and the server role installs it to `/usr/local/bin/sorry-portainer` from `sorry_portainer_cli_binary_url`/`_sha256`. Those two variables are **not yet in `vars/release.yml`**: they come from the next release (v0.2.4, which needs Bart's go-ahead), so the server role fails until they are added. After the release:
-  - pin all three binaries' asset URLs and SHA-256 (from the release's SHA256SUMS) by hand, as for v0.2.3;
-  - run the server role on jp1;
-  - try `sorry-portainer --master ssh://root@jp1… hosts list` from here.
+- **Admin CLI phase 2 done (2026-11-07):** v0.2.4 released (run 7) and pinned in `vars/release.yml`; deployed to jp1 and hel1, and a second run changes nothing. `/usr/local/bin/sorry-portainer` is on jp1. Working from here: `sorry-portainer --master ssh://root@jp1.serial-experiments.com hosts list`, and `stacks list` for both hosts. Create, up, down and restart haven't been run for real yet, since stacks can't be deleted and a test stack would stay behind.
 - Next: phase 3 prep:
   - a converter on jp1 (env extraction without printing, fully qualified images, no `container_name`);
   - the Caddy stack;
