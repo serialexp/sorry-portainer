@@ -10,10 +10,11 @@
     fail_msg: "agent hosts run Ubuntu, a release named in sorry_portainer_ubuntu_versions"
   tags: [sorry-portainer, podman]
 
-- name: Pick this release's Podman packages
+# The release's version stays a lookup: set_fact would turn "26.04" into
+# a number, which no longer names the packages.
+- name: Pick this release's Podman package directory
   set_fact:
     sorry_portainer_podman_dir: "/var/cache/podman-ubuntu/{{ podman_ubuntu_release }}"
-    sorry_portainer_podman_ubuntu: "{{ sorry_portainer_ubuntu_versions[ansible_distribution_release] }}"
   tags: [sorry-portainer, podman]
 
 - name: Create the Podman package directory
@@ -33,13 +34,13 @@
     owner: root
     group: root
     mode: "0644"
-  loop: "{{ podman_ubuntu_packages[sorry_portainer_podman_ubuntu] }}"
+  loop: "{{ podman_ubuntu_packages[sorry_portainer_ubuntu_versions[ansible_distribution_release]] }}"
   tags: [sorry-portainer, podman]
 
 # dpkg-query lists by package name, as the pins are sorted.
 - name: Check the installed Podman packages
   command:
-    cmd: "dpkg-query --show '--showformat=${db:Status-Abbrev}${Package}=${Version}\\n' {{ podman_ubuntu_packages[sorry_portainer_podman_ubuntu] | map(attribute='name') | join(' ') }}"
+    cmd: "dpkg-query --show '--showformat=${db:Status-Abbrev}${Package}=${Version}\\n' {{ podman_ubuntu_packages[sorry_portainer_ubuntu_versions[ansible_distribution_release]] | map(attribute='name') | join(' ') }}"
   register: sorry_portainer_podman_installed
   changed_when: false
   failed_when: false
@@ -48,13 +49,13 @@
 
 - name: Expect the pinned versions
   set_fact:
-    sorry_portainer_podman_wanted: "{% for p in podman_ubuntu_packages[sorry_portainer_podman_ubuntu] | sort(attribute='name') %}ii {{ p.name }}={{ p.version }}\n{% endfor %}"
+    sorry_portainer_podman_wanted: "{% for p in podman_ubuntu_packages[sorry_portainer_ubuntu_versions[ansible_distribution_release]] | sort(attribute='name') %}ii {{ p.name }}={{ p.version }}\n{% endfor %}"
   tags: [sorry-portainer, podman]
 
 # Conffiles the host changed are kept; ours change nothing Ubuntu's ship.
 - name: Install the Podman packages
   command:
-    cmd: "apt-get install --yes --option Dpkg::Options::=--force-confdef --option Dpkg::Options::=--force-confold {% for p in podman_ubuntu_packages[sorry_portainer_podman_ubuntu] %} {{ sorry_portainer_podman_dir }}/{{ p.file }}{% endfor %}"
+    cmd: "apt-get install --yes --option Dpkg::Options::=--force-confdef --option Dpkg::Options::=--force-confold {% for p in podman_ubuntu_packages[sorry_portainer_ubuntu_versions[ansible_distribution_release]] %} {{ sorry_portainer_podman_dir }}/{{ p.file }}{% endfor %}"
   environment:
     DEBIAN_FRONTEND: noninteractive
   when: sorry_portainer_podman_installed.stdout | trim != sorry_portainer_podman_wanted | trim

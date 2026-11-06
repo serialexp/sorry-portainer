@@ -93,27 +93,28 @@
       command:
         argv: [groupmod, --new-name, sorry-portainer-agent, sorry-portainer]
 
-    # usermod renames neither.
+    # usermod renames neither. rsansible's backrefs are Rust regex's
+    # ${1}, not Ansible's \1.
     - name: Rename the subordinate uid range
       lineinfile:
         path: /etc/subuid
         regexp: '^sorry-portainer:(.*)$'
-        line: 'sorry-portainer-agent:\1'
+        line: 'sorry-portainer-agent:${1}'
         backrefs: true
 
     - name: Rename the subordinate gid range
       lineinfile:
         path: /etc/subgid
         regexp: '^sorry-portainer:(.*)$'
-        line: 'sorry-portainer-agent:\1'
+        line: 'sorry-portainer-agent:${1}'
         backrefs: true
 
     - name: Check the renamed account
       shell: |
         set -eu
         getent passwd sorry-portainer-agent | grep -q ':/home/sorry-portainer-agent:'
-        grep -q '^sorry-portainer-agent:' /etc/subuid
-        grep -q '^sorry-portainer-agent:' /etc/subgid
+        grep -qE '^sorry-portainer-agent:[0-9]+:[0-9]+$' /etc/subuid
+        grep -qE '^sorry-portainer-agent:[0-9]+:[0-9]+$' /etc/subgid
         ! grep -q '^sorry-portainer:' /etc/subuid /etc/subgid
         test ! -e /home/sorry-portainer
       changed_when: false

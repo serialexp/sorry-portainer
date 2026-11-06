@@ -1,6 +1,6 @@
 # Caddy on Podman (jp1 cutover) — Design
 
-Status: partial — decisions made, Podman 6 packages released and tried on jp1, phase 1 in code; host migration and phases 2–4 outstanding
+Status: partial — decisions made, Podman 6 packages released and tried on jp1, phase 1 done (v0.2.3); phases 2–4 outstanding
 Owner: Bart
 Last updated: 2026-11-06
 
@@ -26,12 +26,12 @@ they land and move them to Done.
 - [x] **Agent setup installs a complete Podman.** 2026-11-06: apt satisfies `crun | runc` with Docker's `runc` (`containerd.io`) on 24.04, and 24.04's podman doesn't recommend netavark, so it falls back to CNI. `setup` now installs whichever of podman, podman-compose, crun, netavark, aardvark-dns and passt is missing. With our packages all but podman-compose are already there.
 - [x] **Hosts install the pinned packages.** 2026-11-06: the agent role installs the `v6.1.4-2` packages from `vars/podman.yml` (`scripts/pins.sh` in podman-ubuntu, which now pins each version) when dpkg reports other versions.
 - [x] **Phase 1 — account rename, in code.** 2026-11-06: `setup` defaults to `sorry-portainer-agent`, and takes the user's home from passwd instead of assuming `/home/USER`. The server role renames a `sorry-portainer` whose home is the state directory to `sorry-portainer-master`. The agent role renames a `sorry-portainer` in `/home/sorry-portainer` to `sorry-portainer-agent`. It refuses unless that user's Podman holds nothing, resets the storage, stops its user manager, moves the home, and renames the group and the subordinate ranges, which `usermod -l` leaves alone. Bart chose (2026-11-06) to move hel1's home over keeping it.
+- [x] **Phase 1 — hosts migrated.** 2026-11-06, release v0.2.3 through the roles: jp1's master runs as `sorry-portainer-master`. hel1's agent runs as `sorry-portainer-agent` in `/home/sorry-portainer-agent` on Podman 6.1.4 with pasta forwarding, and is online. A second run changes nothing. Two role bugs were found and fixed on the way. rsansible's `set_fact` turned `"26.04"` into a number. Its lineinfile wants `${1}`, not `\1`, so hel1's subuid/subgid ranges were briefly a literal `\1`; they were restored by hand to `100000:65536` (backups in `/etc/sub[ug]id.sp-backup`).
 - [x] **Experiment — Podman 6 on jp1.** 2026-11-06, `v6.1.4-1` plus the two fixes applied by hand; [results](#podman-6-on-jp1-2026-11-06). Client addresses, caddy-docker-proxy and host loopback (`--map-host-loopback`) all work.
 
 ### Outstanding
 
 - [ ] **Experiment — reboot.** Question 5 (lingering brings Caddy and the stacks back after a reboot) needs a jp1 reboot; do it in the switch window.
-- [ ] **Phase 1 — migrate the hosts.** Release with the changes above, pin it in `vars/release.yml`, then run the roles: jp1's server account becomes `sorry-portainer-master`, hel1's agent account `sorry-portainer-agent` (home moved, storage reset) and hel1 moves to Podman 6.
 - [ ] **Gothab apt repository.** Replace the pinned `.deb` downloads with a sources entry once Gothab has apt repositories (REQ-55 in serialexp/gothab).
 - [ ] **CLAUDE.md native-packages rule.** The project rule still says agents use Ubuntu's native packages; it should name the podman-ubuntu packages. Waiting on Bart.
 - [ ] **Phase 2 — agent on jp1.** `setup`, enrollment, through the rsansible role, with `sorry_portainer_agent_host_loopback: 169.254.1.3` in jp1's inventory.
