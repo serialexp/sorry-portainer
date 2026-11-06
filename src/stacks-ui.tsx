@@ -3,6 +3,7 @@ import { createEffect, createSignal, For, Show } from "solid-js";
 import { filteredStacks, fleet, loadStacks, searchTerm, sessionEnded } from "./fleet-store";
 import { editStackPath, hostPath, newStackPath, parseHostPath } from "./host-route";
 import { StackSecretsPanel } from "./secrets-ui";
+import { type StackRunState, type StackService, stackRunState } from "./stack-state";
 import { setReferencedSecrets } from "./secrets-store";
 import {
   createStack,
@@ -17,6 +18,54 @@ import {
   type Stack,
   type StackOperation,
 } from "./stack-api";
+
+/** The chip style for a stack's run state; partial and invalid need attention. */
+function runChipClass(tone: StackRunState["tone"]): string {
+  switch (tone) {
+    case "running":
+      return "state";
+    case "partial":
+    case "invalid":
+      return "warn-chip";
+    default:
+      return "state stopped";
+  }
+}
+
+/** One service row of a stack card: its container, image and state. */
+function ServiceRow(props: { service: StackService }) {
+  const label = () => {
+    switch (props.service.state) {
+      case "running":
+        return "Running";
+      case "absent":
+        return "Not created";
+      case "unknown":
+        return "Unknown";
+      default:
+        return props.service.state;
+    }
+  };
+  return (
+    <div class="stack-service-row" role="row">
+      <span class="stack-service-name" role="cell">
+        {props.service.service}
+      </span>
+      <span class="cell-muted" role="cell">
+        {props.service.container || "—"}
+      </span>
+      <span class="chip-code" role="cell">
+        {props.service.image || "—"}
+      </span>
+      <span role="cell">
+        <span class={props.service.state === "running" ? "state" : "state stopped"}>{label()}</span>
+        <Show when={props.service.status}>
+          <small class="stack-service-status">{props.service.status}</small>
+        </Show>
+      </span>
+    </div>
+  );
+}
 
 /** The selected host's stacks. */
 export function StackList() {
@@ -85,50 +134,75 @@ export function StackList() {
           >
             <div class="stack-list">
               <For each={filteredStacks()}>
-                {(stack) => (
-                  <article class="stack-card" aria-label={`Stack ${stack.name}`}>
-                    <div class="stack-card-head">
-                      <span class="stack-card-icon" aria-hidden="true">
-                        <svg
-                          width="22"
-                          height="22"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-width="1.8"
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                        >
-                          <rect x="4" y="10" width="16" height="10" rx="2" />
-                          <path d="M6 6.5h12M8.5 3h7" />
-                        </svg>
-                      </span>
-                      <div class="stack-card-title">
-                        <h3>{stack.name}</h3>
-                        <span class="stack-card-meta">
-                          compose · {stack.project} · v{stack.version || 1}
+                {(stack) => {
+                  const runState = stackRunState(stack);
+                  return (
+                    <article class="stack-card" aria-label={`Stack ${stack.name}`}>
+                      <div class="stack-card-head">
+                        <span class="stack-card-icon" aria-hidden="true">
+                          <svg
+                            width="22"
+                            height="22"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.8"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                          >
+                            <rect x="4" y="10" width="16" height="10" rx="2" />
+                            <path d="M6 6.5h12M8.5 3h7" />
+                          </svg>
                         </span>
-                      </div>
-                      <span class="stack-card-reboot">{rebootLabel(stack)}</span>
-                      <div class="stack-card-actions">
-                        <A class="add-button" href={editStackPath(fleet.selectedHost, stack.name)}>
-                          Edit
-                        </A>
-                        <button class="start" type="button" disabled={!!busy()} onClick={() => run(stack.name, "up")}>
-                          {busyLabel(stack.name, "up", "Start stack", "Starting…")}
-                        </button>
-                        <button class="stop" type="button" disabled={!!busy()} onClick={() => run(stack.name, "down")}>
-                          {busyLabel(stack.name, "down", "Stop stack", "Stopping…")}
-                        </button>
-                      </div>
-                    </div>
-                    <Show when={stack.waiting}>
-                      <p class="stack-card-waiting" role="status">
-                        {stack.waiting}
-                      </p>
-                    </Show>
-                  </article>
-                )}
+                        <div class="stack-card-title">
+                          <h3>{stack.name}</h3>
+                          <span class="stack-card-meta">
+                            compose · {stack.project} · v{stack.version || 1}
+                          </span>
+                        </div>{" "}
+                        <span class={runChipClass(runState.tone)}>{runState.label}</span>
+                        <span class="stack-card-reboot">{rebootLabel(stack)}</span>
+                        <div class="stack-card-actions">
+                          <A class="add-button" href={editStackPath(fleet.selectedHost, stack.name)}>
+                            Edit
+                          </A>
+                          <button class="start" type="button" disabled={!!busy()} onClick={() => run(stack.name, "up")}>
+                            {busyLabel(stack.name, "up", "Start stack", "Starting…")}
+                          </button>
+                          <button
+                            class="stop"
+                            type="button"
+                            disabled={!!busy()}
+                            onClick={() => run(stack.name, "down")}
+                          >
+                            {busyLabel(stack.name, "down", "Stop stack", "Stopping…")}
+                          </button>
+                        </div>
+                      </div>{" "}
+                      <Show when={stack.services?.length}>
+                        <div class="stack-services" role="table" aria-label={`Services of ${stack.name}`}>
+                          <div class="stack-service-row stack-service-head" role="row">
+                            <span role="columnheader">Service</span>
+                            <span role="columnheader">Container</span>
+                            <span role="columnheader">Image</span>
+                            <span role="columnheader">State</span>
+                          </div>
+                          <For each={stack.services}>{(svc) => <ServiceRow service={svc} />}</For>
+                        </div>
+                      </Show>
+                      <Show when={runState.tone === "invalid"}>
+                        <p class="stack-card-waiting" role="status">
+                          The Compose file does not parse. Open Edit to fix it; the stack cannot start until it does.
+                        </p>
+                      </Show>
+                      <Show when={stack.waiting}>
+                        <p class="stack-card-waiting" role="status">
+                          {stack.waiting}
+                        </p>
+                      </Show>
+                    </article>
+                  );
+                }}
               </For>
             </div>
           </Show>
@@ -137,8 +211,9 @@ export function StackList() {
         <div class="resource-empty">Loading stacks…</div>
       </Show>
       <p class="stack-note">
-        This list does not show whether containers are running. Start runs Podman Compose on this host, and the agent
-        starts the stack again after the host reboots until you stop it.
+        {" "}
+        Start runs Podman Compose on this host, and the agent starts the stack again after the host reboots until you
+        stop it.
       </p>
     </section>
   );

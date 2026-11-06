@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/serialexp/sorry-portainer/internal/podman"
 	"github.com/serialexp/sorry-portainer/internal/protocol"
 )
 
@@ -45,6 +46,27 @@ func TestManagerListDoesNotReturnComposeContents(t *testing.T) {
 	stacks, err := m.List(context.Background())
 	if err != nil || len(stacks) != 1 || stacks[0].ComposeYAML != "" || stacks[0].Version != 1 {
 		t.Fatalf("list = %#v, %v", stacks, err)
+	}
+}
+
+// BenchmarkListStacksWithRuntime1000 lists 1000 stacks with runtime status:
+// one Podman listing per call, one Compose parse per stack.
+func BenchmarkListStacksWithRuntime1000(b *testing.B) {
+	m := New(b.TempDir(), "agent", &recordingExecutor{})
+	containers := map[string][]podman.ProjectContainer{}
+	for i := range 1000 {
+		name := fmt.Sprintf("stack-%04d", i)
+		if _, err := m.Save(context.Background(), name, "services: {web: {image: example}, db: {image: postgres}}", nil, nil); err != nil {
+			b.Fatal(err)
+		}
+		containers[m.project(name)] = []podman.ProjectContainer{{Name: name + "-web-1", Service: "web", State: "running"}}
+	}
+	m.EnableRuntimeStatus(&fakeLister{containers: containers})
+	b.ResetTimer()
+	for range b.N {
+		if _, err := m.List(context.Background()); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 

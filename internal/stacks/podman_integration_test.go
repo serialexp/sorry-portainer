@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/serialexp/sorry-portainer/internal/podman"
 )
 
 // Run with SORRY_PORTAINER_TEST_PODMAN=1 under a disposable rootless Podman
@@ -26,6 +28,11 @@ func TestRealPodmanComposeStack(t *testing.T) {
 	}
 	prefix := "sorry-podman-test-" + strings.ToLower(time.Now().Format("150405")) + "-"
 	manager := New(t.TempDir(), prefix, NewComposeExecutor("/usr/bin/podman-compose"))
+	client, err := podman.NewWithPrefix(prefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.EnableRuntimeStatus(client)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	if _, err := manager.Save(ctx, "smoke", "services:\n  sleeper:\n    image: "+image+"\n    command: [\"sleep\", \"120\"]\n", nil, nil); err != nil {
@@ -46,6 +53,15 @@ func TestRealPodmanComposeStack(t *testing.T) {
 	output, err := exec.CommandContext(ctx, "podman", "ps", "--filter", "label=io.podman.compose.project="+project, "--format", "{{.Names}}").CombinedOutput()
 	if err != nil || !strings.Contains(string(output), project+"_sleeper_1") {
 		t.Fatalf("project %s not running: %v: %s", project, err, output)
+	}
+	// The stack's services report the running container, as Podman sees it.
+	stacks, err := manager.List(ctx)
+	if err != nil || len(stacks) != 1 || len(stacks[0].Services) != 1 {
+		t.Fatalf("list = %#v, %v", stacks, err)
+	}
+	service := stacks[0].Services[0]
+	if service.Service != "sleeper" || service.State != "running" || service.Container == "" || !strings.Contains(service.Image, "busybox") || !strings.HasPrefix(service.Status, "Up") {
+		t.Fatalf("service = %#v", service)
 	}
 }
 

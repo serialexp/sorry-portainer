@@ -1,4 +1,5 @@
 import { UnauthorizedError } from "./fleet-api.ts";
+import type { StackService } from "./stack-state.ts";
 
 export type Stack = {
   name: string;
@@ -14,7 +15,11 @@ export type Stack = {
   waiting?: string;
   /** The active revision's environment (single-stack reads and saves only). */
   environment?: Record<string, string>;
+  /** Each declared service with its containers' state, in file order. */
+  services?: StackService[];
 };
+
+export type { StackService } from "./stack-state.ts";
 
 /**
  * Short text for what happens to a stack when its host reboots. A stack

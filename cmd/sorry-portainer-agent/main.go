@@ -95,6 +95,7 @@ func main() {
 	}
 	manager := stacks.New(cfg.StateDir+"/stacks", cfg.Prefix, stacks.NewComposeExecutor(cfg.ComposeProvider))
 	manager.EnableSecrets(stacks.SecretSupport{HostID: cfg.HostID, Vault: vault, Containers: client})
+	manager.EnableRuntimeStatus(client)
 	manager.Logf = log.Printf
 	manager.SetBootID(bootID)
 	// After a reboot, bring back the stacks that were up. Stacks with secrets

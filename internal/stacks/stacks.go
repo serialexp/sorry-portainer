@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/serialexp/sorry-portainer/internal/podman"
 	"github.com/serialexp/sorry-portainer/internal/protocol"
 )
 
@@ -135,6 +136,8 @@ type Manager struct {
 	// secrets is nil when the agent runs without secret support; stacks that
 	// use secrets then refuse to start.
 	secrets *SecretSupport
+	// runtime is nil unless EnableRuntimeStatus was called.
+	runtime ContainerLister
 	// bootID (see SetBootID) and waiting are guarded by mu. waiting holds why
 	// a stack that should be up has not come up since boot.
 	bootID  string
@@ -163,19 +166,25 @@ func (m *Manager) List(ctx context.Context) ([]protocol.Stack, error) {
 	if e != nil {
 		return nil, e
 	}
+	containers, known, e := m.containersByProject(ctx)
+	if e != nil {
+		return nil, e
+	}
 	out := make([]protocol.Stack, 0, len(names))
 	for _, n := range names {
 		l := m.lock(n)
 		l.Lock()
 		stack := protocol.Stack{Name: n, Project: m.project(n), Status: "saved"}
 		stack.Version, e = m.version(n)
+		var compose []byte
 		if e == nil {
-			_, e = os.Stat(filepath.Join(m.dir(n), "compose.yaml"))
+			compose, e = os.ReadFile(filepath.Join(m.dir(n), "compose.yaml"))
 		}
 		if e == nil {
 			if stateErr := m.describeState(&stack); stateErr != nil {
 				stack.Waiting = stateErr.Error()
 			}
+			stack.Status, stack.Services = m.describeServices(compose, containers[stack.Project], known)
 		}
 		l.Unlock()
 		if e == nil {
@@ -192,7 +201,27 @@ func (m *Manager) Inspect(ctx context.Context, n string) (protocol.Stack, error)
 	l := m.lock(n)
 	l.Lock()
 	defer l.Unlock()
-	return m.inspect(n)
+	stack, err := m.inspect(n)
+	if err != nil {
+		return protocol.Stack{}, err
+	}
+	containers, known, err := m.containersByProject(ctx)
+	if err != nil {
+		return protocol.Stack{}, err
+	}
+	stack.Status, stack.Services = m.describeServices([]byte(stack.ComposeYAML), containers[stack.Project], known)
+	return stack, nil
+}
+
+// describeServices lists a stack's services with their container states. A
+// Compose file that does not parse gives status "invalid" and no services, so
+// the list shows the problem instead of an empty stack.
+func (m *Manager) describeServices(compose []byte, containers []podman.ProjectContainer, known bool) (string, []protocol.StackService) {
+	declared, err := declaredServices(compose)
+	if err != nil {
+		return "invalid", nil
+	}
+	return "saved", serviceStates(declared, containers, known)
 }
 
 func (m *Manager) inspect(n string) (protocol.Stack, error) {

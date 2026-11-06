@@ -3,13 +3,12 @@
 - Found during relay hardening (2026-09-24), narrowed 2026-11-05 (listener timeouts and SIGTERM handling now exist):
   - Server shutdown gives in-flight web requests 10 seconds; a stack operation that runs longer is cut off when the process exits and the agent sessions close with it.
 
-- Expose actual Compose/Podman stack runtime status instead of the current `saved` metadata status. The stack list explicitly labels this limitation.
 - Verify `podman-compose` successful exit implies the intended workload was created and started; the installed provider has previously printed pull errors while returning exit code 0. Do not equate operation success with running containers until this check exists.
 
 - Found while making agents survive restarts and reboots (2026-09-25):
   - **Needs Bart's decision:** after a reboot, bringing a stack back also starts one-off services that had exited on purpose (Docker only restarts containers with a restart policy). Options in `docs/design/stack-secrets.md`.
   - `podman-compose up -d` on existing containers prints a "name already in use" error for each before it falls back to `podman start`; the stack output shown in the UI looks alarming although it worked.
-  - The stack list still cannot tell whether containers are running (see the runtime-status item above); "starts after reboot" is the desired state, not the live one.
+  - "starts after reboot" is the desired state, not the live one; the stack list shows the live container state separately.
 
 - Found while building stack secrets (2026-09-24):
   - podman-compose 1.0.6 `down` leaves `<project>_default` networks behind. Older test runs left several `sorry-podman-test-*` and `sorry-local-a-podman-smoke-*` networks on Bart's machine (not removed; not mine). The secrets live test removes its own.

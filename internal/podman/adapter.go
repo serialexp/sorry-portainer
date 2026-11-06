@@ -311,7 +311,12 @@ type ProjectContainer struct {
 	ID      string
 	Name    string
 	Service string
+	// Project is the compose project the container belongs to.
+	Project string
+	Image   string
 	State   string
+	// Status is Podman's human-readable status, for example "Up 2 hours".
+	Status string
 	// Pid is the container's main process on the host, 0 when not running.
 	Pid int
 }
@@ -319,14 +324,34 @@ type ProjectContainer struct {
 type projectContainerJSON struct {
 	ID     string            `json:"Id"`
 	Names  []string          `json:"Names"`
+	Image  string            `json:"Image"`
 	State  string            `json:"State"`
+	Status string            `json:"Status"`
 	Pid    int               `json:"Pid"`
 	Labels map[string]string `json:"Labels"`
 }
 
+const composeProjectLabel = "com.docker.compose.project"
+
 // ProjectContainers lists the containers podman-compose created for project.
 func (c *Client) ProjectContainers(ctx context.Context, project string) ([]ProjectContainer, error) {
-	data, err := c.run(ctx, "ps", "--all", "--format", "json", "--filter", "label=com.docker.compose.project="+project)
+	all, err := c.composeContainers(ctx, "label="+composeProjectLabel+"="+project)
+	if err != nil {
+		return nil, err
+	}
+	return all[project], nil
+}
+
+// ComposeContainers lists the containers of every compose project on this
+// agent, grouped by project, in one Podman call.
+func (c *Client) ComposeContainers(ctx context.Context) (map[string][]ProjectContainer, error) {
+	return c.composeContainers(ctx, "label="+composeProjectLabel)
+}
+
+// composeContainers runs one `podman ps` with filter and groups the containers
+// by compose project. Containers outside the agent's name prefix are skipped.
+func (c *Client) composeContainers(ctx context.Context, filter string) (map[string][]ProjectContainer, error) {
+	data, err := c.run(ctx, "ps", "--all", "--format", "json", "--filter", filter)
 	if err != nil {
 		return nil, err
 	}
@@ -334,11 +359,11 @@ func (c *Client) ProjectContainers(ctx context.Context, project string) ([]Proje
 	if err != nil {
 		return nil, err
 	}
-	out := make([]ProjectContainer, 0, len(items))
+	out := make(map[string][]ProjectContainer)
 	for i := range items {
 		item := &items[i]
-		// The filter is a prefix-free label match; check it exactly.
-		if item.Labels["com.docker.compose.project"] != project {
+		project := item.Labels[composeProjectLabel]
+		if project == "" {
 			continue
 		}
 		name := ""
@@ -348,7 +373,16 @@ func (c *Client) ProjectContainers(ctx context.Context, project string) ([]Proje
 		if c.prefix != "" && !strings.HasPrefix(name, c.prefix) {
 			continue
 		}
-		out = append(out, ProjectContainer{ID: item.ID, Name: name, Service: item.Labels["com.docker.compose.service"], State: item.State, Pid: item.Pid})
+		out[project] = append(out[project], ProjectContainer{
+			ID:      item.ID,
+			Name:    name,
+			Service: item.Labels["com.docker.compose.service"],
+			Project: project,
+			Image:   item.Image,
+			State:   item.State,
+			Status:  item.Status,
+			Pid:     item.Pid,
+		})
 	}
 	return out, nil
 }

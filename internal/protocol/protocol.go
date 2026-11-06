@@ -191,6 +191,21 @@ type Stack struct {
 	// only). Values are configuration, shown and edited in the dashboard;
 	// secrets belong in stack secrets.
 	Environment map[string]string `json:"environment,omitempty"`
+	// Services lists the Compose services with the state of their containers,
+	// in file order. A service with several containers has one entry each.
+	Services []StackService `json:"services,omitempty"`
+}
+
+// StackService is one container of a stack's service, or the service itself
+// when it has none. State is Podman's container state ("running", "exited",
+// ...), "absent" for a service with no container, or "unknown" when the agent
+// cannot read Podman.
+type StackService struct {
+	Service   string `json:"service"`
+	Container string `json:"container,omitempty"`
+	Image     string `json:"image,omitempty"`
+	State     string `json:"state"`
+	Status    string `json:"status,omitempty"`
 }
 
 // StackSaved answers a save: the saved stack and, when the save changed the
