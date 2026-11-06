@@ -942,6 +942,76 @@ h2 {
   font-size: 16px;
 }
 
+/* Stack cards (stacks list) */
+.stack-list {
+  display: grid;
+  gap: 14px;
+  padding: 18px 22px 22px;
+}
+.stack-card {
+  display: grid;
+  gap: 0;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.stack-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px 16px;
+  padding: 18px 20px;
+}
+.stack-card-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: var(--sidebar);
+  color: var(--amber);
+}
+.stack-card-title {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+.stack-card-title h3 {
+  margin: 0;
+  font: 700 20px / 1.2 var(--display);
+  letter-spacing: -0.015em;
+  overflow-wrap: anywhere;
+}
+.stack-card-meta {
+  font: 12.5px var(--mono);
+  color: var(--muted);
+}
+.stack-card-reboot {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--chip);
+  color: var(--ink-2);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.stack-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.stack-card-waiting {
+  margin: 0;
+  padding: 10px 20px;
+  border-top: 1px solid var(--line-soft);
+  background: var(--warn-chip);
+  color: var(--warn-ink);
+  font-size: 13px;
+}
+
 /* Stacks */
 .stack-create form,
 .stack-create label {
@@ -954,9 +1024,11 @@ h2 {
   padding: 22px;
 }
 .stack-create label {
-  color: var(--muted);
-  font-size: 13.5px;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
 }
+
 .stack-create input,
 .stack-create textarea {
   width: 100%;
@@ -975,6 +1047,46 @@ h2 {
 }
 .stack-create textarea {
   resize: vertical;
+}
+.stack-create > a:first-child {
+  display: inline-block;
+  margin: 22px 22px 0;
+  font: 12px var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-decoration: none;
+}
+.stack-create > a:first-child:hover {
+  color: var(--ink);
+}
+.stack-create > h2,
+.stack-create > .subtitle {
+  margin-left: 22px;
+  margin-right: 22px;
+}
+.stack-create > h2 {
+  margin-top: 10px;
+  font: 700 26px / 1.15 var(--display);
+  letter-spacing: -0.02em;
+}
+.stack-create textarea.compose-editor {
+  min-height: 360px;
+  padding: 16px 16px 16px 14px;
+  border: 0;
+  border-radius: 12px;
+  background: #17211d;
+  color: #d9e3dd;
+  font: 13px / 1.6 var(--mono);
+  white-space: pre;
+  overflow-wrap: normal;
+  tab-size: 2;
+}
+.stack-create textarea.compose-editor:focus {
+  box-shadow: 0 0 0 3px rgba(227, 168, 87, 0.35);
+}
+.stack-create textarea.compose-editor::placeholder {
+  color: #6b7a72;
 }
 .stack-output {
   max-height: 240px;

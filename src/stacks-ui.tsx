@@ -83,31 +83,51 @@ export function StackList() {
               </div>
             }
           >
-            <div class="resource-list">
+            <div class="stack-list">
               <For each={filteredStacks()}>
                 {(stack) => (
-                  <div class="resource-row">
-                    <span class="resource-icon">▤</span>
-                    <span class="resource-copy">
-                      <strong>{stack.name}</strong>
-                      <small>{stack.project}</small>
-                      <Show when={stack.waiting}>
-                        <small class="stack-waiting">{stack.waiting}</small>
-                      </Show>
-                    </span>
-                    <span class="resource-count">
-                      v{stack.version || 1} · {rebootLabel(stack)}
-                    </span>
-                    <A class="add-button" href={editStackPath(fleet.selectedHost, stack.name)}>
-                      Edit
-                    </A>
-                    <button class="start" type="button" disabled={!!busy()} onClick={() => run(stack.name, "up")}>
-                      {busyLabel(stack.name, "up", "Start", "Starting…")}
-                    </button>
-                    <button class="stop" type="button" disabled={!!busy()} onClick={() => run(stack.name, "down")}>
-                      {busyLabel(stack.name, "down", "Stop", "Stopping…")}
-                    </button>
-                  </div>
+                  <article class="stack-card" aria-label={`Stack ${stack.name}`}>
+                    <div class="stack-card-head">
+                      <span class="stack-card-icon" aria-hidden="true">
+                        <svg
+                          width="22"
+                          height="22"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.8"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <rect x="4" y="10" width="16" height="10" rx="2" />
+                          <path d="M6 6.5h12M8.5 3h7" />
+                        </svg>
+                      </span>
+                      <div class="stack-card-title">
+                        <h3>{stack.name}</h3>
+                        <span class="stack-card-meta">
+                          compose · {stack.project} · v{stack.version || 1}
+                        </span>
+                      </div>
+                      <span class="stack-card-reboot">{rebootLabel(stack)}</span>
+                      <div class="stack-card-actions">
+                        <A class="add-button" href={editStackPath(fleet.selectedHost, stack.name)}>
+                          Edit
+                        </A>
+                        <button class="start" type="button" disabled={!!busy()} onClick={() => run(stack.name, "up")}>
+                          {busyLabel(stack.name, "up", "Start stack", "Starting…")}
+                        </button>
+                        <button class="stop" type="button" disabled={!!busy()} onClick={() => run(stack.name, "down")}>
+                          {busyLabel(stack.name, "down", "Stop stack", "Stopping…")}
+                        </button>
+                      </div>
+                    </div>
+                    <Show when={stack.waiting}>
+                      <p class="stack-card-waiting" role="status">
+                        {stack.waiting}
+                      </p>
+                    </Show>
+                  </article>
                 )}
               </For>
             </div>
@@ -344,6 +364,7 @@ export function StackEditor() {
         <label>
           Compose YAML
           <textarea
+            class="compose-editor"
             required
             rows={16}
             value={compose()}
