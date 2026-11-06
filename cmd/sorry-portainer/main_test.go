@@ -24,6 +24,7 @@ type fakeClient struct {
 	stacks    []protocol.Stack
 	stack     protocol.Stack
 	saved     *protocol.StackSave
+	applied   *protocol.StackOperation
 	operation protocol.StackOperation
 	err       error
 }
@@ -48,14 +49,14 @@ func (f *fakeClient) Stack(_ context.Context, host, name string) (protocol.Stack
 	f.calls = append(f.calls, "stack "+host+" "+name)
 	return f.stack, f.err
 }
-func (f *fakeClient) SaveStack(_ context.Context, host string, save protocol.StackSave) (protocol.Stack, error) {
+func (f *fakeClient) SaveStack(_ context.Context, host string, save protocol.StackSave) (protocol.StackSaved, error) {
 	f.calls = append(f.calls, "save "+host+" "+save.Name)
 	f.saved = &save
 	v := 1
 	if save.ExpectedVersion != nil {
 		v = *save.ExpectedVersion + 1
 	}
-	return protocol.Stack{Name: save.Name, Version: v}, f.err
+	return protocol.StackSaved{Stack: protocol.Stack{Name: save.Name, Version: v}, Operation: f.applied}, f.err
 }
 func (f *fakeClient) StackOperation(_ context.Context, host, name, operation string) (protocol.StackOperation, error) {
 	f.calls = append(f.calls, operation+" "+host+" "+name)
@@ -126,7 +127,8 @@ func TestUsageErrorsExitTwo(t *testing.T) {
 		"two names":             {"stacks", "up", "--host", "jp1", "a", "b"},
 		"file on up":            {"stacks", "up", "--host", "jp1", "--file", "x", "a"},
 		"create without file":   {"stacks", "create", "--host", "jp1", "a"},
-		"env on update":         {"stacks", "update", "--host", "jp1", "--file", "x", "--env-file", "y", "a"},
+		"expect on create":      {"stacks", "create", "--host", "jp1", "--file", "x", "--expect-version", "2", "a"},
+		"env on up":             {"stacks", "up", "--host", "jp1", "--env-file", "y", "a"},
 		"unknown flag":          {"stacks", "list", "--host", "jp1", "--bogus"},
 		"bad global flag":       {"--nope", "hosts", "list"},
 	} {
@@ -301,5 +303,45 @@ func TestParseEnvFile(t *testing.T) {
 	}
 	if env, err := parseEnvFile(nil); err != nil || len(env) != 0 {
 		t.Fatalf("empty: %v %v", env, err)
+	}
+}
+func TestUpdateReplacesOrKeepsTheEnvironment(t *testing.T) {
+	compose := writeFile(t, "compose.yaml", "services: {}\n")
+	envFile := writeFile(t, "web.env", "MODE=b\n")
+	f := &fakeClient{stack: protocol.Stack{Name: "web", Version: 4}}
+	r := invoke(t, f, nil, "stacks", "update", "--host", "jp1", "--file", compose, "--env-file", envFile, "web")
+	if r.code != exitOK || !reflect.DeepEqual(f.saved.Environment, map[string]string{"MODE": "b"}) {
+		t.Fatalf("%+v %+v", r, f.saved)
+	}
+	r = invoke(t, f, nil, "stacks", "update", "--host", "jp1", "--file", compose, "web")
+	if r.code != exitOK || f.saved.Environment != nil {
+		t.Fatalf("without --env-file the environment must be kept: %+v", f.saved)
+	}
+}
+
+func TestSavePrintsTheUpItRan(t *testing.T) {
+	compose := writeFile(t, "compose.yaml", "services: {}\n")
+	envFile := writeFile(t, "web.env", "MODE=b\n")
+	f := &fakeClient{stack: protocol.Stack{Name: "web", Version: 4}, applied: &protocol.StackOperation{Name: "web", Operation: "up", Success: true, Output: "recreated web_1"}}
+	r := invoke(t, f, nil, "stacks", "update", "--host", "jp1", "--file", compose, "--env-file", envFile, "web")
+	if r.code != exitOK || !strings.Contains(r.out, "version 5") || !strings.Contains(r.out, "recreated web_1") {
+		t.Fatalf("%+v", r)
+	}
+	f.applied = &protocol.StackOperation{Name: "web", Operation: "up", Success: false, Output: "Error: pull failed"}
+	r = invoke(t, f, nil, "stacks", "update", "--host", "jp1", "--file", compose, "--env-file", envFile, "web")
+	if r.code != exitFailed || !strings.Contains(r.out, "pull failed") || !strings.Contains(r.err, "saved, but") {
+		t.Fatalf("failed up: %+v", r)
+	}
+	r = invoke(t, f, nil, "--json", "stacks", "update", "--host", "jp1", "--file", compose, "--env-file", envFile, "web")
+	if r.code != exitFailed || !strings.Contains(r.out, `"operation"`) {
+		t.Fatalf("json: %+v", r)
+	}
+}
+
+func TestShowPrintsTheEnvironment(t *testing.T) {
+	f := &fakeClient{stack: protocol.Stack{Name: "web", ComposeYAML: "services: {}\n", Environment: map[string]string{"TZ": "UTC", "A": "x=y"}}}
+	r := invoke(t, f, nil, "stacks", "show", "--host", "jp1", "web")
+	if r.code != exitOK || !strings.HasSuffix(r.out, "\nenvironment:\nA=x=y\nTZ=UTC\n") {
+		t.Fatalf("output %q", r.out)
 	}
 }

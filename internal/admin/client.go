@@ -111,10 +111,10 @@ func (c *Client) Stack(ctx context.Context, hostID, name string) (protocol.Stack
 	return out, c.call(ctx, Request{Action: ActionStackInspect, HostID: hostID, Stack: name}, &out)
 }
 
-// SaveStack creates a stack (save.ExpectedVersion nil, environment allowed)
-// or updates one from the version it expects.
-func (c *Client) SaveStack(ctx context.Context, hostID string, save protocol.StackSave) (protocol.Stack, error) {
-	var out protocol.Stack
+// SaveStack creates a stack (save.ExpectedVersion nil) or updates one from
+// the version it expects. A nil save.Environment keeps the current one.
+func (c *Client) SaveStack(ctx context.Context, hostID string, save protocol.StackSave) (protocol.StackSaved, error) {
+	var out protocol.StackSaved
 	return out, c.call(ctx, Request{Action: ActionStackSave, HostID: hostID, Save: &save}, &out)
 }
 

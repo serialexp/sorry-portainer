@@ -15,9 +15,10 @@ import (
 )
 
 type stackRelay struct {
-	saved protocol.StackSave
-	stack protocol.Stack
-	err   error
+	saved     protocol.StackSave
+	stack     protocol.Stack
+	operation *protocol.StackOperation
+	err       error
 }
 
 func (r *stackRelay) Hosts() []protocol.HostInfo { return nil }
@@ -38,9 +39,9 @@ func (r *stackRelay) InspectStack(context.Context, string, string) (protocol.Sta
 func (r *stackRelay) StackVersions(context.Context, string, string) ([]protocol.StackVersion, error) {
 	return []protocol.StackVersion{{Version: 1}, {Version: 2}}, r.err
 }
-func (r *stackRelay) SaveStack(_ context.Context, _ string, save protocol.StackSave) (protocol.Stack, error) {
+func (r *stackRelay) SaveStack(_ context.Context, _ string, save protocol.StackSave) (protocol.StackSaved, error) {
 	r.saved = save
-	return r.stack, r.err
+	return protocol.StackSaved{Stack: r.stack, Operation: r.operation}, r.err
 }
 func (r *stackRelay) StackOperation(context.Context, string, string, string) (protocol.StackOperation, error) {
 	return protocol.StackOperation{}, r.err
@@ -84,6 +85,28 @@ func TestStackHTTPVersionContracts(t *testing.T) {
 		t.Fatalf("versions = %d: %s", w.Code, w.Body.String())
 	}
 }
+
+// TestStackHTTPSaveCarriesEnvironmentAndOperation: the web API passes "keep"
+// (absent) and "clear" ({}) apart, and answers with the up a save ran.
+func TestStackHTTPSaveCarriesEnvironmentAndOperation(t *testing.T) {
+	relay := &stackRelay{stack: protocol.Stack{Name: "web", Version: 4, Environment: map[string]string{"MODE": "b"}}}
+	s := New(testSessions, relay, nil)
+	w := authenticatedStackRequest(t, s, http.MethodPost, "/api/hosts/host/stacks", `{"name":"web","compose_yaml":"services: {}","expected_version":3}`)
+	if w.Code != http.StatusOK || relay.saved.Environment != nil {
+		t.Fatalf("absent: %d, %#v", w.Code, relay.saved.Environment)
+	}
+	w = authenticatedStackRequest(t, s, http.MethodPost, "/api/hosts/host/stacks", `{"name":"web","compose_yaml":"services: {}","expected_version":3,"environment":{}}`)
+	if w.Code != http.StatusOK || relay.saved.Environment == nil || len(relay.saved.Environment) != 0 {
+		t.Fatalf("empty: %d, %#v", w.Code, relay.saved.Environment)
+	}
+	relay.operation = &protocol.StackOperation{Name: "web", Operation: "up", Success: true, Output: "recreated"}
+	w = authenticatedStackRequest(t, s, http.MethodPost, "/api/hosts/host/stacks", `{"name":"web","compose_yaml":"services: {}","expected_version":3,"environment":{"MODE":"b"}}`)
+	var saved protocol.StackSaved
+	if err := json.NewDecoder(w.Body).Decode(&saved); err != nil || saved.Operation == nil || saved.Operation.Output != "recreated" || saved.Environment["MODE"] != "b" {
+		t.Fatalf("answer = %+v, %v", saved, err)
+	}
+}
+
 func TestStackHTTPConflict(t *testing.T) {
 	stacks := &stackRelay{err: &relay.RemoteError{Code: protocol.CodeOperationFailed, Message: "stack version mismatch"}}
 	s := New(testSessions, stacks, nil)

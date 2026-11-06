@@ -23,7 +23,7 @@ type Relay interface {
 	Hosts() []protocol.HostInfo
 	ListStacks(ctx context.Context, hostID string) ([]protocol.Stack, error)
 	InspectStack(ctx context.Context, hostID, name string) (protocol.Stack, error)
-	SaveStack(ctx context.Context, hostID string, save protocol.StackSave) (protocol.Stack, error)
+	SaveStack(ctx context.Context, hostID string, save protocol.StackSave) (protocol.StackSaved, error)
 	StackOperation(ctx context.Context, hostID, name, operation string) (protocol.StackOperation, error)
 }
 
@@ -233,7 +233,11 @@ func (s *Server) stacks(ctx context.Context, r Request) (any, error) {
 		if r.Save.ExpectedVersion != nil {
 			what = fmt.Sprintf("update from version %d", *r.Save.ExpectedVersion)
 		}
-		s.logf("admin socket: stacks.save %s/%s (%s, %d environment entries)", r.HostID, r.Save.Name, what, len(r.Save.Environment))
+		environment := "environment kept"
+		if r.Save.Environment != nil {
+			environment = fmt.Sprintf("%d environment entries", len(r.Save.Environment))
+		}
+		s.logf("admin socket: stacks.save %s/%s (%s, %s)", r.HostID, r.Save.Name, what, environment)
 		return s.relay.SaveStack(ctx, r.HostID, *r.Save)
 	}
 	if r.Save != nil || !protocol.ValidStackName(r.Stack) {

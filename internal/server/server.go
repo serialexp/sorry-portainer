@@ -47,7 +47,7 @@ type Relay interface {
 	ListStacks(context.Context, string) ([]protocol.Stack, error)
 	InspectStack(context.Context, string, string) (protocol.Stack, error)
 	StackVersions(context.Context, string, string) ([]protocol.StackVersion, error)
-	SaveStack(context.Context, string, protocol.StackSave) (protocol.Stack, error)
+	SaveStack(context.Context, string, protocol.StackSave) (protocol.StackSaved, error)
 	StackOperation(context.Context, string, string, string) (protocol.StackOperation, error)
 	SyncSecrets(context.Context, string, protocol.SecretSync) (protocol.SecretSyncResult, error)
 	RetainSecrets(context.Context, string, []string) error

@@ -51,3 +51,34 @@ func TestUnknownStackOperationIsAnError(t *testing.T) {
 		t.Fatalf("up of a missing stack = %+v", value)
 	}
 }
+
+// TestSaveKeepsOrClearsTheEnvironment: through the agent's handler, a save
+// without an environment keeps the stack's, and an empty one clears it.
+func TestSaveKeepsOrClearsTheEnvironment(t *testing.T) {
+	manager := stacks.New(t.TempDir(), "jp1-", failingCompose{})
+	agent := &Agent{HostID: "jp1", Stacks: manager}
+	ctx := context.Background()
+	save := func(body string) protocol.StackSaved {
+		t.Helper()
+		value, err := agent.handle(ctx, "stacks.save", json.RawMessage(body))
+		if err != nil {
+			t.Fatalf("save %s: %v", body, err)
+		}
+		return value.(protocol.StackSaved)
+	}
+	save(`{"name":"web","compose_yaml":"services: {}\n","environment":{"MODE":"a"}}`)
+	if got := save(`{"name":"web","compose_yaml":"services: {}\n","expected_version":1}`); got.Environment["MODE"] != "a" {
+		t.Fatalf("absent environment: %+v", got.Environment)
+	}
+	if got := save(`{"name":"web","compose_yaml":"services: {}\n","expected_version":2,"environment":null}`); got.Environment["MODE"] != "a" {
+		t.Fatalf("null environment: %+v", got.Environment)
+	}
+	if got := save(`{"name":"web","compose_yaml":"services: {}\n","expected_version":3,"environment":{}}`); len(got.Environment) != 0 {
+		t.Fatalf("empty environment: %+v", got.Environment)
+	}
+	// What the master encodes for a save without an environment decodes as "keep".
+	encoded, _ := json.Marshal(protocol.StackSave{Name: "web", ComposeYAML: "x"})
+	if !strings.Contains(string(encoded), `"environment":null`) {
+		t.Fatalf("encoded save = %s", encoded)
+	}
+}

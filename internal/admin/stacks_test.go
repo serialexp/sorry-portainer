@@ -62,12 +62,12 @@ func (f *fakeRelay) InspectStack(ctx context.Context, hostID, name string) (prot
 	return protocol.Stack{Name: name, ComposeYAML: "services: {}\n", Version: 2}, f.err
 }
 
-func (f *fakeRelay) SaveStack(ctx context.Context, hostID string, save protocol.StackSave) (protocol.Stack, error) {
+func (f *fakeRelay) SaveStack(ctx context.Context, hostID string, save protocol.StackSave) (protocol.StackSaved, error) {
 	f.record(ctx, "save "+hostID+"/"+save.Name)
 	f.mu.Lock()
 	f.saves = append(f.saves, save)
 	f.mu.Unlock()
-	return protocol.Stack{Name: save.Name, Version: 1}, f.err
+	return protocol.StackSaved{Stack: protocol.Stack{Name: save.Name, Version: 1}}, f.err
 }
 
 func (f *fakeRelay) StackOperation(ctx context.Context, hostID, name, operation string) (protocol.StackOperation, error) {
@@ -220,7 +220,11 @@ func TestStackDeadlines(t *testing.T) {
 	if _, err := f.client.StackOperation(ctx, "jp1", "web", "up"); err != nil {
 		t.Fatal(err)
 	}
-	for call, want := range map[string]time.Duration{"list": StackTimeout, "up": StackOperationTimeout} {
+	// A save may bring a running stack up with its new environment.
+	if _, err := f.client.SaveStack(ctx, "jp1", protocol.StackSave{Name: "web", ComposeYAML: "services: {}\n"}); err != nil {
+		t.Fatal(err)
+	}
+	for call, want := range map[string]time.Duration{"list": StackTimeout, "up": StackOperationTimeout, "save": StackOperationTimeout} {
 		got := r.remaining[call]
 		// The test's own scheduling may eat into it, not a quarter.
 		if got > want || got < want-want/4 {
@@ -286,6 +290,28 @@ func TestSaveLogsNoEnvironment(t *testing.T) {
 	}
 	if strings.Contains(logged, secret) || strings.Contains(logged, "MYSQL_ROOT_PASSWORD") {
 		t.Fatalf("environment logged: %q", logged)
+	}
+}
+
+// TestKeptAndClearedEnvironmentsStayApart: no environment keeps the stack's
+// values and an empty one clears them, so the two must not merge on the way.
+func TestKeptAndClearedEnvironmentsStayApart(t *testing.T) {
+	r := newFakeRelay()
+	f := startWithRelay(t, r)
+	ctx := context.Background()
+	one := 1
+	for _, env := range []map[string]string{nil, {}} {
+		save := protocol.StackSave{Name: "web", ComposeYAML: "services: {}\n", Environment: env, ExpectedVersion: &one}
+		if _, err := f.client.SaveStack(ctx, "jp1", save); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if r.saves[0].Environment != nil || r.saves[1].Environment == nil || len(r.saves[1].Environment) != 0 {
+		t.Fatalf("environments arrived as %#v and %#v", r.saves[0].Environment, r.saves[1].Environment)
+	}
+	logged := strings.Join(f.lines(), "\n")
+	if !strings.Contains(logged, "environment kept") || !strings.Contains(logged, "0 environment entries") {
+		t.Fatalf("log = %q", logged)
 	}
 }
 

@@ -231,9 +231,11 @@ func (r *Remote) StackVersions(ctx context.Context, hostID, name string) ([]prot
 	return out, nil
 }
 
-func (r *Remote) SaveStack(ctx context.Context, hostID string, save protocol.StackSave) (protocol.Stack, error) {
-	var out protocol.Stack
-	err := r.call(ctx, hostID, "stacks.save", save, &out, DefaultRequestTimeout)
+// SaveStack may bring the stack up again (a changed environment on a stack
+// that is up), so it gets the stack operation timeout.
+func (r *Remote) SaveStack(ctx context.Context, hostID string, save protocol.StackSave) (protocol.StackSaved, error) {
+	var out protocol.StackSaved
+	err := r.call(ctx, hostID, "stacks.save", save, &out, StackOperationTimeout)
 	return out, err
 }
 

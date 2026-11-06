@@ -12,6 +12,8 @@ export type Stack = {
   desired?: "up" | "down";
   /** Why a stack that should be up has not come up since the host booted. */
   waiting?: string;
+  /** The active revision's environment (single-stack reads and saves only). */
+  environment?: Record<string, string>;
 };
 
 /**
@@ -23,6 +25,47 @@ export function rebootLabel(stack: Pick<Stack, "desired">): string {
   return stack.desired === "up" ? "starts after reboot" : "stays stopped after reboot";
 }
 export type StackOperation = { name: string; operation: string; success: boolean; output?: string };
+
+/** A save's answer: the stack, and the `up` it ran when it changed a running stack's environment. */
+export type StackSaved = Stack & { operation?: StackOperation };
+
+/** The agent's limit on a stack's environment entries. */
+export const maxEnvironment = 128;
+const environmentKey = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/**
+ * Reads the editor's environment field: KEY=VALUE lines, blank lines and
+ * `#` comments skipped. A value is everything after the first "=", as is.
+ * The same rules as the CLI's --env-file.
+ */
+export function parseEnvironment(text: string): Record<string, string> {
+  const environment: Record<string, string> = {};
+  text.split("\n").forEach((raw, index) => {
+    const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) return;
+    const at = line.indexOf("=");
+    const where = `Environment line ${index + 1}`;
+    if (at < 0) throw new Error(`${where}: expected KEY=VALUE.`);
+    const key = line.slice(0, at);
+    if (!environmentKey.test(key)) throw new Error(`${where}: "${key}" is not a valid variable name.`);
+    if (Object.hasOwn(environment, key)) throw new Error(`${where}: ${key} is set twice.`);
+    const value = line.slice(at + 1);
+    if (/[\r\0]/.test(value)) throw new Error(`${where}: ${key} contains a carriage return or NUL.`);
+    environment[key] = value;
+  });
+  if (Object.keys(environment).length > maxEnvironment)
+    throw new Error(`A stack takes at most ${maxEnvironment} environment entries.`);
+  return environment;
+}
+
+/** The editor's text for an environment: KEY=VALUE lines sorted by key. */
+export function formatEnvironment(environment: Record<string, string> | undefined): string {
+  return Object.keys(environment ?? {})
+    .sort()
+    .map((key) => `${key}=${environment?.[key]}`)
+    .join("\n");
+}
 
 export const stackNamePattern = /^[a-z0-9][a-z0-9_-]{0,62}$/;
 
@@ -56,8 +99,9 @@ async function saveStack(
   name: string,
   composeYAML: string,
   expectedVersion: number | undefined,
+  environment: Record<string, string> | undefined,
   request: typeof fetch,
-) {
+): Promise<StackSaved> {
   if (!stackNamePattern.test(name)) throw new Error("Invalid stack name.");
   if (!composeYAML.trim()) throw new Error("Enter a Compose YAML document.");
   const response = await request(endpoint(hostID), {
@@ -67,24 +111,38 @@ async function saveStack(
       name,
       compose_yaml: composeYAML,
       ...(expectedVersion === undefined ? {} : { expected_version: expectedVersion }),
+      // Absent keeps the stack's current environment.
+      ...(environment === undefined ? {} : { environment }),
     }),
   });
   if (!response.ok) throw await failure(response, "Save failed");
+  return (await response.json()) as StackSaved;
 }
 
-export function createStack(hostID: string, name: string, composeYAML: string, request: typeof fetch = fetch) {
-  return saveStack(hostID, name, composeYAML, undefined, request);
+export function createStack(
+  hostID: string,
+  name: string,
+  composeYAML: string,
+  environment: Record<string, string> | undefined,
+  request: typeof fetch = fetch,
+) {
+  return saveStack(hostID, name, composeYAML, undefined, environment, request);
 }
 
+/**
+ * Saves a new revision. An undefined environment keeps the current one; a
+ * changed environment brings a running stack up again (see `operation`).
+ */
 export function updateStack(
   hostID: string,
   name: string,
   composeYAML: string,
   expectedVersion: number,
+  environment: Record<string, string> | undefined,
   request: typeof fetch = fetch,
 ) {
   if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1) throw new Error("Invalid stack version.");
-  return saveStack(hostID, name, composeYAML, expectedVersion, request);
+  return saveStack(hostID, name, composeYAML, expectedVersion, environment, request);
 }
 
 async function stackOperation(

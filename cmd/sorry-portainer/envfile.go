@@ -16,7 +16,9 @@ var envKey = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 // parseEnvFile reads a stack environment: a JSON object of strings, or
 // KEY=VALUE lines with blank lines and # comments skipped. A value is
 // everything after the first "=", taken as is: no quotes, no interpolation.
-// Errors name lines and keys, never values.
+// Errors name lines and keys, never values: the values themselves are
+// configuration and are shown by `stacks show`, but a mistyped file may hold
+// something else.
 func parseEnvFile(data []byte) (map[string]string, error) {
 	env := map[string]string{}
 	if trimmed := bytes.TrimSpace(data); len(trimmed) > 0 && trimmed[0] == '{' {
@@ -34,6 +36,9 @@ func parseEnvFile(data []byte) (map[string]string, error) {
 			if !envKey.MatchString(key) {
 				return nil, fmt.Errorf("environment key %q is not a valid name", key)
 			}
+			if strings.ContainsAny(s, "\n\r\x00") {
+				return nil, fmt.Errorf("environment %s: values cannot contain line breaks or NUL", key)
+			}
 			env[key] = s
 		}
 	} else {
@@ -48,6 +53,9 @@ func parseEnvFile(data []byte) (map[string]string, error) {
 			}
 			if !envKey.MatchString(key) {
 				return nil, fmt.Errorf("environment file line %d: %q is not a valid name", i+1, key)
+			}
+			if strings.ContainsAny(value, "\r\x00") {
+				return nil, fmt.Errorf("environment file line %d: %s: values cannot contain a carriage return or NUL", i+1, key)
 			}
 			if _, seen := env[key]; seen {
 				return nil, fmt.Errorf("environment file line %d: %s is set twice", i+1, key)

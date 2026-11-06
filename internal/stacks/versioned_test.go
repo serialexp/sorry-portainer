@@ -13,20 +13,19 @@ import (
 
 func TestManagerVersionedSaveAndPreservesEnvironment(t *testing.T) {
 	m := New(t.TempDir(), "agent", &recordingExecutor{})
-	created, err := m.Save(context.Background(), "web", "services: {one: {}}\n", map[string]string{"SECRET": "unchanged"}, nil)
+	created, err := m.Save(context.Background(), "web", "services: {one: {}}\n", map[string]string{"SETTING": "unchanged"}, nil)
 	if err != nil || created.Version != 1 {
 		t.Fatalf("create = %#v, %v", created, err)
 	}
 	one := 1
-	if _, err := m.Save(context.Background(), "web", "services: {two: {}}\n", map[string]string{"SECRET": "replacement"}, &one); err == nil {
-		t.Fatal("environment update was silently ignored")
-	}
 	updated, err := m.Save(context.Background(), "web", "services: {two: {}}\n", nil, &one)
-	if err != nil || updated.Version != 2 {
+	if err != nil || updated.Version != 2 || updated.Operation != nil {
 		t.Fatalf("update = %#v, %v", updated, err)
 	}
-	if got, err := os.ReadFile(filepath.Join(m.dir("web"), "env.json")); err != nil || string(got) != `{"SECRET":"unchanged"}` {
-		t.Fatalf("environment = %q, %v", got, err)
+	for _, f := range []string{"1.env.json", "2.env.json"} {
+		if got, err := os.ReadFile(filepath.Join(m.dir("web"), "revisions", f)); err != nil || string(got) != `{"SETTING":"unchanged"}` {
+			t.Fatalf("%s = %q, %v", f, got, err)
+		}
 	}
 	versions, err := m.Versions(context.Background(), "web")
 	if err != nil || len(versions) != 2 || versions[0].Version != 1 || versions[1].Version != 2 {
@@ -100,8 +99,12 @@ func TestManagerLegacyStackIsLazilyVersionOne(t *testing.T) {
 	if err != nil || updated.Version != 2 {
 		t.Fatalf("update = %#v, %v", updated, err)
 	}
+	if got, err := os.ReadFile(filepath.Join(m.dir("legacy"), "revisions", "2.env.json")); err != nil || string(got) != `{"SECRET":"preserved"}` {
+		t.Fatalf("carried environment = %q, %v", got, err)
+	}
+	// The stack-level file is left as it was; it still describes revision 1.
 	if got, err := os.ReadFile(filepath.Join(m.dir("legacy"), "env.json")); err != nil || string(got) != `{"SECRET":"preserved"}` {
-		t.Fatalf("environment = %q, %v", got, err)
+		t.Fatalf("stack-level environment = %q, %v", got, err)
 	}
 }
 

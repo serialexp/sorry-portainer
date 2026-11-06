@@ -61,9 +61,10 @@ const (
 // has arrived.
 func ActionTimeout(action string) time.Duration {
 	switch action {
-	case ActionStackList, ActionStackInspect, ActionStackSave:
+	case ActionStackList, ActionStackInspect:
 		return StackTimeout
-	case ActionStackUp, ActionStackDown, ActionStackRestart:
+	// A save that changes a running stack's environment brings it up again.
+	case ActionStackSave, ActionStackUp, ActionStackDown, ActionStackRestart:
 		return StackOperationTimeout
 	default:
 		return Timeout

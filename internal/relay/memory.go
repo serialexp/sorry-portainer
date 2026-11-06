@@ -144,8 +144,8 @@ func (m *Memory) StackVersions(context.Context, string, string) ([]protocol.Stac
 	return nil, errStacksUnsupported
 }
 
-func (m *Memory) SaveStack(context.Context, string, protocol.StackSave) (protocol.Stack, error) {
-	return protocol.Stack{}, errStacksUnsupported
+func (m *Memory) SaveStack(context.Context, string, protocol.StackSave) (protocol.StackSaved, error) {
+	return protocol.StackSaved{}, errStacksUnsupported
 }
 
 func (m *Memory) StackOperation(context.Context, string, string, string) (protocol.StackOperation, error) {

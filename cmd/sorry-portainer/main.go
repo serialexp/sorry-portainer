@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"syscall"
 	"text/tabwriter"
@@ -30,13 +31,14 @@ const usage = `usage: sorry-portainer [--master ssh://[USER@]HOST[:PORT]] [--sta
   stacks list    --host HOST
   stacks show    --host HOST NAME
   stacks create  --host HOST --file compose.yaml [--env-file FILE] NAME
-  stacks update  --host HOST --file compose.yaml [--expect-version N] NAME
+  stacks update  --host HOST --file compose.yaml [--env-file FILE] [--expect-version N] NAME
   stacks up|down|restart --host HOST NAME
 
 --master falls back to $SORRY_PORTAINER_MASTER; without either, the CLI uses
 the local admin socket in --state-dir. --ssh-command (or $SORRY_PORTAINER_SSH)
-replaces "ssh". --env-file takes KEY=VALUE lines or a JSON object; its values
-are never printed.
+replaces "ssh". --env-file takes KEY=VALUE lines or a JSON object; on update
+it replaces the stack's environment, and without it the environment is kept.
+A save that changes the environment of a running stack brings it up again.
 `
 
 // Exit codes.
@@ -53,7 +55,7 @@ type client interface {
 	Remove(ctx context.Context, hostID string) error
 	Stacks(ctx context.Context, hostID string) ([]protocol.Stack, error)
 	Stack(ctx context.Context, hostID, name string) (protocol.Stack, error)
-	SaveStack(ctx context.Context, hostID string, save protocol.StackSave) (protocol.Stack, error)
+	SaveStack(ctx context.Context, hostID string, save protocol.StackSave) (protocol.StackSaved, error)
 	StackOperation(ctx context.Context, hostID, name, operation string) (protocol.StackOperation, error)
 }
 
@@ -301,26 +303,22 @@ func (x *cli) save(sub, host, name, file, envFile string, expect int) int {
 		return x.usageError("stacks %s needs --file", sub)
 	case sub == "create" && expect != 0:
 		return x.usageError("stacks create takes no --expect-version")
-	case sub == "update" && envFile != "":
-		return x.usageError("a stack's environment is set when it is created; stacks update takes no --env-file")
 	}
 	compose, err := os.ReadFile(file)
 	if err != nil {
 		return x.failed(err)
 	}
 	save := protocol.StackSave{Name: name, ComposeYAML: string(compose)}
-	switch sub {
-	case "create":
-		if envFile != "" {
-			data, err := os.ReadFile(envFile)
-			if err != nil {
-				return x.failed(err)
-			}
-			if save.Environment, err = parseEnvFile(data); err != nil {
-				return x.failed(fmt.Errorf("%s: %w", envFile, err))
-			}
+	if envFile != "" {
+		data, err := os.ReadFile(envFile)
+		if err != nil {
+			return x.failed(err)
 		}
-	case "update":
+		if save.Environment, err = parseEnvFile(data); err != nil {
+			return x.failed(fmt.Errorf("%s: %w", envFile, err))
+		}
+	}
+	if sub == "update" {
 		if expect == 0 {
 			current, err := x.client.Stack(x.ctx, host, name)
 			if err != nil {
@@ -330,14 +328,26 @@ func (x *cli) save(sub, host, name, file, envFile string, expect int) int {
 		}
 		save.ExpectedVersion = &expect
 	}
-	stack, err := x.client.SaveStack(x.ctx, host, save)
+	saved, err := x.client.SaveStack(x.ctx, host, save)
 	if err != nil {
 		return x.failed(err)
 	}
 	if x.json {
-		return x.printJSON(stack)
+		if code := x.printJSON(saved); code != exitOK {
+			return code
+		}
+	} else {
+		fmt.Fprintf(x.out, "saved %s on %s as version %d\n", saved.Name, host, saved.Version)
 	}
-	fmt.Fprintf(x.out, "saved %s on %s as version %d\n", stack.Name, host, stack.Version)
+	if op := saved.Operation; op != nil {
+		if !x.json && op.Output != "" {
+			fmt.Fprint(x.out, strings.TrimSuffix(op.Output, "\n")+"\n")
+		}
+		if !op.Success {
+			fmt.Fprintf(x.errOut, "sorry-portainer: saved, but bringing %s up with the new environment failed\n", name)
+			return exitFailed
+		}
+	}
 	return exitOK
 }
 
@@ -388,5 +398,17 @@ func printStack(w io.Writer, s protocol.Stack) {
 	fmt.Fprintf(w, "\n%s", s.ComposeYAML)
 	if !strings.HasSuffix(s.ComposeYAML, "\n") {
 		fmt.Fprintln(w)
+	}
+	if len(s.Environment) == 0 {
+		return
+	}
+	fmt.Fprintln(w, "\nenvironment:")
+	keys := make([]string, 0, len(s.Environment))
+	for k := range s.Environment {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		fmt.Fprintf(w, "%s=%s\n", k, s.Environment[k])
 	}
 }

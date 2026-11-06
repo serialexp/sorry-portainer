@@ -187,6 +187,18 @@ type Stack struct {
 	// up since the host booted, for example because its secrets have not
 	// arrived.
 	Waiting string `json:"waiting,omitempty"`
+	// Environment is the active revision's environment (Inspect and saves
+	// only). Values are configuration, shown and edited in the dashboard;
+	// secrets belong in stack secrets.
+	Environment map[string]string `json:"environment,omitempty"`
+}
+
+// StackSaved answers a save: the saved stack and, when the save changed the
+// environment of a stack whose desired state is up, the `up` that applied
+// it. A failed `up` is reported here, not as an error: the revision exists.
+type StackSaved struct {
+	Stack
+	Operation *StackOperation `json:"operation,omitempty"`
 }
 
 type StackVersion struct {
@@ -202,9 +214,11 @@ type StackOperation struct {
 type StackSave struct {
 	Name        string `json:"name"`
 	ComposeYAML string `json:"compose_yaml"`
-	// Environment is NOT for secrets: it is stored in plain text on the
-	// agent host (env.json). Use stack secrets for passwords and keys.
-	Environment     map[string]string `json:"environment,omitempty"`
+	// Environment is configuration, stored in plain text on the agent host
+	// with each revision; use stack secrets for passwords and keys. Absent or
+	// null keeps the current environment (none for a new stack); an object,
+	// even an empty one, replaces it.
+	Environment     map[string]string `json:"environment"`
 	ExpectedVersion *int              `json:"expected_version,omitempty"`
 }
 type Volume struct {

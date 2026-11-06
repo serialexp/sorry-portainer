@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -202,7 +204,11 @@ func (m *Manager) inspect(n string) (protocol.Stack, error) {
 	if e != nil {
 		return protocol.Stack{}, e
 	}
-	stack := protocol.Stack{Name: n, Project: m.project(n), ComposeYAML: string(b), Status: "saved", Version: version}
+	env, e := m.environment(n, version)
+	if e != nil {
+		return protocol.Stack{}, e
+	}
+	stack := protocol.Stack{Name: n, Project: m.project(n), ComposeYAML: string(b), Status: "saved", Version: version, Environment: env}
 	// A stack saved before secret validation may not parse; it still inspects.
 	if doc, e := parseCompose(b); e == nil {
 		stack.Secrets = doc.plan.Names
@@ -213,8 +219,8 @@ func (m *Manager) inspect(n string) (protocol.Stack, error) {
 	return stack, nil
 }
 
-// Versions returns revision metadata only; Compose documents remain available only
-// through Inspect, so this endpoint cannot disclose stack environment secrets.
+// Versions returns revision metadata only; Compose documents and environments
+// are available through Inspect.
 func (m *Manager) Versions(ctx context.Context, n string) ([]protocol.StackVersion, error) {
 	if !ValidName(n) {
 		return nil, errors.New("invalid stack name")
@@ -271,24 +277,76 @@ func (m *Manager) version(n string) (int, error) {
 	return 0, e
 }
 
-// Save creates when expected is nil and updates only when it equals the current
-// Compose revision. Environment is accepted solely at creation time.
-func (m *Manager) Save(ctx context.Context, n, y string, env map[string]string, expected *int) (protocol.Stack, error) {
+// maxEnvironment bounds a stack's environment entries.
+const maxEnvironment = 128
+
+var environmentKey = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// checkEnvironment refuses keys that are not variable names and values an
+// env file or the dashboard's KEY=VALUE field could not show back. Errors
+// name keys, never values.
+func checkEnvironment(env map[string]string) error {
+	if len(env) > maxEnvironment {
+		return fmt.Errorf("stack environment has %d entries; at most %d", len(env), maxEnvironment)
+	}
+	for key, value := range env {
+		if !environmentKey.MatchString(key) {
+			return fmt.Errorf("environment key %q is not a valid name", key)
+		}
+		if strings.ContainsAny(value, "\n\r\x00") {
+			return fmt.Errorf("environment %s: values cannot contain line breaks or NUL", key)
+		}
+	}
+	return nil
+}
+
+// environmentFile is revision version's environment.
+func environmentFile(dir string, version int) string {
+	return filepath.Join(dir, "revisions", fmt.Sprintf("%d.env.json", version))
+}
+
+// environment returns revision version's environment: its own file, else the
+// stack-level env.json of stacks saved before environments were versioned,
+// else none. The caller holds the stack lock.
+func (m *Manager) environment(n string, version int) (map[string]string, error) {
+	for _, p := range []string{environmentFile(m.dir(n), version), filepath.Join(m.dir(n), "env.json")} {
+		b, e := os.ReadFile(p)
+		if errors.Is(e, os.ErrNotExist) {
+			continue
+		}
+		if e != nil {
+			return nil, e
+		}
+		env := map[string]string{}
+		if e := json.Unmarshal(b, &env); e != nil {
+			return nil, fmt.Errorf("stack %s: %s is not a JSON object of strings", n, filepath.Base(p))
+		}
+		return env, nil
+	}
+	return map[string]string{}, nil
+}
+
+// Save creates when expected is nil and updates only when it equals the
+// current revision. A nil env keeps the current environment (none for a new
+// stack); a non-nil one replaces it. When an update changes the environment
+// of a stack whose desired state is up, Save brings it up again so its
+// containers get the new values.
+func (m *Manager) Save(ctx context.Context, n, y string, env map[string]string, expected *int) (protocol.StackSaved, error) {
 	if !ValidName(n) {
-		return protocol.Stack{}, errors.New("invalid stack name")
+		return protocol.StackSaved{}, errors.New("invalid stack name")
 	}
-	if len(y) > 1<<20 || len(env) > 128 {
-		return protocol.Stack{}, errors.New("stack payload too large")
+	if len(y) > 1<<20 {
+		return protocol.StackSaved{}, errors.New("stack payload too large")
 	}
-	if expected != nil && len(env) != 0 {
-		return protocol.Stack{}, errors.New("stack environment updates are not supported")
+	if e := checkEnvironment(env); e != nil {
+		return protocol.StackSaved{}, e
 	}
 	doc, e := parseCompose([]byte(y))
 	if e != nil {
-		return protocol.Stack{}, e
+		return protocol.StackSaved{}, e
 	}
 	if !doc.plan.empty() && m.secrets == nil {
-		return protocol.Stack{}, errSecretsUnsupported
+		return protocol.StackSaved{}, errSecretsUnsupported
 	}
 	l := m.lock(n)
 	l.Lock()
@@ -296,75 +354,112 @@ func (m *Manager) Save(ctx context.Context, n, y string, env map[string]string, 
 	dir := m.dir(n)
 	if expected == nil {
 		if _, e := os.Lstat(dir); e == nil {
-			return protocol.Stack{}, errors.New("stack already exists")
+			return protocol.StackSaved{}, errors.New("stack already exists")
 		} else if !os.IsNotExist(e) {
-			return protocol.Stack{}, e
+			return protocol.StackSaved{}, e
+		}
+		if env == nil {
+			env = map[string]string{}
 		}
 		if e := os.MkdirAll(m.root, 0700); e != nil {
-			return protocol.Stack{}, e
+			return protocol.StackSaved{}, e
 		}
 		staging, e := os.MkdirTemp(m.root, ".stack-")
 		if e != nil {
-			return protocol.Stack{}, e
+			return protocol.StackSaved{}, e
 		}
 		defer os.RemoveAll(staging)
 		if e := os.Mkdir(filepath.Join(staging, "revisions"), 0700); e != nil {
-			return protocol.Stack{}, e
+			return protocol.StackSaved{}, e
 		}
-		b, e := json.Marshal(env)
-		if e != nil {
-			return protocol.Stack{}, e
-		}
-		if e := m.writeAtomic(filepath.Join(staging, "env.json"), b); e != nil {
-			return protocol.Stack{}, e
-		}
-		if e := m.writeAtomic(filepath.Join(staging, "revisions", "1.yaml"), []byte(y)); e != nil {
-			return protocol.Stack{}, e
+		if e := m.writeRevision(staging, 1, y, env); e != nil {
+			return protocol.StackSaved{}, e
 		}
 		if e := m.writeComposePointer(staging, 1); e != nil {
-			return protocol.Stack{}, e
+			return protocol.StackSaved{}, e
 		}
 		if e := os.Rename(staging, dir); e != nil {
 			if os.IsExist(e) {
-				return protocol.Stack{}, errors.New("stack already exists")
+				return protocol.StackSaved{}, errors.New("stack already exists")
 			}
-			return protocol.Stack{}, e
+			return protocol.StackSaved{}, e
 		}
-		return protocol.Stack{Name: n, Project: m.project(n), ComposeYAML: y, Status: "saved", Version: 1}, nil
+		return protocol.StackSaved{Stack: protocol.Stack{Name: n, Project: m.project(n), ComposeYAML: y, Status: "saved", Version: 1, Environment: env}}, nil
 	}
 	if _, e := os.Stat(filepath.Join(dir, "compose.yaml")); e != nil {
-		return protocol.Stack{}, e
+		return protocol.StackSaved{}, e
 	}
 	current, e := m.version(n)
 	if e != nil {
-		return protocol.Stack{}, e
+		return protocol.StackSaved{}, e
 	}
 	if *expected != current {
-		return protocol.Stack{}, fmt.Errorf("stack version mismatch: expected %d, current %d", *expected, current)
+		return protocol.StackSaved{}, fmt.Errorf("stack version mismatch: expected %d, current %d", *expected, current)
+	}
+	previous, e := m.environment(n, current)
+	if e != nil {
+		return protocol.StackSaved{}, e
+	}
+	if env == nil {
+		env = previous
 	}
 	revisions := filepath.Join(dir, "revisions")
 	if current == 1 {
 		if _, e := os.Lstat(revisions); os.IsNotExist(e) {
 			legacy, e := os.ReadFile(filepath.Join(dir, "compose.yaml"))
 			if e != nil {
-				return protocol.Stack{}, e
+				return protocol.StackSaved{}, e
 			}
 			if e := os.Mkdir(revisions, 0700); e != nil {
-				return protocol.Stack{}, e
+				return protocol.StackSaved{}, e
 			}
 			if e := m.writeAtomic(filepath.Join(revisions, "1.yaml"), legacy); e != nil {
-				return protocol.Stack{}, e
+				return protocol.StackSaved{}, e
 			}
 		}
 	}
 	version := current + 1
-	if e := m.writeAtomic(filepath.Join(revisions, fmt.Sprintf("%d.yaml", version)), []byte(y)); e != nil {
-		return protocol.Stack{}, e
+	if e := m.writeRevision(dir, version, y, env); e != nil {
+		return protocol.StackSaved{}, e
 	}
 	if e := m.writeComposePointer(dir, version); e != nil {
-		return protocol.Stack{}, e
+		return protocol.StackSaved{}, e
 	}
-	return protocol.Stack{Name: n, Project: m.project(n), ComposeYAML: y, Status: "saved", Version: version}, nil
+	saved := protocol.StackSaved{Stack: protocol.Stack{Name: n, Project: m.project(n), ComposeYAML: y, Status: "saved", Version: version, Environment: env}}
+	if maps.Equal(previous, env) {
+		return saved, nil
+	}
+	state, e := m.readState(n)
+	if e != nil {
+		// Saved; the caller can still start it by hand.
+		saved.Operation = &protocol.StackOperation{Name: n, Operation: "up", Output: "the environment changed, but the stack's desired state could not be read: " + e.Error()}
+		return saved, nil
+	}
+	if state.Desired != desiredUp {
+		return saved, nil
+	}
+	op, e := m.operateLocked(ctx, n, "up")
+	if e != nil && op.Operation == "" {
+		op = protocol.StackOperation{Name: n, Operation: "up", Output: e.Error()}
+	}
+	saved.Operation = &op
+	if desc := m.describeState(&saved.Stack); desc != nil {
+		saved.Waiting = desc.Error()
+	}
+	return saved, nil
+}
+
+// writeRevision writes revision version's compose file and environment into
+// dir. Neither is live until the compose pointer moves to it.
+func (m *Manager) writeRevision(dir string, version int, y string, env map[string]string) error {
+	b, e := json.Marshal(env)
+	if e != nil {
+		return e
+	}
+	if e := m.writeAtomic(environmentFile(dir, version), b); e != nil {
+		return e
+	}
+	return m.writeAtomic(filepath.Join(dir, "revisions", fmt.Sprintf("%d.yaml", version)), []byte(y))
 }
 
 func (m *Manager) writeAtomic(path string, value []byte) error {
@@ -416,7 +511,8 @@ func (m *Manager) operate(ctx context.Context, n, op string) (protocol.StackOper
 // Down record the desired state first, so a reboot brings the stack back to
 // what was last asked even when the operation itself failed.
 func (m *Manager) operateLocked(ctx context.Context, n, op string) (protocol.StackOperation, error) {
-	if _, e := m.inspect(n); e != nil {
+	stack, e := m.inspect(n)
+	if e != nil {
 		return protocol.StackOperation{}, e
 	}
 	var state stackState
@@ -444,9 +540,7 @@ func (m *Manager) operateLocked(ctx context.Context, n, op string) (protocol.Sta
 	// podman-compose 1.0.6 accepts -p/-f, but not Docker Compose's
 	// --project-directory option. The executor sets its working directory.
 	args := []string{"-p", m.project(n), "-f", runtimeComposeFile}
-	env := map[string]string{}
-	b, _ := os.ReadFile(filepath.Join(m.dir(n), "env.json"))
-	_ = json.Unmarshal(b, &env)
+	env := stack.Environment
 	if op == "up" {
 		args = append(args, "up", "-d")
 	} else {

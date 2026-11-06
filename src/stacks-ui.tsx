@@ -7,12 +7,15 @@ import { setReferencedSecrets } from "./secrets-store";
 import {
   createStack,
   deployStack,
+  formatEnvironment,
   getStack,
+  parseEnvironment,
   rebootLabel,
   stackNamePattern,
   stopStack,
   updateStack,
   type Stack,
+  type StackOperation,
 } from "./stack-api";
 
 /** The selected host's stacks. */
@@ -129,6 +132,10 @@ export function StackEditor() {
   const editedStack = () => parseHostPath(location.pathname)?.stackName;
   const [name, setName] = createSignal("");
   const [compose, setCompose] = createSignal("");
+  // KEY=VALUE lines. Sent only once edited, so a compose-only save leaves
+  // the stack's environment (and its running containers) alone.
+  const [environmentText, setEnvironmentText] = createSignal("");
+  const [environmentEdited, setEnvironmentEdited] = createSignal(false);
   const [version, setVersion] = createSignal(0);
   const [error, setError] = createSignal("");
   const [loading, setLoading] = createSignal(false);
@@ -150,6 +157,8 @@ export function StackEditor() {
     setName(stackName ?? "");
     setCreated("");
     setCompose("");
+    setEnvironmentText("");
+    setEnvironmentEdited(false);
     setVersion(0);
     setSaved(false);
     setError("");
@@ -163,6 +172,7 @@ export function StackEditor() {
       .then((stack) => {
         if (request !== loadRequest) return;
         setCompose(stack.compose_yaml ?? "");
+        setEnvironmentText(formatEnvironment(stack.environment));
         setVersion(stack.version);
         setReferencedSecrets(hostID, stackName, stack.secrets ?? []);
       })
@@ -175,19 +185,30 @@ export function StackEditor() {
       });
   });
 
-  // Saves the form as a new stack, or as a new revision of the existing one,
-  // and returns the stack's name.
-  async function persist(hostID: string): Promise<string> {
+  // The environment to send: undefined keeps the stack's current one. Throws
+  // with the offending line when the field doesn't parse.
+  function environmentToSend(): Record<string, string> | undefined {
+    if (!environmentEdited()) return undefined;
+    return parseEnvironment(environmentText());
+  }
+
+  // Saves the form as a new stack, or as a new revision of the existing one.
+  // Returns the stack's name and, when the save changed a running stack's
+  // environment, the `up` the agent ran to apply it.
+  async function persist(hostID: string): Promise<{ stackName: string; operation?: StackOperation }> {
     const existing = existingStack();
+    const environment = environmentToSend();
     if (existing) {
-      await updateStack(hostID, existing, compose(), version());
-      setVersion(version() + 1);
+      const result = await updateStack(hostID, existing, compose(), version(), environment);
+      setVersion(result.version || version() + 1);
+      setEnvironmentEdited(false);
       setSaved(true);
       void loadStacks();
-      return existing;
+      return { stackName: existing, operation: result.operation };
     }
     const stackName = name().trim();
-    await createStack(hostID, stackName, compose());
+    await createStack(hostID, stackName, compose(), environment);
+    setEnvironmentEdited(false);
     setCreated(stackName);
     setSaved(true);
     void loadStacks();
@@ -198,26 +219,43 @@ export function StackEditor() {
     } catch (cause) {
       if (!sessionEnded(cause)) setError("Saved, but its version could not be read; reopen the stack to edit it.");
     }
-    return stackName;
+    return { stackName };
+  }
+
+  // Checks the form before a save; returns the problem, if any.
+  function formProblem(): string {
+    if (!stackNamePattern.test(name().trim()))
+      return "Use 1–63 lowercase letters, digits, hyphens or underscores; start with a letter or digit.";
+    if (!compose().trim()) return "Enter a Compose YAML document.";
+    try {
+      environmentToSend();
+    } catch (cause) {
+      return cause instanceof Error ? cause.message : "The environment is not valid.";
+    }
+    return "";
   }
 
   async function save(event: SubmitEvent) {
     event.preventDefault();
     if (busy()) return;
-    const stackName = name().trim();
-    if (!stackNamePattern.test(stackName)) {
-      setError("Use 1–63 lowercase letters, digits, hyphens or underscores; start with a letter or digit.");
-      return;
-    }
-    if (!compose().trim()) {
-      setError("Enter a Compose YAML document.");
+    const problem = formProblem();
+    if (problem) {
+      setError(problem);
       return;
     }
     setError("");
     setSaving(true);
     const hostID = currentHost();
     try {
-      if (!saved()) await persist(hostID);
+      if (!saved()) {
+        const { operation } = await persist(hostID);
+        // A failed restart with the new environment stays on the page with its output.
+        if (operation && !operation.success) {
+          setDeployOutput(operation.output || "");
+          setError("Saved, but restarting the stack with the new environment failed.");
+          return;
+        }
+      }
       navigate(hostPath(hostID, "stacks"));
     } catch (cause) {
       if (!sessionEnded(cause)) setError(cause instanceof Error ? cause.message : "Could not save the stack.");
@@ -244,22 +282,27 @@ export function StackEditor() {
     if (busy()) return;
     const form = event.currentTarget.form;
     if (!form?.reportValidity()) return;
-    const stackName = name().trim();
-    if (!stackNamePattern.test(stackName) || !compose().trim()) {
-      setError("Enter a valid stack name and Compose YAML document.");
+    const problem = formProblem();
+    if (problem) {
+      setError(problem);
       return;
     }
     setError("");
     setDeploying(true);
     const hostID = currentHost();
     try {
-      let target = existingStack() ?? stackName;
+      let target = existingStack() ?? name().trim();
+      let applied: StackOperation | undefined;
       if (!saved()) {
         const updating = !!existingStack();
-        target = await persist(hostID);
+        const result = await persist(hostID);
+        target = result.stackName;
+        applied = result.operation;
         if (updating) await refreshReferencedSecrets(hostID, target);
       }
-      const result = await deployStack(hostID, target);
+      // The save already brought the stack up with its new environment.
+      if (applied && !applied.success) throw new Error(applied.output || "Deploy failed.");
+      const result = applied ?? (await deployStack(hostID, target));
       setDeployOutput(result.output || "Deployment command completed.");
     } catch (cause) {
       if (sessionEnded(cause)) return;
@@ -313,6 +356,26 @@ export function StackEditor() {
             spellcheck={false}
           />
         </label>
+        <label>
+          Environment
+          <textarea
+            rows={6}
+            value={environmentText()}
+            onInput={(event) => {
+              setEnvironmentText(event.currentTarget.value);
+              setEnvironmentEdited(true);
+              setSaved(false);
+            }}
+            disabled={busy()}
+            placeholder={"# KEY=VALUE, one per line; use ${KEY} in the Compose file\nTZ=Europe/Amsterdam"}
+            spellcheck={false}
+          />
+        </label>
+        <p class="stack-note">
+          Values are substituted for <code>${"{KEY}"}</code> in the Compose file and stored in plain text with each
+          revision. Saving a changed environment restarts the stack if it is running. Passwords and keys belong in stack
+          secrets.
+        </p>
         <Show when={error()}>
           <p class="form-error" role="alert">
             {error()}

@@ -219,6 +219,11 @@ admin server.
   a file the agent accepts. `MaxRequest` is now `protocol.MaxMessageSize`
   (4 MiB), the relay's own limit, so nothing the relay would carry is
   refused at the socket.
+- **Environment is editable (2026-11-07,
+  [stack-environment.md](stack-environment.md)).** `stacks update` takes
+  `--env-file`, `stacks show` prints the values, and a save that brings a
+  running stack up prints that output. The "set when it is created" rule
+  above no longer holds.
 - **`--host` for the hosts commands too.** `hosts token --host HOST` and
   `hosts remove --host HOST` rather than a positional `HOST`, matching
   `sorry-portainer-server hosts` and the stacks commands.
