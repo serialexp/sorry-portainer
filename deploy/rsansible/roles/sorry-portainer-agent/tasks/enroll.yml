@@ -2,6 +2,18 @@
 # admin socket (root may use it), and the agent enrolls with it over the
 # network. The token only ever travels on stdin.
 
+# setup creates the account, so a real run always finds it here. In check
+# mode on a new host it is missing, and enrolling as it would fail before
+# the task could be skipped.
+- name: Look up the agent account
+  command:
+    argv: [getent, passwd, sorry-portainer-agent]
+  register: sorry_portainer_agent_account
+  changed_when: false
+  failed_when: sorry_portainer_agent_account.rc not in [0, 2]
+  check_mode: false
+  tags: [sorry-portainer]
+
 - name: Issue an enrollment token
   delegate_to: "{{ sorry_portainer_master }}"
   command:
@@ -36,6 +48,6 @@
       - "-"
     chdir: "{{ sorry_portainer_agent_dir }}"
     stdin: "{{ sorry_portainer_token.stdout | trim }}\n"
-  when: not sorry_portainer_agent_config.stat.exists
+  when: not sorry_portainer_agent_config.stat.exists and sorry_portainer_agent_account.rc == 0
   no_log: true
   tags: [sorry-portainer]

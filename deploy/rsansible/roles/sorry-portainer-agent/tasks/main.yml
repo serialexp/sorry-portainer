@@ -33,6 +33,14 @@
   register: sorry_portainer_agent_installed
   tags: [sorry-portainer]
 
+# In check mode a new host has no downloaded binary to ask; setup then
+# counts as pending.
+- name: Check the downloaded agent binary
+  stat:
+    path: "{{ sorry_portainer_agent_download_dir }}/sorry-portainer-agent"
+  register: sorry_portainer_agent_downloaded
+  tags: [sorry-portainer]
+
 - name: Check what setup would change
   command:
     argv:
@@ -45,6 +53,7 @@
   register: sorry_portainer_agent_plan
   changed_when: false
   check_mode: false
+  when: sorry_portainer_agent_downloaded.stat.exists
   tags: [sorry-portainer]
 
 - name: Check whether the agent is enrolled
@@ -54,8 +63,8 @@
   tags: [sorry-portainer]
 
 # setup is idempotent; it runs when the host lacks something, the user's
-# Podman configuration differs, or the installed binary is not the pinned
-# one.
+# Podman configuration differs, the installed binary is not the pinned
+# one, or (check mode on a new host) there was nothing to ask.
 - name: Set up the agent host
   command:
     argv:
@@ -66,7 +75,8 @@
       - "--map-host-loopback={{ sorry_portainer_agent_host_loopback }}"
     chdir: /
   when: >-
-    'No package or rootless Podman changes are required.' not in sorry_portainer_agent_plan.stdout
+    sorry_portainer_agent_plan is skipped
+    or 'No package or rootless Podman changes are required.' not in sorry_portainer_agent_plan.stdout
     or not sorry_portainer_agent_installed.stat.exists
     or sorry_portainer_agent_installed.stat.checksum != sorry_portainer_agent_binary_sha256
   notify: Restart sorry-portainer-agent
