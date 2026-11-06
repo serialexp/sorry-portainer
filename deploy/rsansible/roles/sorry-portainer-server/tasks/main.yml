@@ -1,7 +1,7 @@
 # The master: binary, state directory, server.json, systemd unit, and the
 # label-only container through which caddy-docker-proxy serves the
-# dashboard. The account is always sorry-portainer: rsansible does not
-# template become_user.
+# dashboard. The account is always sorry-portainer-master: rsansible does
+# not template become_user.
 
 - name: Check the required settings
   assert:
@@ -14,9 +14,11 @@
   no_log: true
   tags: [sorry-portainer]
 
+- import_tasks: rename.yml
+
 - name: Create the server account
   user:
-    name: sorry-portainer
+    name: sorry-portainer-master
     system: true
     home: "{{ sorry_portainer_server_state_dir }}"
     create_home: false
@@ -30,8 +32,8 @@
   file:
     path: "{{ sorry_portainer_server_state_dir }}"
     state: directory
-    owner: sorry-portainer
-    group: sorry-portainer
+    owner: sorry-portainer-master
+    group: sorry-portainer-master
     mode: "0700"
   tags: [sorry-portainer]
 
@@ -79,7 +81,7 @@
 # init creates the control CA and the empty host registry; the template
 # below then owns server.json. The password goes in on stdin, never argv.
 - name: Initialize the server state
-  become_user: sorry-portainer
+  become_user: sorry-portainer-master
   command:
     argv:
       - "{{ sorry_portainer_server_bin }}"
@@ -105,8 +107,8 @@
   template:
     src: server.json.j2
     dest: "{{ sorry_portainer_server_state_dir }}/server.json"
-    owner: sorry-portainer
-    group: sorry-portainer
+    owner: sorry-portainer-master
+    group: sorry-portainer-master
     mode: "0600"
   no_log: true
   notify: Restart sorry-portainer-server

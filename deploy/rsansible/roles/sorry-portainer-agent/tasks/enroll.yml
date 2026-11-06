@@ -21,7 +21,7 @@
   tags: [sorry-portainer]
 
 - name: Enroll with the master
-  become_user: sorry-portainer
+  become_user: sorry-portainer-agent
   command:
     argv:
       - "{{ sorry_portainer_agent_bin }}"

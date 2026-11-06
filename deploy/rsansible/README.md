@@ -30,13 +30,16 @@ The roles need:
 | `sorry_portainer_dashboard_host` | master | Name Caddy serves the dashboard under. |
 | `sorry_portainer_caddy_network` | master | Docker network caddy-docker-proxy watches (default `caddy`). |
 | `sorry_portainer_host_id` | agent | Host ID (default: the inventory name). |
+| `sorry_portainer_agent_host_loopback` | agent | Address at which the agent user's containers reach the host's 127.0.0.1 (default empty: none). Every one of them can then reach the host's loopback services. |
 
 ## What the roles do
 
 **sorry-portainer-server** (the master):
 
-- creates the `sorry-portainer` system account and `/var/lib/sorry-portainer`
-  (0700);
+- renames the account the master ran as until 2026-11, `sorry-portainer`, to
+  `sorry-portainer-master`, keeping its uid;
+- creates the `sorry-portainer-master` system account and
+  `/var/lib/sorry-portainer` (0700);
 - installs the pinned server binary in `/usr/local/bin`;
 - on the first run, runs `init` with the admin password on stdin, which creates
   the control CA;
@@ -52,11 +55,22 @@ the `caddy` and `caddy.reverse_proxy` labels.
 
 **sorry-portainer-agent**:
 
+- renames the account agents ran as until 2026-11, `sorry-portainer` in
+  `/home/sorry-portainer`, to `sorry-portainer-agent` in
+  `/home/sorry-portainer-agent`, uid and subordinate ranges kept. Podman's
+  database records its storage paths, so the old account's storage is reset
+  first; the role refuses if it holds containers, pods, images, volumes,
+  secrets or networks.
+- installs Podman 6 from the `serialexp/podman-ubuntu` packages pinned in
+  `vars/podman.yml` (regenerate with that repository's `scripts/pins.sh TAG`),
+  when dpkg reports other versions;
 - downloads the pinned agent binary into `/var/cache/sorry-portainer`;
-- runs `setup` from there when `setup --dry-run` reports missing pieces, or
-  when the installed binary is not the pinned one. `setup` installs Podman and
-  podman-compose, the rootless `sorry-portainer` user with lingering, the
-  binary and its unit.
+- runs `setup` from there when `setup --dry-run` reports missing pieces or a
+  stale Podman configuration, or when the installed binary is not the pinned
+  one. `setup` adds podman-compose, the rootless `sorry-portainer-agent` user
+  with lingering, its `containers.conf` drop-in (OCI hooks, pasta port
+  forwarding so containers see clients' addresses, and the host loopback
+  address), the binary and its unit.
 - when `/var/lib/sorry-portainer-agent/agent.json` is missing, issues a token
   on the master with `hosts token` and enrolls with it; the token only travels
   on stdin, under `no_log`.

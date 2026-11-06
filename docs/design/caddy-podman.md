@@ -1,6 +1,6 @@
 # Caddy on Podman (jp1 cutover) — Design
 
-Status: draft, not yet implemented — decisions made; Podman 6 packages built (serialexp/podman-ubuntu), jp1 retest outstanding
+Status: partial — decisions made, Podman 6 packages released and tried on jp1, phase 1 in code; host migration and phases 2–4 outstanding
 Owner: Bart
 Last updated: 2026-11-06
 
@@ -19,16 +19,22 @@ they land and move them to Done.
 - [x] **Decision — accounts.** Bart (2026-11-05): `sorry-portainer-master` for the server and `sorry-portainer-agent` for the agent, on every host. hel1's existing `sorry-portainer` account, with its rootless storage, is renamed rather than recreated.
 
 - [x] **Decision — client addresses.** Bart (2026-11-05): option (3), Podman 6 with `rootless_port_forwarder = "pasta"`, built by us; see [Podman 6](#podman-6-2026-11-06).
-- [x] **Podman 6 packages.** `serialexp/podman-ubuntu` on Gothab builds ten packages for 24.04 and 26.04; its smoke test checks, fresh and over Ubuntu's Podman, that a rootless published port sees an off-host client's address with pasta (CI, 2026-11-06). Release `v6.1.4-1`.
+- [x] **Podman 6 packages.** `serialexp/podman-ubuntu` on Gothab builds ten packages for 24.04 and 26.04; its smoke test checks, fresh and over Ubuntu's Podman, that a rootless published port sees an off-host client's address with pasta (CI, 2026-11-06). Release `v6.1.4-1`; it has two AppArmor bugs fixed in revision 2 (see [Podman 6 on jp1](#podman-6-on-jp1-2026-11-06)).
+- [x] **Release `v6.1.4-2` on jp1.** 2026-11-06: revision 2 carries both AppArmor fixes and installed over the hand-fixed `v6.1.4-1` without conffile prompts; pins in `deploy/rsansible/vars/podman.yml`.
+- [x] **Decision — dashboard route.** Bart (2026-11-06): map host loopback (`--map-host-loopback 169.254.1.3`) for the agent user, accepting that every agent-user container can reach the host's 127.0.0.1, "fine as long as we don't host anything sensitive or directly accessible on the hosts". On jp1 that is today mysqld (3306/33060, Ubuntu's mysql-server 8.0, one database `spacetraders`, no connections seen).
+- [x] **Agent-user containers.conf.** 2026-11-06: `setup` writes `rootless_port_forwarder = "pasta"` on Podman 6, and with `--map-host-loopback ADDR` (Podman 5 or later; the role's `sorry_portainer_agent_host_loopback`) `pasta_options = ["--map-host-loopback", ADDR]`, as the agent user through `setup-containers-conf`. A forwarder change is refused while the user's containers run, as Podman requires. `setup --dry-run` as root compares the drop-in, so the role reruns setup when it is stale. Pointing Caddy at `169.254.1.3:6200` is phase 3.
+- [x] **Agent setup installs a complete Podman.** 2026-11-06: apt satisfies `crun | runc` with Docker's `runc` (`containerd.io`) on 24.04, and 24.04's podman doesn't recommend netavark, so it falls back to CNI. `setup` now installs whichever of podman, podman-compose, crun, netavark, aardvark-dns and passt is missing. With our packages all but podman-compose are already there.
+- [x] **Hosts install the pinned packages.** 2026-11-06: the agent role installs the `v6.1.4-2` packages from `vars/podman.yml` (`scripts/pins.sh` in podman-ubuntu, which now pins each version) when dpkg reports other versions.
+- [x] **Phase 1 — account rename, in code.** 2026-11-06: `setup` defaults to `sorry-portainer-agent`, and takes the user's home from passwd instead of assuming `/home/USER`. The server role renames a `sorry-portainer` whose home is the state directory to `sorry-portainer-master`. The agent role renames a `sorry-portainer` in `/home/sorry-portainer` to `sorry-portainer-agent`. It refuses unless that user's Podman holds nothing, resets the storage, stops its user manager, moves the home, and renames the group and the subordinate ranges, which `usermod -l` leaves alone. Bart chose (2026-11-06) to move hel1's home over keeping it.
+- [x] **Experiment — Podman 6 on jp1.** 2026-11-06, `v6.1.4-1` plus the two fixes applied by hand; [results](#podman-6-on-jp1-2026-11-06). Client addresses, caddy-docker-proxy and host loopback (`--map-host-loopback`) all work.
 
 ### Outstanding
 
-- [ ] **Experiment — Podman 6 on jp1.** Install the `v6.1.4-1` packages and repeat results 1–3 with `rootless_port_forwarder = "pasta"`. Host loopback especially: the `allow_host_loopback` route in result 3 is a slirp4netns option, and Podman 6 removed slirp4netns, so the bridge-network path to the master's 127.0.0.1:6200 must be found again with pasta.
-- [ ] **Hosts install the pinned packages.** The roles install the `v6.1.4-1` assets (`scripts/pins.sh` in podman-ubuntu) until Gothab has apt repositories (REQ-55 in serialexp/gothab), then a sources entry.
 - [ ] **Experiment — reboot.** Question 5 (lingering brings Caddy and the stacks back after a reboot) needs a jp1 reboot; do it in the switch window.
-- [ ] **Agent setup on Ubuntu 24.04 installs a complete Podman.** apt satisfies `crun | runc` with Docker's `runc` (`containerd.io`), which goes with Docker, and 24.04's podman doesn't recommend netavark, so it falls back to CNI. With our packages `podman` depends on `crun`, `netavark`, `aardvark-dns` and `passt` directly, so this becomes: `setup` checks for Podman 6 and the forwarder setting rather than installing Ubuntu's.
-- [ ] **Phase 1 — account rename.** Agent default user `sorry-portainer-agent` in `internal/agentsetup`; the roles use both names; jp1's server account and hel1's agent account (home, subuid/subgid, linger, unit) migrated; release.
-- [ ] **Phase 2 — agent on jp1.** `setup`, enrollment, through the rsansible role.
+- [ ] **Phase 1 — migrate the hosts.** Release with the changes above, pin it in `vars/release.yml`, then run the roles: jp1's server account becomes `sorry-portainer-master`, hel1's agent account `sorry-portainer-agent` (home moved, storage reset) and hel1 moves to Podman 6.
+- [ ] **Gothab apt repository.** Replace the pinned `.deb` downloads with a sources entry once Gothab has apt repositories (REQ-55 in serialexp/gothab).
+- [ ] **CLAUDE.md native-packages rule.** The project rule still says agents use Ubuntu's native packages; it should name the podman-ubuntu packages. Waiting on Bart.
+- [ ] **Phase 2 — agent on jp1.** `setup`, enrollment, through the rsansible role, with `sorry_portainer_agent_host_loopback: 169.254.1.3` in jp1's inventory.
 - [ ] **Phase 3 — big-bang switch.** In one window: stop the Docker stacks; copy volumes and `caddy_data`; start Caddy and every stack as sorry-portainer stacks with `jp1-` names; point the master's web listener at 127.0.0.1 (or containerize it).
 - [ ] **Phase 4 — retire Docker on jp1.** Portainer, the label container and the role's Docker tasks go; Docker is removed once the switch has held.
 
@@ -293,3 +299,40 @@ Found while building:
 
 This goes against the project's rule of native Ubuntu packages for agents
 (CLAUDE.md); that rule needs updating to name these packages.
+
+## Podman 6 on jp1 (2026-11-06)
+
+Installed `v6.1.4-1` on jp1 (Ubuntu 24.04) over Ubuntu's Podman 4.9.3, with
+Docker running alongside; nothing was removed. A throwaway rootless user with
+`rootless_port_forwarder = "pasta"`, removed afterwards.
+
+Two AppArmor bugs, which CI couldn't see because its VMs confine nothing:
+
+- **pasta ran under passt's profile.** Upstream installs `pasta` as a symlink
+  to `passt`; AppArmor attaches profiles by resolved path, and passt's denies
+  `rootless-netns-conn.pid`, so rootless networking failed outright.
+  Ubuntu's package uses hard links; ours now does too.
+- **Podman couldn't stop pasta.** Podman 6 sends the rootless-netns pasta
+  SIGTERM on teardown, and upstream's pasta profile denies signals from
+  Ubuntu's `podman` profile, so removing a container failed. Revision 2
+  patches the profile (`signal (receive) peer={podman,unconfined}`); upstream
+  passt has no fix as of 2026-11-06.
+
+The CI smoke test now loads the packages' profiles (`SMOKE_APPARMOR=1`) so
+the rootless checks run confined.
+
+With both fixes applied by hand:
+
+1. **Client addresses are kept.** From outside, a container on the bridge
+   network `caddy` behind a published port saw the real client address.
+2. **caddy-docker-proxy works** on the rootless socket as on 4.9
+   (`CADDY_DOCKER_NO_SCOPE=true`, `CADDY_INGRESS_NETWORKS=caddy`): it read
+   the labels, resolved `{{upstreams 8080}}`, and the site saw the real
+   client address in `X-Forwarded-For`.
+3. **Host loopback needs `--map-host-loopback`.** `host.containers.internal`
+   (169.254.1.2) is the host's external address, so a listener on 127.0.0.1
+   refuses. With `pasta_options = ["--map-host-loopback", "169.254.1.3"]`,
+   containers on `caddy` and on pasta's default network reach the host's
+   127.0.0.1 at 169.254.1.3. That opens every loopback service on the host to
+   every container of that user, as `allow_host_loopback` did on 4.9.
+4. Teardown is clean: pasta exits when the last container goes, no denials.

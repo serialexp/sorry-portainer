@@ -25,3 +25,7 @@ all:
           ansible_host: podman-host.example.com
           # Defaults to the inventory name.
           sorry_portainer_host_id: podman-host
+          # Where this host's agent containers reach its 127.0.0.1, e.g. for
+          # a Caddy stack in front of a master on the same host. Every agent
+          # container can then reach the host's loopback services.
+          # sorry_portainer_agent_host_loopback: 169.254.1.3

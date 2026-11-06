@@ -4,6 +4,15 @@ sorry_portainer_agent_bin: /usr/local/bin/sorry-portainer-agent
 # sorry_portainer_agent_bin.
 sorry_portainer_agent_download_dir: /var/cache/sorry-portainer
 sorry_portainer_host_id: "{{ inventory_hostname }}"
+# The address at which the agent user's containers reach the host's
+# 127.0.0.1 (pasta --map-host-loopback); empty for none. Every one of that
+# user's containers can then reach the host's loopback services. On the
+# master's host it is how Caddy reaches the dashboard.
+sorry_portainer_agent_host_loopback: ""
+# Agent hosts' Ubuntu releases, by codename, as vars/podman.yml names them.
+sorry_portainer_ubuntu_versions:
+  noble: "24.04"
+  resolute: "26.04"
 # The master's state directory and binary, for issuing enrollment tokens.
 sorry_portainer_master_state_dir: /var/lib/sorry-portainer
 sorry_portainer_master_bin: /usr/local/bin/sorry-portainer-server

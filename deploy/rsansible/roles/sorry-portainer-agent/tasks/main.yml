@@ -1,6 +1,12 @@
-# An agent host: `sorry-portainer-agent setup` installs Podman, the
-# rootless service user, the binary and its unit; the host then enrolls
-# with a one-time token from the master and the service starts.
+# An agent host: Podman 6 from the pinned packages, then
+# `sorry-portainer-agent setup` adds the rootless service user
+# (sorry-portainer-agent; rsansible does not template become_user), its
+# Podman configuration, the binary and its unit; the host then enrolls with
+# a one-time token from the master and the service starts.
+
+- import_tasks: rename.yml
+
+- import_tasks: podman.yml
 
 - name: Create the download directory
   file:
@@ -29,7 +35,13 @@
 
 - name: Check what setup would change
   command:
-    argv: ["{{ sorry_portainer_agent_download_dir }}/sorry-portainer-agent", setup, --dry-run, --user, sorry-portainer]
+    argv:
+      - "{{ sorry_portainer_agent_download_dir }}/sorry-portainer-agent"
+      - setup
+      - --dry-run
+      - --user
+      - sorry-portainer-agent
+      - "--map-host-loopback={{ sorry_portainer_agent_host_loopback }}"
   register: sorry_portainer_agent_plan
   changed_when: false
   check_mode: false
@@ -41,11 +53,17 @@
   register: sorry_portainer_agent_config
   tags: [sorry-portainer]
 
-# setup is idempotent; it runs when the host lacks something or the
-# installed binary is not the pinned one.
+# setup is idempotent; it runs when the host lacks something, the user's
+# Podman configuration differs, or the installed binary is not the pinned
+# one.
 - name: Set up the agent host
   command:
-    argv: ["{{ sorry_portainer_agent_download_dir }}/sorry-portainer-agent", setup, --user, sorry-portainer]
+    argv:
+      - "{{ sorry_portainer_agent_download_dir }}/sorry-portainer-agent"
+      - setup
+      - --user
+      - sorry-portainer-agent
+      - "--map-host-loopback={{ sorry_portainer_agent_host_loopback }}"
     chdir: /
   when: >-
     'No package or rootless Podman changes are required.' not in sorry_portainer_agent_plan.stdout

@@ -19,5 +19,6 @@
   become: true
   vars_files:
     - vars/release.yml
+    - vars/podman.yml
   roles:
     - sorry-portainer-agent

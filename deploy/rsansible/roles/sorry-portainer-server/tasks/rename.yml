@@ -1,0 +1,46 @@
+# Until 2026-11 the master ran as `sorry-portainer`. That account, whose
+# home is the state directory, becomes `sorry-portainer-master` with its
+# uid kept, so the state keeps its owner. An agent's old `sorry-portainer`
+# (home in /home) is the agent role's to rename, never this one's.
+
+- name: Look up the old server account
+  command:
+    argv: [getent, passwd, sorry-portainer]
+  register: sorry_portainer_server_old_account
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  tags: [sorry-portainer]
+
+- name: Rename the old server account
+  when: "(':' ~ sorry_portainer_server_state_dir ~ ':') in sorry_portainer_server_old_account.stdout"
+  tags: [sorry-portainer]
+  block:
+    - name: Look up the new server account
+      command:
+        argv: [getent, passwd, sorry-portainer-master]
+      register: sorry_portainer_server_new_account
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Refuse when both accounts exist
+      assert:
+        that:
+          - sorry_portainer_server_new_account.rc != 0
+        fail_msg: "both sorry-portainer and sorry-portainer-master exist; resolve by hand"
+
+    # usermod refuses while the account has processes; the unit below
+    # starts it again under the new name.
+    - name: Stop the server
+      systemd:
+        name: sorry-portainer-server
+        state: stopped
+
+    - name: Rename the account
+      command:
+        argv: [usermod, --login, sorry-portainer-master, sorry-portainer]
+
+    - name: Rename the account's group
+      command:
+        argv: [groupmod, --new-name, sorry-portainer-master, sorry-portainer]

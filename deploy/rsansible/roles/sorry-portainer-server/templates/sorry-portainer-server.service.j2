@@ -9,8 +9,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=sorry-portainer
-Group=sorry-portainer
+User=sorry-portainer-master
+Group=sorry-portainer-master
 ExecStart={{ sorry_portainer_server_bin }} --config {{ sorry_portainer_server_state_dir }}/server.json
 Restart=always
 RestartSec=5

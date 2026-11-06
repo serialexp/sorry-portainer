@@ -1,0 +1,119 @@
+# Until 2026-11 the agent ran as `sorry-portainer`, with its home in
+# /home/sorry-portainer. That account becomes `sorry-portainer-agent`, uid
+# kept, home moved. Podman's database records its storage paths, so moving
+# the home needs a storage reset first, and the role refuses one unless the
+# old storage holds nothing. The master's `sorry-portainer` (home in its
+# state directory) is the server role's to rename, never this one's.
+
+- name: Look up the old agent account
+  command:
+    argv: [getent, passwd, sorry-portainer]
+  register: sorry_portainer_agent_old_account
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  tags: [sorry-portainer]
+
+- name: Rename the old agent account
+  when: "':/home/sorry-portainer:' in sorry_portainer_agent_old_account.stdout"
+  tags: [sorry-portainer]
+  block:
+    - name: Look up the new agent account
+      command:
+        argv: [getent, passwd, sorry-portainer-agent]
+      register: sorry_portainer_agent_new_account
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Refuse when both accounts exist
+      assert:
+        that:
+          - sorry_portainer_agent_new_account.rc != 0
+        fail_msg: "both sorry-portainer and sorry-portainer-agent exist; resolve by hand"
+
+    - name: Stop the agent
+      systemd:
+        name: sorry-portainer-agent
+        state: stopped
+
+    # Anything here would be lost by the reset: containers, pods, images,
+    # volumes, secrets, and networks besides the default one.
+    - name: List what the old account's Podman holds
+      shell: |
+        set -eu
+        cd /
+        uid=$(id -u sorry-portainer)
+        p() { runuser -u sorry-portainer -- env XDG_RUNTIME_DIR=/run/user/$uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus podman "$@" 2>/dev/null; }
+        p ps --all --quiet
+        p pod ps --quiet
+        p images --all --quiet
+        p volume ls --quiet
+        p secret ls --quiet
+        p network ls --format '{{ '{{' }}.Name{{ '}}' }}' | grep -vx podman || true
+      register: sorry_portainer_agent_old_storage
+      changed_when: false
+      check_mode: false
+
+    - name: Refuse to reset storage that holds something
+      assert:
+        that:
+          - sorry_portainer_agent_old_storage.stdout | trim == ""
+        fail_msg: "sorry-portainer's rootless Podman still holds something, which moving its home would lose: {{ sorry_portainer_agent_old_storage.stdout }}"
+
+    - name: Reset the old account's Podman storage
+      shell: |
+        set -eu
+        cd /
+        uid=$(id -u sorry-portainer)
+        runuser -u sorry-portainer -- env XDG_RUNTIME_DIR=/run/user/$uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus podman system reset --force
+
+    # Linger is recorded by name; setup enables it for the new one.
+    - name: Stop the old account's user manager
+      shell: |
+        set -eu
+        cd /
+        uid=$(id -u sorry-portainer)
+        loginctl disable-linger sorry-portainer
+        systemctl stop "user@$uid.service"
+        # usermod refuses while the user has processes.
+        for _ in $(seq 50); do
+          pgrep -u "$uid" >/dev/null || exit 0
+          sleep 0.2
+        done
+        echo "sorry-portainer still has processes" >&2
+        pgrep -a -u "$uid" >&2
+        exit 1
+
+    - name: Rename the account and move its home
+      command:
+        argv: [usermod, --login, sorry-portainer-agent, --home, /home/sorry-portainer-agent, --move-home, sorry-portainer]
+
+    - name: Rename the account's group
+      command:
+        argv: [groupmod, --new-name, sorry-portainer-agent, sorry-portainer]
+
+    # usermod renames neither.
+    - name: Rename the subordinate uid range
+      lineinfile:
+        path: /etc/subuid
+        regexp: '^sorry-portainer:(.*)$'
+        line: 'sorry-portainer-agent:\1'
+        backrefs: true
+
+    - name: Rename the subordinate gid range
+      lineinfile:
+        path: /etc/subgid
+        regexp: '^sorry-portainer:(.*)$'
+        line: 'sorry-portainer-agent:\1'
+        backrefs: true
+
+    - name: Check the renamed account
+      shell: |
+        set -eu
+        getent passwd sorry-portainer-agent | grep -q ':/home/sorry-portainer-agent:'
+        grep -q '^sorry-portainer-agent:' /etc/subuid
+        grep -q '^sorry-portainer-agent:' /etc/subgid
+        ! grep -q '^sorry-portainer:' /etc/subuid /etc/subgid
+        test ! -e /home/sorry-portainer
+      changed_when: false
