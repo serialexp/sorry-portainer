@@ -1,8 +1,8 @@
 # Stack Secrets — Design
 
-Status: partial — phases 1 and 2 (rotation, agent restart, host reboot) implemented and tested end to end on rootless Podman 4.9.3/runc; stack deletion, crun and Ubuntu 26.04 outstanding
+Status: partial — phases 1 and 2 (rotation, agent restart, host reboot) and showing a stored value implemented and tested end to end on rootless Podman 4.9.3/runc; stack deletion, crun and Ubuntu 26.04 outstanding
 Owner: Bart
-Last updated: 2026-11-05
+Last updated: 2026-11-07
 
 ## Implementation status
 
@@ -23,7 +23,7 @@ items as they land and move them to Done.
 - [x] **Decision — scope.** Bart (2026-09-24): secrets belong to one stack (open question 5, per stack).
 - [x] **Decision — existing `env.json`.** Bart (2026-09-24): keep the plaintext stack environment for ordinary settings, clearly labelled in the UI and API as not for secrets (open question 6).
 - [x] **Decision — rotation.** Bart (2026-09-24): the agent restarts affected containers automatically when a new value arrives (open question 7).
-- [x] **Phase 1 — master secret store.** `internal/secretstore`: Argon2id (t=3, 64 MiB, p=4) key from the passphrase, AES-256-GCM per value with host/stack/name bound as associated data, one sealed file per secret under `<state_dir>/secrets`. Unlock, lock and initialize over `/api/secrets/*`; values are write-only (`PUT`/`DELETE /api/hosts/{h}/stacks/{s}/secrets/{name}`, `GET` lists names, sizes and times even while locked). Limits: 64 KiB per value, 64 secrets and 1 MiB per stack. The passphrase is entered in the web UI after start rather than on the server's terminal (see [Implementation notes](#implementation-notes-2026-09-24)).
+- [x] **Phase 1 — master secret store.** `internal/secretstore`: Argon2id (t=3, 64 MiB, p=4) key from the passphrase, AES-256-GCM per value with host/stack/name bound as associated data, one sealed file per secret under `<state_dir>/secrets`. Unlock, lock and initialize over `/api/secrets/*`; values are write-only (no longer since 2026-11-07, see [Follow-up](#follow-up-2026-11-07-showing-a-stored-value)) (`PUT`/`DELETE /api/hosts/{h}/stacks/{s}/secrets/{name}`, `GET` lists names, sizes and times even while locked). Limits: 64 KiB per value, 64 secrets and 1 MiB per stack. The passphrase is entered in the web UI after start rather than on the server's terminal (see [Implementation notes](#implementation-notes-2026-09-24)).
 - [x] **Phase 1 — swap warning.** The agent reports `swap_active` from `/proc/swaps` in its hello; the host list and host page show a warning. Whether swap is encrypted is not detected.
 - [x] **Phase 1 — relay delivery.** Protocol version 4: `secrets.sync` (one stack's full set; the agent answers with changed/removed/restarted names and problems) and `secrets.retain` (forget stacks not listed, sent only after a fully successful push). The master pushes on value change, on unlock and on every agent connect. Values are never logged; the agent's vault is memory only and survives relay reconnects. Zeroing is best effort (JSON decoding makes copies Go cannot wipe).
 - [x] **Phase 1 — agent hook.** `sorry-portainer-agent oci-hook --host-id H --socket S`, stage `createRuntime`, 15 s timeout, matched on annotation `io.sorry-portainer.agent=^H$`. The socket is `$XDG_RUNTIME_DIR/sorry-portainer/<host>.sock` (directory 0700, socket 0600, peer uid checked with `SO_PEERCRED`). The hook refuses unless `<rootfs>/run/secrets` is a tmpfs that is its own mount, creates files with `O_EXCL|O_NOFOLLOW` under `openat2` no-symlink resolution, and maps owner IDs through the container's user namespace. Any failure exits non-zero and runc refuses to start the container.
@@ -38,6 +38,7 @@ items as they land and move them to Done.
 - [x] **Decision — agent stop kills stack containers (not secret-specific).** Bart (2026-09-25): option (a). The agent unsets `INVOCATION_ID` at startup, before it runs any Podman command, so each conmon gets its own `libpod-conmon-<id>.scope`. Verified live: with the variable set, stopping the calling unit kills conmon and the container is stuck in "stopping"; without it, conmon survives and `podman stop` works. The dev agent restarted with `secret-demo` running: the container kept running and was not restarted.
 - [x] **Phase 2 — host reboot and agent restart.** Bart (2026-09-25): the agent remembers. `Up` and `Down` record the desired state in `<stack>/state.json` (no secrets), with the host's boot ID when an `up` succeeded. At start the agent brings up, one at a time, every stack that should be up but has not been up since this boot; a stack whose secrets have not arrived waits, and the master's push starts it (`SecretSyncResult.started`). The stack list shows "starts after reboot" / "stays stopped after reboot" and why a stack is waiting; the list got a Stop button (with confirmation) so the desired state can be set to down from the UI.
 - [x] **Tests — restart and reboot (extended beyond the original plan).** Unit tests for desired state, resume after reboot vs agent restart, waiting for and starting on the push, a broken state file, and digest comparisons (`internal/stacks/desired_test.go`, `internal/secrets`); benchmarks for listing and resuming 1000 stacks; the live Podman test now also covers an agent restart (push restarts nothing) and a simulated reboot (plain stack back at once, secret stack started by the push).
+- [x] **Decision and implementation — showing a stored value (2026-11-07).** Bart chose "Show, re-enter passphrase", which reverses the write-only rule in phase 1. See [Follow-up](#follow-up-2026-11-07-showing-a-stored-value).
 
 ### Outstanding
 
@@ -227,6 +228,36 @@ Bart chose (a) for both open decisions and "the agent remembers" for reboots.
   and stays stopped after a reboot until it is started once. If the master
   itself rebooted, it is locked until someone unlocks it, and secret stacks
   on every host wait until then.
+
+## Follow-up (2026-11-07): showing a stored value
+
+Phase 1 made values write-only: the API never returned one. Bart asked to be
+able to see a stored value while the store is unlocked, and chose "Show,
+re-enter passphrase" over showing values to any unlocked session.
+
+- **Route.** `POST /api/hosts/{h}/stacks/{s}/secrets/{name}/reveal` with
+  `{"passphrase": …}` answers `{"value": …}` with `Cache-Control: no-store`.
+  It needs a dashboard session, an unlocked store, and the passphrase again
+  (`secretstore.Store.Reveal`, which checks it against the vault's check
+  value like `Unlock` does). A stolen session alone reads nothing back. A
+  store locked while the check was queued reveals nothing.
+- **Guessing.** Each check is a full Argon2id derivation, serialized with
+  unlocks. Wrong passphrases count against the client in a limiter shared by
+  reveal and unlock: 10 in a row, then one every 3 s, the same shape as
+  sign-ins. Right passphrases cost nothing. Before this change, `unlock` had
+  no limit, so a session could already guess the passphrase as fast as the
+  derivation allowed. The shared limiter closes that too.
+- **Audit.** The master logs `secrets: revealed host/stack/name to <client>`,
+  and `reveal of … refused … wrong passphrase` on a miss. It never logs the
+  value or the passphrase.
+- **UI.** Each secret row has a Show button that opens a passphrase prompt
+  for that secret. The value appears read-only under the row until Hide,
+  another Show, a replace or delete of that secret, a lock, or the end of the
+  session. The value is held in the panel component only, not in the shared
+  Solid store.
+- **Copies.** The server clears its decrypted bytes after answering. The
+  JSON string, the browser's copy and the screen are beyond that, as for any
+  value typed into the form.
 
 ## Open questions for review
 

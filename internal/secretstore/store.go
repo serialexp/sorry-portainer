@@ -186,26 +186,74 @@ func (s *Store) Unlock(passphrase string) error {
 	case Unlocked:
 		// Still verify, so an unlocked store is not an oracle that accepts anything.
 	}
-	data, err := os.ReadFile(filepath.Join(s.dir, vaultFileName))
+	key, aead, err := s.verify(passphrase)
 	if err != nil {
 		return err
 	}
+	s.setUnlocked(key, aead)
+	return nil
+}
+
+// verify derives the key from passphrase and checks it against the vault's
+// check value. The caller holds unlockMu, so derivations run one at a time.
+func (s *Store) verify(passphrase string) ([]byte, cipher.AEAD, error) {
+	data, err := os.ReadFile(filepath.Join(s.dir, vaultFileName))
+	if err != nil {
+		return nil, nil, err
+	}
 	var vault vaultFile
 	if err := json.Unmarshal(data, &vault); err != nil || vault.Version != 1 || vault.KDF.Algorithm != "argon2id" || len(vault.Salt) < 16 {
-		return ErrCorruptVaultFile
+		return nil, nil, ErrCorruptVaultFile
 	}
 	key := deriveKey(passphrase, vault.Salt, vault.KDF)
 	aead, err := newAEAD(key)
 	if err != nil {
-		return err
+		clear(key)
+		return nil, nil, err
 	}
 	text, err := open(aead, vault.Check, []byte("check"))
 	if err != nil || subtle.ConstantTimeCompare(text, []byte(checkText)) != 1 {
 		clear(key)
-		return ErrWrongPassphrase
+		return nil, nil, ErrWrongPassphrase
 	}
-	s.setUnlocked(key, aead)
-	return nil
+	return key, aead, nil
+}
+
+// Reveal decrypts one value for showing to the operator. It needs the store
+// unlocked and the passphrase again: an unlocked store and a dashboard
+// session alone must not be enough to read a value back. The check costs a
+// full key derivation, queued behind any other.
+func (s *Store) Reveal(host, stack, name, passphrase string) ([]byte, error) {
+	if err := validate(host, stack, name); err != nil {
+		return nil, err
+	}
+	// Refuse a locked store before paying for the derivation.
+	if _, err := s.cipher(); err != nil {
+		return nil, err
+	}
+	s.unlockMu.Lock()
+	key, aead, err := s.verify(passphrase)
+	s.unlockMu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	clear(key)
+	// The derivation may have queued; a store locked meanwhile reveals nothing.
+	if s.State() != Unlocked {
+		return nil, ErrLocked
+	}
+	sealed, err := os.ReadFile(filepath.Join(s.stackDir(host, stack), name+sealedSuffix))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	value, err := open(aead, sealed, valueAAD(host, stack, name))
+	if err != nil {
+		return nil, fmt.Errorf("secret %s/%s/%s does not decrypt: %w", host, stack, name, err)
+	}
+	return value, nil
 }
 
 func (s *Store) setUnlocked(key []byte, aead cipher.AEAD) {

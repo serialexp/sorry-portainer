@@ -24,6 +24,13 @@
 - **Admin CLI phase 2 done (2026-11-07):** v0.2.4 released (run 7) and pinned in `vars/release.yml`; deployed to jp1 and hel1, and a second run changes nothing. `/usr/local/bin/sorry-portainer` is on jp1. Working from here: `sorry-portainer --master ssh://root@jp1.serial-experiments.com hosts list`, and `stacks list` for both hosts. Create, up, down and restart haven't been run for real yet, since stacks can't be deleted and a test stack would stay behind.
 - **foundryvtt imported on jp1 (2026-11-07), not started.** `/tmp/jp1-survey/convert.py` (run on jp1 as root with `python3 -I`) moved the 9 inline values to `/root/sp-import/foundryvtt/stack.env` (0600, still there; ask before deleting) and qualified the image. `sorry-portainer stacks create` on jp1 made version 1; env.json matches. Docker's foundryvtt still serves; starting the Podman one waits for the volume move.
 - **Editable environment (docs/design/stack-environment.md), released in v0.2.5 and deployed 2026-11-07** (second run changes nothing; jp1 returns foundryvtt's 9 keys from its old-format env.json). Bart: env values are configuration and must be visible and editable; a changed environment recreates a running stack. Per-revision `revisions/N.env.json` (the old stack-level `env.json` still applies to older revisions, so foundryvtt keeps working). Tests, mutation checks, the real-Podman test and a dev-dashboard check pass. Open: should compose-only saves also recreate a running stack? Dev stack `env-demo` stays on local-a, stopped.
+- **Showing a stored stack secret (2026-11-07), not released.** Bart chose "Show, re-enter passphrase". Wheat change "Stack secrets: show a stored value after re-entering the passphrase":
+  - `secretstore.Store.Reveal` (needs an unlocked store and the passphrase);
+  - `POST /api/hosts/{h}/stacks/{s}/secrets/{name}/reveal`, which answers no-store and logs the name and client but never the value;
+  - a per-client limiter for wrong passphrases, shared with `unlock`, which had no limit before;
+  - a Show button and passphrase prompt in the secrets panel.
+
+  The design follow-up is in `stack-secrets.md`. Go and frontend tests pass, and the dev dashboard was checked by hand. For that check the dev secret store was parked under `.dev/state/secrets.parked-20261107`, because its passphrase isn't recorded. It was restored afterwards, and the temporary store was removed. Not released (ask first).
 - Next: phase 3 prep:
   - a converter on jp1 (env extraction without printing, fully qualified images, no `container_name`);
   - the Caddy stack;

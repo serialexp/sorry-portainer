@@ -59,6 +59,10 @@ type Server struct {
 	// secrets and pusher are nil when no secret store is configured.
 	secrets *secretstore.Store
 	pusher  *secretPusher
+	// passphrases limits wrong secret-store passphrases (unlock and reveal)
+	// per client, as sessions limit sign-ins: a stolen session must not be
+	// able to guess the passphrase at the speed of the key derivation.
+	passphrases *loginLimiter
 	// enrollment is nil until EnableEnrollment.
 	enrollment *enrollment.Service
 	controlURL string
@@ -66,7 +70,7 @@ type Server struct {
 
 // New creates the web API. store may be nil, which disables stack secrets.
 func New(sessions SessionOptions, relay Relay, store *secretstore.Store) *Server {
-	s := &Server{sessions: NewSessions(sessions), relay: relay, secrets: store}
+	s := &Server{sessions: NewSessions(sessions), relay: relay, secrets: store, passphrases: newLoginLimiter(maxLoginClients)}
 	if store != nil {
 		s.pusher = newSecretPusher(store, relay)
 	}
@@ -150,12 +154,15 @@ func (s *Server) hostOperation(w http.ResponseWriter, r *http.Request) {
 		respond(w, stack, err, http.StatusNotFound)
 		return
 	}
-	if (len(parts) == 4 || len(parts) == 5) && parts[1] == "stacks" && parts[3] == "secrets" {
-		name := ""
-		if len(parts) == 5 {
+	if len(parts) >= 4 && len(parts) <= 6 && parts[1] == "stacks" && parts[3] == "secrets" {
+		name, action := "", ""
+		if len(parts) >= 5 {
 			name = parts[4]
 		}
-		s.stackSecrets(w, r, parts[0], parts[2], name)
+		if len(parts) == 6 {
+			action = parts[5]
+		}
+		s.stackSecrets(w, r, parts[0], parts[2], name, action)
 		return
 	}
 	if len(parts) == 4 && parts[1] == "stacks" && parts[3] == "versions" && r.Method == http.MethodGet {

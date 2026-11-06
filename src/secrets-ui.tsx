@@ -8,6 +8,7 @@ import {
   removeStackSecret,
   saveStackSecret,
   secrets,
+  showStackSecret,
   stackSecrets,
   unlockSecretStore,
 } from "./secrets-store";
@@ -152,17 +153,66 @@ export function StackSecretsPanel(props: { hostID: string; stackName: string }) 
   const [value, setValue] = createSignal("");
   const [formError, setFormError] = createSignal("");
   const [reveal, setReveal] = createSignal(false);
+  // Showing a stored value: the secret whose passphrase prompt is open, and
+  // the one value fetched. Kept in this component only, never in the store.
+  const [asking, setAsking] = createSignal("");
+  const [showPassphrase, setShowPassphrase] = createSignal("");
+  const [showBusy, setShowBusy] = createSignal(false);
+  const [showError, setShowError] = createSignal("");
+  const [shown, setShown] = createSignal<{ name: string; value: string } | null>(null);
+  function hideShown() {
+    setAsking("");
+    setShowPassphrase("");
+    setShowError("");
+    setShown(null);
+  }
   createEffect(() => {
     setName("");
     setValue("");
     setReveal(false);
     setFormError("");
+    hideShown();
     void loadStackSecrets(props.hostID, props.stackName);
+  });
+  // Locking the store (or the session ending) hides any shown value.
+  createEffect(() => {
+    if (secrets.store !== "unlocked") hideShown();
   });
   const stored = () => new Set(state().entries.map((entry) => entry.name));
   const missing = () => state().referenced.filter((secret) => !stored().has(secret));
   const unused = () => state().entries.filter((entry) => !state().referenced.includes(entry.name));
   const unlocked = () => secrets.store === "unlocked";
+
+  function ask(secretName: string) {
+    hideShown();
+    setAsking(secretName);
+  }
+
+  async function show(event: SubmitEvent) {
+    event.preventDefault();
+    const secretName = asking();
+    const passphrase = showPassphrase();
+    if (!secretName || showBusy()) return;
+    if (!passphrase) {
+      setShowError("Enter the secret store passphrase.");
+      return;
+    }
+    setShowBusy(true);
+    setShowError("");
+    const host = props.hostID;
+    const stack = props.stackName;
+    const result = await showStackSecret(host, stack, secretName, passphrase);
+    setShowBusy(false);
+    // Drop an answer for a prompt that was closed or moved meanwhile.
+    if (!result || asking() !== secretName || host !== props.hostID || stack !== props.stackName) return;
+    setShowPassphrase("");
+    if ("error" in result) {
+      setShowError(result.error);
+      return;
+    }
+    setAsking("");
+    setShown({ name: secretName, value: result.value });
+  }
 
   async function save(event: SubmitEvent) {
     event.preventDefault();
@@ -177,6 +227,7 @@ export function StackSecretsPanel(props: { hostID: string; stackName: string }) 
     }
     setFormError("");
     if (await saveStackSecret(props.hostID, props.stackName, secretName, value())) {
+      if (shown()?.name === secretName) hideShown();
       setName("");
       setValue("");
       setReveal(false);
@@ -186,6 +237,7 @@ export function StackSecretsPanel(props: { hostID: string; stackName: string }) 
   function remove(secretName: string) {
     if (!window.confirm(`Delete secret ${secretName}? Containers that use it will not start again until it is set.`))
       return;
+    if (shown()?.name === secretName || asking() === secretName) hideShown();
     void removeStackSecret(props.hostID, props.stackName, secretName);
   }
 
@@ -223,35 +275,93 @@ export function StackSecretsPanel(props: { hostID: string; stackName: string }) 
         <div class="resource-list">
           <For each={state().entries}>
             {(entry) => (
-              <div class="resource-row">
-                <span class="resource-icon">⚿</span>
-                <span class="resource-copy">
-                  <strong>{entry.name}</strong>
-                  <small>
-                    {formatSize(entry.size)} · updated {new Date(entry.updated_at).toLocaleString()}
-                    {unused().some((item) => item.name === entry.name) ? " · not used by the Compose file" : ""}
-                  </small>
-                </span>
-                <button
-                  class="add-button"
-                  type="button"
-                  disabled={!unlocked() || !!state().busy}
-                  onClick={() => {
-                    setName(entry.name);
-                    setValue("");
-                  }}
-                >
-                  Replace
-                </button>
-                <button
-                  class="add-button"
-                  type="button"
-                  disabled={!unlocked() || !!state().busy}
-                  onClick={() => remove(entry.name)}
-                >
-                  {state().busy === entry.name ? "Deleting…" : "Delete"}
-                </button>
-              </div>
+              <>
+                <div class="resource-row">
+                  <span class="resource-icon">⚿</span>
+                  <span class="resource-copy">
+                    <strong>{entry.name}</strong>
+                    <small>
+                      {formatSize(entry.size)} · updated {new Date(entry.updated_at).toLocaleString()}
+                      {unused().some((item) => item.name === entry.name) ? " · not used by the Compose file" : ""}
+                    </small>
+                  </span>
+                  <button
+                    class="add-button"
+                    type="button"
+                    disabled={!unlocked() || showBusy()}
+                    aria-expanded={asking() === entry.name || shown()?.name === entry.name}
+                    onClick={() =>
+                      asking() === entry.name || shown()?.name === entry.name ? hideShown() : ask(entry.name)
+                    }
+                  >
+                    {shown()?.name === entry.name ? "Hide" : "Show"}
+                  </button>
+                  <button
+                    class="add-button"
+                    type="button"
+                    disabled={!unlocked() || !!state().busy}
+                    onClick={() => {
+                      setName(entry.name);
+                      setValue("");
+                    }}
+                  >
+                    Replace
+                  </button>
+                  <button
+                    class="add-button"
+                    type="button"
+                    disabled={!unlocked() || !!state().busy}
+                    onClick={() => remove(entry.name)}
+                  >
+                    {state().busy === entry.name ? "Deleting…" : "Delete"}
+                  </button>
+                </div>
+                <Show when={asking() === entry.name}>
+                  <form class="secret-shown" onSubmit={show} autocomplete="off">
+                    <p class="stack-note">
+                      Enter the secret store passphrase to show <strong>{entry.name}</strong>. The server logs that it
+                      was shown.
+                    </p>
+                    <div class="stack-actions">
+                      <input
+                        type="password"
+                        autocomplete="current-password"
+                        aria-label={`Passphrase to show ${entry.name}`}
+                        placeholder="Passphrase"
+                        value={showPassphrase()}
+                        onInput={(event) => setShowPassphrase(event.currentTarget.value)}
+                        disabled={showBusy()}
+                        ref={(input) => queueMicrotask(() => input.focus())}
+                      />
+                      <button class="add-button" type="submit" disabled={showBusy()}>
+                        {showBusy() ? "Checking…" : "Show value"}
+                      </button>
+                      <button class="add-button" type="button" disabled={showBusy()} onClick={hideShown}>
+                        Cancel
+                      </button>
+                    </div>
+                    <Show when={showError()}>
+                      <p class="form-error" role="alert">
+                        {showError()}
+                      </p>
+                    </Show>
+                  </form>
+                </Show>
+                <Show when={shown()?.name === entry.name ? shown() : undefined}>
+                  {(item) => (
+                    <div class="secret-shown">
+                      <textarea
+                        class="secret-value"
+                        readOnly
+                        rows={Math.min(8, Math.max(1, item().value.split("\n").length))}
+                        value={item().value}
+                        aria-label={`Value of ${entry.name}`}
+                        spellcheck={false}
+                      />
+                    </div>
+                  )}
+                </Show>
+              </>
             )}
           </For>
         </div>

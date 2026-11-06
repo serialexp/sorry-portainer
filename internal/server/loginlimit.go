@@ -1,6 +1,8 @@
 package server
 
 import (
+	"fmt"
+	"math"
 	"net/http"
 	"net/netip"
 	"strings"
@@ -83,6 +85,17 @@ func (l *loginLimiter) pruneLocked(now time.Time) {
 			delete(l.full, client)
 		}
 	}
+}
+
+// tooManyAttempts answers 429 with how long the client must wait.
+func tooManyAttempts(w http.ResponseWriter, wait time.Duration, what string) {
+	seconds := int(math.Ceil(wait.Seconds()))
+	unit := "seconds"
+	if seconds == 1 {
+		unit = "second"
+	}
+	w.Header().Set("Retry-After", fmt.Sprint(seconds))
+	http.Error(w, fmt.Sprintf("too many %s; try again in %d %s", what, seconds, unit), http.StatusTooManyRequests)
 }
 
 // clientKey identifies the client a request comes from: its IPv4 address, or

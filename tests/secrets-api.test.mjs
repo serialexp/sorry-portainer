@@ -8,6 +8,7 @@ import {
   listStackSecrets,
   lockStore,
   putStackSecret,
+  revealStackSecret,
   unlockStore,
 } from "../src/secrets-api.ts";
 import { UnauthorizedError } from "../src/fleet-api.ts";
@@ -100,4 +101,44 @@ test("invalid names, empty and oversized values are refused before any request",
   assert.equal(calls, 0);
   await putStackSecret("h", "s", "db", "x".repeat(64 * 1024), request);
   assert.equal(calls, 1);
+});
+
+test("revealing posts the passphrase to the secret's reveal route, uncached", async () => {
+  const calls = [];
+  const request = async (url, options) => {
+    calls.push({ url, options });
+    return ok({ value: "line one\nline two" });
+  };
+  assert.equal(await revealStackSecret("host a", "web", "db.pw", "the passphrase", request), "line one\nline two");
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, "/api/hosts/host%20a/stacks/web/secrets/db.pw/reveal");
+  assert.equal(calls[0].options.method, "POST");
+  assert.equal(calls[0].options.cache, "no-store");
+  assert.deepEqual(JSON.parse(calls[0].options.body), { passphrase: "the passphrase" });
+});
+
+test("revealing reports a wrong passphrase, a limit and a lost session", async () => {
+  await assert.rejects(
+    revealStackSecret("host", "web", "db", "nope", async () => fail(403, "wrong passphrase")),
+    /Wrong passphrase/,
+  );
+  await assert.rejects(
+    revealStackSecret("host", "web", "db", "nope", async () =>
+      fail(429, "too many passphrase attempts; try again in 3 seconds"),
+    ),
+    /try again in 3 seconds/,
+  );
+  await assert.rejects(
+    revealStackSecret("host", "web", "db", "pw", async () => fail(401, "authentication required")),
+    UnauthorizedError,
+  );
+  let called = false;
+  await assert.rejects(
+    revealStackSecret("host", "web", "db", "", async () => {
+      called = true;
+      return ok({ value: "x" });
+    }),
+    /passphrase/,
+  );
+  assert.equal(called, false, "an empty passphrase is not sent");
 });

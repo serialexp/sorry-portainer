@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/netip"
 	"sort"
 	"sync"
 	"time"
@@ -217,6 +218,13 @@ func (s *Server) secretStoreRoute(w http.ResponseWriter, r *http.Request) {
 	var err error
 	switch action {
 	case "initialize", "unlock":
+		var attempt passphraseAttempt
+		if action == "unlock" {
+			var ok bool
+			if attempt, ok = s.takePassphraseAttempt(w, r); !ok {
+				return
+			}
+		}
 		var req passphraseRequest
 		if jsonDecode(w, r, &req) != nil {
 			http.Error(w, "invalid request", http.StatusBadRequest)
@@ -226,6 +234,7 @@ func (s *Server) secretStoreRoute(w http.ResponseWriter, r *http.Request) {
 			err = s.secrets.Initialize(req.Passphrase)
 		} else {
 			err = s.secrets.Unlock(req.Passphrase)
+			s.settlePassphraseAttempt(attempt, err)
 		}
 		if err == nil {
 			s.pushAllHosts()
@@ -243,13 +252,76 @@ func (s *Server) secretStoreRoute(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]secretstore.State{"state": s.secrets.State()})
 }
 
-// stackSecrets serves /api/hosts/{host}/stacks/{stack}/secrets[/{name}].
-func (s *Server) stackSecrets(w http.ResponseWriter, r *http.Request, host, stack, name string) {
+// passphraseAttempt is one attempt taken from the passphrase limiter.
+type passphraseAttempt struct {
+	client netip.Prefix
+	at     time.Time
+}
+
+// takePassphraseAttempt spends one passphrase attempt for the request's
+// client, or answers 429 and returns false.
+func (s *Server) takePassphraseAttempt(w http.ResponseWriter, r *http.Request) (passphraseAttempt, bool) {
+	a := passphraseAttempt{client: clientKey(r, s.sessions.opts.TrustedProxies), at: s.sessions.opts.Now()}
+	if wait, ok := s.passphrases.take(a.client, a.at); !ok {
+		tooManyAttempts(w, wait, "passphrase attempts")
+		return a, false
+	}
+	return a, true
+}
+
+// settlePassphraseAttempt refunds the attempt unless the passphrase was
+// wrong, so only wrong guesses count against the client. An unreadable body
+// never reaches it and stays spent.
+func (s *Server) settlePassphraseAttempt(a passphraseAttempt, err error) {
+	if !errors.Is(err, secretstore.ErrWrongPassphrase) {
+		s.passphrases.refund(a.client, a.at)
+	}
+}
+
+type revealResponse struct {
+	Value string `json:"value"`
+}
+
+// revealSecret answers one stored value, after checking the passphrase again.
+// The log names the secret and the client, never the value.
+func (s *Server) revealSecret(w http.ResponseWriter, r *http.Request, host, stack, name string) {
+	attempt, ok := s.takePassphraseAttempt(w, r)
+	if !ok {
+		return
+	}
+	var req passphraseRequest
+	if jsonDecode(w, r, &req) != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	value, err := s.secrets.Reveal(host, stack, name, req.Passphrase)
+	s.settlePassphraseAttempt(attempt, err)
+	if errors.Is(err, secretstore.ErrWrongPassphrase) {
+		log.Printf("secrets: reveal of %s/%s/%s refused for %s: wrong passphrase", host, stack, name, attempt.client)
+	}
+	if err != nil {
+		http.Error(w, err.Error(), secretStatus(err))
+		return
+	}
+	defer clear(value)
+	log.Printf("secrets: revealed %s/%s/%s to %s", host, stack, name, attempt.client)
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, revealResponse{Value: string(value)})
+}
+
+// stackSecrets serves /api/hosts/{host}/stacks/{stack}/secrets[/{name}[/reveal]].
+func (s *Server) stackSecrets(w http.ResponseWriter, r *http.Request, host, stack, name, action string) {
 	if s.secrets == nil {
 		http.Error(w, "secret store not configured", http.StatusServiceUnavailable)
 		return
 	}
 	switch {
+	case action != "":
+		if name != "" && action == "reveal" && r.Method == http.MethodPost {
+			s.revealSecret(w, r, host, stack, name)
+			return
+		}
+		http.NotFound(w, r)
 	case name == "" && r.Method == http.MethodGet:
 		entries, err := s.secrets.List(host, stack)
 		if err != nil {

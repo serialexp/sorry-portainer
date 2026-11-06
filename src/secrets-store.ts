@@ -7,6 +7,7 @@ import {
   listStackSecrets,
   lockStore,
   putStackSecret,
+  revealStackSecret,
   type SecretEntry,
   SecretsUnavailableError,
   type StoreState,
@@ -176,4 +177,29 @@ export function saveStackSecret(hostID: string, stack: string, name: string, val
 
 export function removeStackSecret(hostID: string, stack: string, name: string) {
   return stackAction(hostID, stack, name, () => deleteStackSecret(hostID, stack, name));
+}
+
+export type RevealResult = { value: string } | { error: string } | null;
+
+/**
+ * Fetches one value for showing. The value is returned to the caller only and
+ * never kept in this shared store, so it goes away with the component that
+ * shows it. Answers null when the session ended or a newer session started.
+ */
+export async function showStackSecret(
+  hostID: string,
+  stack: string,
+  name: string,
+  passphrase: string,
+): Promise<RevealResult> {
+  const started = generation;
+  try {
+    const value = await revealStackSecret(hostID, stack, name, passphrase);
+    return started === generation ? { value } : null;
+  } catch (cause) {
+    if (started !== generation || sessionEnded(cause)) return null;
+    // A 423 means the store was locked meanwhile; pick up its state.
+    void refreshStoreState();
+    return { error: message(cause, "Could not show the secret.") };
+  }
 }

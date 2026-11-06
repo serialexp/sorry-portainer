@@ -1,6 +1,6 @@
 // Client for the master's secret store and per-stack secret routes. Secret
-// values only travel from the browser to the master; the API never returns
-// them.
+// values travel from the browser to the master. The one way back is
+// revealStackSecret, which needs the passphrase again for each value.
 
 import { UnauthorizedError } from "./fleet-api.ts";
 
@@ -34,6 +34,7 @@ async function failure(response: Response, fallback: string): Promise<Error> {
   const text = (await response.text()).trim();
   if (response.status === 401) return new UnauthorizedError(text || fallback);
   if (response.status === 503) return new SecretsUnavailableError(text || fallback);
+
   return new Error(text || `${fallback} (${response.status}).`);
 }
 
@@ -113,4 +114,27 @@ export async function deleteStackSecret(
   const response = await request(endpoint(hostID, stack, name), { method: "DELETE" });
   if (!response.ok) throw await failure(response, "Could not delete the secret");
   return ((await response.json()) as { delivery: Delivery }).delivery;
+}
+
+/**
+ * Fetches one stored value. The master checks the passphrase again, so a
+ * dashboard session alone cannot read values back. The answer is not cached.
+ */
+export async function revealStackSecret(
+  hostID: string,
+  stack: string,
+  name: string,
+  passphrase: string,
+  request: typeof fetch = fetch,
+): Promise<string> {
+  if (!passphrase) throw new Error("Enter the secret store passphrase.");
+  const response = await request(`${endpoint(hostID, stack, name)}/reveal`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ passphrase }),
+    cache: "no-store",
+  });
+  if (response.status === 403) throw new Error("Wrong passphrase.");
+  if (!response.ok) throw await failure(response, "Could not show the secret");
+  return ((await response.json()) as { value: string }).value;
 }

@@ -4,8 +4,6 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
-	"fmt"
-	"math"
 	"net/http"
 	"net/netip"
 	"sync"
@@ -67,13 +65,7 @@ func (s *Sessions) Login(w http.ResponseWriter, r *http.Request) {
 	client := clientKey(r, s.opts.TrustedProxies)
 	now := s.opts.Now()
 	if wait, ok := s.limiter.take(client, now); !ok {
-		seconds := int(math.Ceil(wait.Seconds()))
-		unit := "seconds"
-		if seconds == 1 {
-			unit = "second"
-		}
-		w.Header().Set("Retry-After", fmt.Sprint(seconds))
-		http.Error(w, fmt.Sprintf("too many failed sign-ins; try again in %d %s", seconds, unit), http.StatusTooManyRequests)
+		tooManyAttempts(w, wait, "failed sign-ins")
 		return
 	}
 	var body struct {
