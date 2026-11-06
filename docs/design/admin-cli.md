@@ -32,11 +32,17 @@ Tick items as they land and move them to Done.
   output.** The relay returned a failed Compose run as a bare
   `exit status N`, losing the output, for the web API as well
   (`internal/relay/agent.go` `operationResult`).
+- [x] **Phase 2 — release workflow and role task.** The release workflow
+  builds `sorry-portainer` too; the server role installs it to
+  `/usr/local/bin/sorry-portainer` from `sorry_portainer_cli_binary_url` and
+  `sorry_portainer_cli_binary_sha256`.
 
 ### Outstanding
 
-- [ ] **Phase 2 — release and install.** The release workflow builds
-  `sorry-portainer` too. The server role installs it on the master.
+- [ ] **Phase 2 — release and pin.** Release v0.2.4 (ask Bart), pin the
+  CLI's asset URL and SHA-256 in `deploy/rsansible/vars/release.yml` (the
+  server role fails until they are there), run the server role on jp1, and
+  try a remote `hosts list`.
 - [ ] **Phase 2 — jp1 import.** The phase 3 migration in `caddy-podman.md`
   creates its stacks with the CLI on jp1, against the local socket, so the
   environment values never leave jp1.

@@ -48,6 +48,19 @@
   notify: Restart sorry-portainer-server
   tags: [sorry-portainer]
 
+# The admin CLI, for root on the master and for `sorry-portainer --master
+# ssh://root@HOST` from elsewhere (docs/design/admin-cli.md). Nothing runs
+# it, so nothing restarts.
+- name: Install the sorry-portainer CLI
+  get_url:
+    url: "{{ sorry_portainer_cli_binary_url }}"
+    dest: "{{ sorry_portainer_cli_bin }}"
+    checksum: "sha256:{{ sorry_portainer_cli_binary_sha256 }}"
+    owner: root
+    group: root
+    mode: "0755"
+  tags: [sorry-portainer]
+
 # The dashboard listens on the gateway address of the network Caddy is on,
 # so only containers on that network reach it, and Caddy's address is the
 # trusted proxy for sign-in rate limiting.

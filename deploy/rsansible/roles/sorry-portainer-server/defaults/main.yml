@@ -1,5 +1,6 @@
 sorry_portainer_server_state_dir: /var/lib/sorry-portainer
 sorry_portainer_server_bin: /usr/local/bin/sorry-portainer-server
+sorry_portainer_cli_bin: /usr/local/bin/sorry-portainer
 sorry_portainer_control_listen: ":9443"
 sorry_portainer_web_port: 6200
 sorry_portainer_session_ttl: 12h

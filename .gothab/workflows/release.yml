@@ -1,5 +1,5 @@
-# Builds the server (with the dashboard inside it) and the agent for a tag
-# that already exists, and publishes them as a Gothab release. Gothab is the
+# Builds the server (with the dashboard inside it), the agent and the
+# sorry-portainer CLI for a tag that already exists, and publishes them as a Gothab release. Gothab is the
 # primary repository: `wheat push ssh://git@gothab.io/serialexp/sorry-portainer.git`
 # with `--to refs/heads/main`, then `--tag <tag>`, and run this from the
 # Actions page (or POST /repos/serialexp/sorry-portainer/actions/dispatches).
@@ -48,7 +48,7 @@ jobs:
       - name: Build
         run: |
           mkdir -p release
-          for cmd in sorry-portainer-server sorry-portainer-agent; do
+          for cmd in sorry-portainer-server sorry-portainer-agent sorry-portainer; do
             go build -buildvcs=false -trimpath -ldflags "-s -w" \
               -o "release/$cmd-$GOOS-$GOARCH" "./cmd/$cmd"
           done
