@@ -1,4 +1,4 @@
-import { createEffect, createSignal, For, Show, onMount, untrack } from "solid-js";
+import { createEffect, createSignal, For, Match, Show, Switch, onMount, untrack } from "solid-js";
 import { A, Route, Router, useLocation, useNavigate } from "@solidjs/router";
 import { render } from "solid-js/web";
 import type { Image, Volume } from "./fleet-api";
@@ -19,7 +19,7 @@ import {
 import { EnrollmentPage } from "./enrollment-ui";
 import { enrollmentPath, hostPath, parseHostPath } from "./host-route";
 import { HostSecretWarnings, SecretStoreBanner } from "./secrets-ui";
-import { StackEditor, StackList } from "./stacks-ui";
+import { StackDetail, StackEditor, StackList } from "./stacks-ui";
 import "./styles.css";
 
 function App() {
@@ -147,9 +147,14 @@ function Dashboard() {
             <ResourcePage kind="volumes" />
           </Show>
           <Show when={section() === "stacks"}>
-            <Show when={route()?.action} fallback={<StackList />}>
-              <StackEditor />
-            </Show>
+            <Switch fallback={<StackList />}>
+              <Match when={route()?.action === "view"}>
+                <StackDetail />
+              </Match>
+              <Match when={route()?.action}>
+                <StackEditor />
+              </Match>
+            </Switch>
           </Show>
         </Show>
       </main>
@@ -186,7 +191,14 @@ function pageHeading(pathname: string): { eyebrow: string; title: string; subtit
       return {
         eyebrow,
         search,
-        title: route.action === "new" ? "Create stack" : route.action === "edit" ? "Edit stack" : "Stacks",
+        title:
+          route.action === "new"
+            ? "Create stack"
+            : route.action === "edit"
+              ? "Edit stack"
+              : route.action === "view"
+                ? "Stack"
+                : "Stacks",
         subtitle: `Compose projects saved on ${route.hostID}.`,
       };
   }

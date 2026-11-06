@@ -367,6 +367,12 @@ func (a *Agent) handle(ctx context.Context, operation string, payload json.RawMe
 		return a.Stacks.Inspect(ctx, request.Name)
 	case "stacks.versions":
 		return a.Stacks.Versions(ctx, request.Name)
+	case "stacks.revision":
+		revision, err := decodePayload[protocol.StackRevisionRequest](payload)
+		if err != nil {
+			return nil, err
+		}
+		return a.Stacks.Revision(ctx, revision.Name, revision.Version)
 	case "stacks.save":
 		return a.Stacks.Save(ctx, request.Name, request.ComposeYAML, request.Environment, request.ExpectedVersion)
 	case "stacks.up":

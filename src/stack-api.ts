@@ -99,6 +99,31 @@ export async function getStack(hostID: string, name: string, request: typeof fet
   return (await response.json()) as Stack;
 }
 
+/** One saved revision of a stack; revisions are listed by number only. */
+export type StackVersion = { version: number };
+
+export async function listStackVersions(
+  hostID: string,
+  name: string,
+  request: typeof fetch = fetch,
+): Promise<StackVersion[]> {
+  const response = await request(`${endpoint(hostID, name)}/versions`);
+  if (!response.ok) throw await failure(response, "Could not load revisions");
+  return (await response.json()) as StackVersion[];
+}
+
+/** A revision's Compose document and environment. Reading changes nothing. */
+export async function getStackRevision(
+  hostID: string,
+  name: string,
+  version: number,
+  request: typeof fetch = fetch,
+): Promise<Stack> {
+  const response = await request(`${endpoint(hostID, name)}/versions/${version}`);
+  if (!response.ok) throw await failure(response, "Could not load revision");
+  return (await response.json()) as Stack;
+}
+
 async function saveStack(
   hostID: string,
   name: string,

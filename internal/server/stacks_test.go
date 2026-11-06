@@ -19,6 +19,8 @@ type stackRelay struct {
 	stack     protocol.Stack
 	operation *protocol.StackOperation
 	err       error
+	// revisionRequested is the revision number the last read asked for.
+	revisionRequested int
 }
 
 func (r *stackRelay) Hosts() []protocol.HostInfo { return nil }
@@ -38,6 +40,10 @@ func (r *stackRelay) InspectStack(context.Context, string, string) (protocol.Sta
 }
 func (r *stackRelay) StackVersions(context.Context, string, string) ([]protocol.StackVersion, error) {
 	return []protocol.StackVersion{{Version: 1}, {Version: 2}}, r.err
+}
+func (r *stackRelay) StackRevision(_ context.Context, _ string, _ string, version int) (protocol.Stack, error) {
+	r.revisionRequested = version
+	return r.stack, r.err
 }
 func (r *stackRelay) SaveStack(_ context.Context, _ string, save protocol.StackSave) (protocol.StackSaved, error) {
 	r.saved = save
@@ -104,6 +110,24 @@ func TestStackHTTPSaveCarriesEnvironmentAndOperation(t *testing.T) {
 	var saved protocol.StackSaved
 	if err := json.NewDecoder(w.Body).Decode(&saved); err != nil || saved.Operation == nil || saved.Operation.Output != "recreated" || saved.Environment["MODE"] != "b" {
 		t.Fatalf("answer = %+v, %v", saved, err)
+	}
+}
+
+// TestStackHTTPRevision: a revision is read by number; anything but a
+// positive whole number is refused before the relay is asked.
+func TestStackHTTPRevision(t *testing.T) {
+	relay := &stackRelay{stack: protocol.Stack{Name: "web", Version: 1, ComposeYAML: "services: {}"}}
+	s := New(testSessions, relay, nil)
+	w := authenticatedStackRequest(t, s, http.MethodGet, "/api/hosts/host/stacks/web/versions/1", "")
+	if w.Code != http.StatusOK || relay.revisionRequested != 1 || !strings.Contains(w.Body.String(), `"compose_yaml":"services: {}"`) {
+		t.Fatalf("revision = %d (requested %d): %s", w.Code, relay.revisionRequested, w.Body.String())
+	}
+	relay.revisionRequested = 0
+	for _, bad := range []string{"0", "-1", "one", "1.5"} {
+		w = authenticatedStackRequest(t, s, http.MethodGet, "/api/hosts/host/stacks/web/versions/"+bad, "")
+		if w.Code != http.StatusBadRequest || relay.revisionRequested != 0 {
+			t.Fatalf("version %q: status %d, relay asked for %d", bad, w.Code, relay.revisionRequested)
+		}
 	}
 }
 

@@ -18,7 +18,7 @@ test("editing a stack has its own host-scoped route", () => {
 });
 
 test("invalid, incomplete and unrelated paths are not host routes", () => {
-  for (const path of ["/", "/local-a", "/local-a/stacks/other", "/local-a/stacks/%2F/edit", "/local-a/images/extra", "/%/images", "/%2F/images", "/../images"]) {
+  for (const path of ["/", "/local-a", "/local-a/stacks/%2F/edit", "/local-a/images/extra", "/%/images", "/%2F/images", "/../images"]) {
     assert.equal(parseHostPath(path), null, path);
   }
 });

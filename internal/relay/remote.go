@@ -231,6 +231,13 @@ func (r *Remote) StackVersions(ctx context.Context, hostID, name string) ([]prot
 	return out, nil
 }
 
+// StackRevision reads one revision of a stack: its Compose document and environment.
+func (r *Remote) StackRevision(ctx context.Context, hostID, name string, version int) (protocol.Stack, error) {
+	var out protocol.Stack
+	err := r.call(ctx, hostID, "stacks.revision", protocol.StackRevisionRequest{Name: name, Version: version}, &out, DefaultRequestTimeout)
+	return out, err
+}
+
 // SaveStack may bring the stack up again (a changed environment on a stack
 // that is up), so it gets the stack operation timeout.
 func (r *Remote) SaveStack(ctx context.Context, hostID string, save protocol.StackSave) (protocol.StackSaved, error) {

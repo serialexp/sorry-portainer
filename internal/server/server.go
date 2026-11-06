@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -47,6 +48,7 @@ type Relay interface {
 	ListStacks(context.Context, string) ([]protocol.Stack, error)
 	InspectStack(context.Context, string, string) (protocol.Stack, error)
 	StackVersions(context.Context, string, string) ([]protocol.StackVersion, error)
+	StackRevision(context.Context, string, string, int) (protocol.Stack, error)
 	SaveStack(context.Context, string, protocol.StackSave) (protocol.StackSaved, error)
 	StackOperation(context.Context, string, string, string) (protocol.StackOperation, error)
 	SyncSecrets(context.Context, string, protocol.SecretSync) (protocol.SecretSyncResult, error)
@@ -168,6 +170,16 @@ func (s *Server) hostOperation(w http.ResponseWriter, r *http.Request) {
 	if len(parts) == 4 && parts[1] == "stacks" && parts[3] == "versions" && r.Method == http.MethodGet {
 		versions, err := s.relay.StackVersions(ctx, parts[0], parts[2])
 		respond(w, versions, err, http.StatusNotFound)
+		return
+	}
+	if len(parts) == 5 && parts[1] == "stacks" && parts[3] == "versions" && r.Method == http.MethodGet {
+		version, err := strconv.Atoi(parts[4])
+		if err != nil || version < 1 {
+			http.Error(w, "revision must be a positive number", http.StatusBadRequest)
+			return
+		}
+		revision, err := s.relay.StackRevision(ctx, parts[0], parts[2], version)
+		respond(w, revision, err, http.StatusNotFound)
 		return
 	}
 	if len(parts) == 4 && parts[1] == "stacks" {

@@ -1,7 +1,7 @@
 import { A, useLocation, useNavigate } from "@solidjs/router";
 import { createEffect, createSignal, For, Show } from "solid-js";
 import { filteredStacks, fleet, loadStacks, searchTerm, sessionEnded } from "./fleet-store";
-import { editStackPath, hostPath, newStackPath, parseHostPath } from "./host-route";
+import { editStackPath, hostPath, newStackPath, parseHostPath, stackPath } from "./host-route";
 import { StackSecretsPanel } from "./secrets-ui";
 import { type StackRunState, type StackService, stackRunState } from "./stack-state";
 import { setReferencedSecrets } from "./secrets-store";
@@ -10,6 +10,8 @@ import {
   deployStack,
   formatEnvironment,
   getStack,
+  getStackRevision,
+  listStackVersions,
   parseEnvironment,
   rebootLabel,
   stackNamePattern,
@@ -18,6 +20,21 @@ import {
   type Stack,
   type StackOperation,
 } from "./stack-api";
+
+/** A stack's services, one row per container. */
+function ServiceTable(props: { name: string; services: StackService[] }) {
+  return (
+    <div class="stack-services" role="table" aria-label={`Services of ${props.name}`}>
+      <div class="stack-service-row stack-service-head" role="row">
+        <span role="columnheader">Service</span>
+        <span role="columnheader">Container</span>
+        <span role="columnheader">Image</span>
+        <span role="columnheader">State</span>
+      </div>
+      <For each={props.services}>{(svc) => <ServiceRow service={svc} />}</For>
+    </div>
+  );
+}
 
 /** The chip style for a stack's run state; partial and invalid need attention. */
 function runChipClass(tone: StackRunState["tone"]): string {
@@ -67,8 +84,8 @@ function ServiceRow(props: { service: StackService }) {
   );
 }
 
-/** The selected host's stacks. */
-export function StackList() {
+/** Start and stop for a host's stacks, with the busy state and output a page shows. */
+export function createStackRunner() {
   const [busy, setBusy] = createSignal("");
   const [operationError, setOperationError] = createSignal("");
   const [operationOutput, setOperationOutput] = createSignal("");
@@ -97,6 +114,12 @@ export function StackList() {
   }
   const busyLabel = (name: string, operation: "up" | "down", idle: string, active: string) =>
     busy() === name && busyOperation() === operation ? active : idle;
+  return { busy, operationError, operationOutput, run, busyLabel };
+}
+
+/** The selected host's stacks. */
+export function StackList() {
+  const { busy, operationError, operationOutput, run, busyLabel } = createStackRunner();
   return (
     <section class="panel resource-page">
       <div class="panel-heading">
@@ -155,7 +178,9 @@ export function StackList() {
                           </svg>
                         </span>
                         <div class="stack-card-title">
-                          <h3>{stack.name}</h3>
+                          <h3>
+                            <A href={stackPath(fleet.selectedHost, stack.name)}>{stack.name}</A>
+                          </h3>
                           <span class="stack-card-meta">
                             compose · {stack.project} · v{stack.version || 1}
                           </span>
@@ -177,18 +202,10 @@ export function StackList() {
                           >
                             {busyLabel(stack.name, "down", "Stop stack", "Stopping…")}
                           </button>
-                        </div>
-                      </div>{" "}
+                        </div>{" "}
+                      </div>
                       <Show when={stack.services?.length}>
-                        <div class="stack-services" role="table" aria-label={`Services of ${stack.name}`}>
-                          <div class="stack-service-row stack-service-head" role="row">
-                            <span role="columnheader">Service</span>
-                            <span role="columnheader">Container</span>
-                            <span role="columnheader">Image</span>
-                            <span role="columnheader">State</span>
-                          </div>
-                          <For each={stack.services}>{(svc) => <ServiceRow service={svc} />}</For>
-                        </div>
+                        <ServiceTable name={stack.name} services={stack.services ?? []} />
                       </Show>
                       <Show when={runState.tone === "invalid"}>
                         <p class="stack-card-waiting" role="status">
@@ -215,6 +232,235 @@ export function StackList() {
         Start runs Podman Compose on this host, and the agent starts the stack again after the host reboots until you
         stop it.
       </p>
+    </section>
+  );
+}
+
+function sameEnvironment(a: Record<string, string>, b: Record<string, string>): boolean {
+  return [...new Set([...Object.keys(a), ...Object.keys(b)])].every((key) => a[key] === b[key]);
+}
+
+/**
+ * One stack's page: its state and services, the secrets it uses, and its
+ * revisions, which can be viewed or restored. A restore saves the chosen
+ * revision's contents as the next revision.
+ */
+export function StackDetail() {
+  const location = useLocation();
+  const hostID = () => fleet.selectedHost;
+  const name = () => parseHostPath(location.pathname)?.stackName ?? "";
+  const runner = createStackRunner();
+  const [stack, setStack] = createSignal<Stack | null>(null);
+  const [revisions, setRevisions] = createSignal<number[]>([]);
+  const [loading, setLoading] = createSignal(false);
+  const [loadError, setLoadError] = createSignal("");
+  // The revision the page is showing, if any, and the revision being fetched or restored.
+  const [shown, setShown] = createSignal<Stack | null>(null);
+  const [revisionBusy, setRevisionBusy] = createSignal(0);
+  const [actionError, setActionError] = createSignal("");
+  const [actionOutput, setActionOutput] = createSignal("");
+  // Answers for an earlier stack are dropped, as in the editor.
+  let request = 0;
+
+  async function load() {
+    const host = hostID();
+    const stackName = name();
+    const id = ++request;
+    setLoading(true);
+    setLoadError("");
+    try {
+      const [current, versions] = await Promise.all([getStack(host, stackName), listStackVersions(host, stackName)]);
+      if (id !== request) return;
+      setStack(current);
+      setRevisions(versions.map((v) => v.version).sort((a, b) => b - a));
+    } catch (cause) {
+      if (id === request && !sessionEnded(cause))
+        setLoadError(cause instanceof Error ? cause.message : "Could not load stack.");
+    } finally {
+      if (id === request) setLoading(false);
+    }
+  }
+
+  createEffect(() => {
+    void hostID();
+    void name();
+    setStack(null);
+    setShown(null);
+    setActionError("");
+    setActionOutput("");
+    void load();
+  });
+
+  // Start or stop, then reload so the page shows what the stack is now.
+  async function operate(operation: "up" | "down") {
+    await runner.run(name(), operation);
+    await load();
+  }
+
+  async function toggleView(version: number) {
+    if (shown()?.version === version) {
+      setShown(null);
+      return;
+    }
+    setRevisionBusy(version);
+    setActionError("");
+    try {
+      setShown(await getStackRevision(hostID(), name(), version));
+    } catch (cause) {
+      if (!sessionEnded(cause)) setActionError(cause instanceof Error ? cause.message : "Could not load revision.");
+    } finally {
+      setRevisionBusy(0);
+    }
+  }
+
+  async function restore(version: number) {
+    const current = stack();
+    if (!current) return;
+    setRevisionBusy(version);
+    setActionError("");
+    setActionOutput("");
+    try {
+      const revision = await getStackRevision(hostID(), name(), version);
+      const environment = revision.environment ?? {};
+      const environmentChanged = !sameEnvironment(environment, current.environment ?? {});
+      const question =
+        `Restore revision ${version}? It is saved as revision ${current.version + 1}, with that revision's Compose file and environment.` +
+        (environmentChanged ? " The environment differs from the current one, so a running stack is restarted." : "");
+      if (!window.confirm(question)) return;
+      const saved = await updateStack(hostID(), name(), revision.compose_yaml ?? "", current.version, environment);
+      setShown(null);
+      if (saved.operation && !saved.operation.success) {
+        setActionError(`Saved as revision ${saved.version}, but restarting the stack failed.`);
+        setActionOutput(saved.operation.output || "");
+      }
+    } catch (cause) {
+      if (!sessionEnded(cause)) setActionError(cause instanceof Error ? cause.message : "Could not restore revision.");
+    } finally {
+      setRevisionBusy(0);
+      await load();
+    }
+  }
+
+  return (
+    <section class="panel resource-page stack-detail">
+      <div class="stack-detail-head">
+        <div class="stack-detail-title">
+          <A class="stack-detail-back" href={hostPath(hostID(), "stacks")}>
+            ← All stacks
+          </A>
+          <Show when={stack()} fallback={<h2>{name()}</h2>}>
+            {(current) => {
+              const runState = () => stackRunState(current());
+              return (
+                <>
+                  <h2>{current().name}</h2>
+                  <span class="stack-card-meta">
+                    compose · {current().project} · v{current().version}
+                  </span>
+                  <div class="stack-detail-chips">
+                    <span class={runChipClass(runState().tone)}>{runState().label}</span>
+                    <span class="stack-card-reboot">{rebootLabel(current())}</span>
+                  </div>
+                </>
+              );
+            }}
+          </Show>
+        </div>
+        <div class="stack-card-actions">
+          <A class="add-button" href={editStackPath(hostID(), name())}>
+            Edit
+          </A>
+          <button class="start" type="button" disabled={!!runner.busy() || !stack()} onClick={() => operate("up")}>
+            {runner.busyLabel(name(), "up", "Start stack", "Starting…")}
+          </button>
+          <button class="stop" type="button" disabled={!!runner.busy() || !stack()} onClick={() => operate("down")}>
+            {runner.busyLabel(name(), "down", "Stop stack", "Stopping…")}
+          </button>
+        </div>
+      </div>
+      <Show when={loadError()}>
+        <p class="form-error" role="alert">
+          {loadError()}
+        </p>
+      </Show>
+      <Show when={runner.operationError() || actionError()}>
+        <p class="form-error" role="alert">
+          {runner.operationError() || actionError()}
+        </p>
+      </Show>
+      <Show when={runner.operationOutput() || actionOutput()}>
+        <pre class="stack-output">{runner.operationOutput() || actionOutput()}</pre>
+      </Show>
+      <Show when={loading() && !stack()}>
+        <p class="resource-empty">Loading stack…</p>
+      </Show>
+      <Show when={stack()?.waiting}>
+        <p class="stack-card-waiting" role="status">
+          {stack()?.waiting}
+        </p>
+      </Show>
+      <Show when={stack()?.services?.length}>
+        <ServiceTable name={name()} services={stack()?.services ?? []} />
+      </Show>
+      <div class="stack-detail-grid">
+        <section class="stack-detail-block" aria-labelledby="stack-secrets-heading">
+          <h3 id="stack-secrets-heading">Secrets</h3>
+          <Show when={stack()?.secrets?.length} fallback={<p class="stack-note">This stack uses no secrets.</p>}>
+            <ul class="stack-chip-list">
+              <For each={stack()?.secrets}>{(secret) => <li class="chip-code">{secret}</li>}</For>
+            </ul>
+            <p class="stack-note">
+              Their values are set on the <A href={editStackPath(hostID(), name())}>edit page</A>.
+            </p>
+          </Show>
+        </section>
+        <section class="stack-detail-block" aria-labelledby="stack-revisions-heading">
+          <h3 id="stack-revisions-heading">Revisions</h3>
+          <p class="stack-note">Every save keeps the previous Compose file. Restoring creates a new revision.</p>
+          <ul class="revision-list">
+            <For each={revisions()}>
+              {(version) => (
+                <li class="revision-row">
+                  <strong>v{version}</strong>
+                  <Show when={stack()?.version === version}>
+                    <span class="state">Current</span>
+                  </Show>
+                  <div class="stack-card-actions">
+                    <button
+                      class="add-button"
+                      type="button"
+                      disabled={revisionBusy() !== 0}
+                      onClick={() => toggleView(version)}
+                    >
+                      {shown()?.version === version ? "Hide" : "View"}
+                    </button>
+                    <Show when={stack()?.version !== version}>
+                      <button
+                        class="add-button"
+                        type="button"
+                        disabled={revisionBusy() !== 0 || !stack()}
+                        onClick={() => restore(version)}
+                      >
+                        {revisionBusy() === version ? "Restoring…" : "Restore"}
+                      </button>
+                    </Show>
+                  </div>
+                </li>
+              )}
+            </For>
+          </ul>
+        </section>
+      </div>
+      <Show when={shown()}>
+        {(revision) => (
+          <section class="stack-detail-block" aria-label={`Revision ${revision().version}`}>
+            <h3>Revision v{revision().version} · Compose file</h3>
+            <pre class="stack-output">{revision().compose_yaml}</pre>
+            <h3>Environment</h3>
+            <pre class="stack-output">{formatEnvironment(revision().environment) || "No environment."}</pre>
+          </section>
+        )}
+      </Show>
     </section>
   );
 }

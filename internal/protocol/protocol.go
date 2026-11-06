@@ -220,6 +220,12 @@ type StackVersion struct {
 	Version int `json:"version"`
 }
 
+// StackRevisionRequest names one revision of a stack to read.
+type StackRevisionRequest struct {
+	Name    string `json:"name"`
+	Version int    `json:"version"`
+}
+
 type StackOperation struct {
 	Name      string `json:"name"`
 	Operation string `json:"operation"`
