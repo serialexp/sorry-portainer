@@ -35,7 +35,7 @@ they land and move them to Done.
 - [ ] **Experiment — reboot.** Question 5 (lingering brings Caddy and the stacks back after a reboot) needs a jp1 reboot; do it in the switch window.
 - [ ] **Gothab apt repository.** Replace the pinned `.deb` downloads with a sources entry once Gothab has apt repositories (REQ-55 in serialexp/gothab).
 - [ ] **CLAUDE.md native-packages rule.** The project rule still says agents use Ubuntu's native packages; it should name the podman-ubuntu packages. Waiting on Bart.
-- [ ] **Phase 3 preparation.** Survey done 2026-11-07 ([Phase 3 survey](#phase-3-survey-2026-11-07)); waiting on Bart's choices there (stack import route, inline credentials, disk), then converted stacks, the Caddy stack, the volume move script and a dry run with Docker still up.
+- [ ] **Phase 3 preparation.** Survey done 2026-11-07 ([Phase 3 survey](#phase-3-survey-2026-11-07)). Bart chose (2026-11-07) env.json for credentials and moving every volume in place. The stack import route is still open (Bart asked about a CLI on his own machine). Then: converted stacks, the Caddy stack, the volume move script, and a dry run with Docker still up.
 - [ ] **Phase 3 — big-bang switch.** In one window: stop the Docker stacks; copy volumes and `caddy_data`; start Caddy and every stack as sorry-portainer stacks with `jp1-` names; point the master's web listener at 127.0.0.1 (or containerize it).
 - [ ] **Phase 4 — retire Docker on jp1.** Portainer, the label container and the role's Docker tasks go; Docker is removed once the switch has held.
 
@@ -407,3 +407,12 @@ has stack commands, and the dashboard password stays unread. Choices:
   master can script it. This is new code and a release.
 - (C) Root writes the stack directories in the agent's on-disk format and
   brings them up through the agent. This bypasses the API.
+**Decisions (2026-11-07).**
+
+- **Credentials go in `env.json`.** Inline values become `${VAR}`
+  references, and the values move into each stack's `env.json`, together
+  with Portainer's `stack.env` and database values. The compose files then
+  hold no credentials. The extraction runs on jp1 and never prints a value.
+- **Every volume moves in place, owners shifted.** No volume is copied, so
+  rolling back any of them means shifting its owners back and moving it
+  back.
