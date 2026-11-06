@@ -43,6 +43,9 @@ func main() {
 		case "hosts":
 			runHosts(os.Args[2:])
 			return
+		case "admin":
+			runAdmin(os.Args[2:])
+			return
 		}
 	}
 	configPath := flag.String("config", "", "JSON server configuration file")
@@ -113,7 +116,7 @@ func serve(cfg config.Server, control config.ControlTLS) error {
 	if err != nil {
 		return err
 	}
-	adminServer := admin.NewServer(svc, remote.Hosts, log.Printf)
+	adminServer := admin.NewServer(svc, remote, log.Printf)
 	go func() {
 		if err := adminServer.Serve(ctx, adminListener); err != nil && !errors.Is(err, context.Canceled) {
 			log.Printf("admin socket stopped: %v", err)

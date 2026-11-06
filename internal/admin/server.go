@@ -9,31 +9,47 @@ import (
 	"log"
 	"net"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/serialexp/sorry-portainer/internal/enrollment"
 	"github.com/serialexp/sorry-portainer/internal/protocol"
+	"github.com/serialexp/sorry-portainer/internal/relay"
 	"github.com/serialexp/sorry-portainer/internal/unixsock"
 )
+
+// Relay reaches the agents; *relay.Remote is one.
+type Relay interface {
+	Hosts() []protocol.HostInfo
+	ListStacks(ctx context.Context, hostID string) ([]protocol.Stack, error)
+	InspectStack(ctx context.Context, hostID, name string) (protocol.Stack, error)
+	SaveStack(ctx context.Context, hostID string, save protocol.StackSave) (protocol.Stack, error)
+	StackOperation(ctx context.Context, hostID, name, operation string) (protocol.StackOperation, error)
+}
 
 // Server answers the admin socket.
 type Server struct {
 	enrollment *enrollment.Service
-	connected  func() []protocol.HostInfo
-	logf       func(format string, args ...any)
+	relay      Relay
+	// connected lists the hosts with a session, for the online column.
+	connected func() []protocol.HostInfo
+	logf      func(format string, args ...any)
 	// allowPeer decides which client uids are answered.
 	allowPeer func(uid int) bool
-	timeout   time.Duration
+	// timeout bounds the arrival of a request; actionTimeout the rest of
+	// the exchange once its action is known.
+	timeout       time.Duration
+	actionTimeout func(action string) time.Duration
 }
 
-// NewServer answers requests from svc. connected lists the hosts with a
-// session, for the online column. A nil logf uses log.Printf.
-func NewServer(svc *enrollment.Service, connected func() []protocol.HostInfo, logf func(format string, args ...any)) *Server {
+// NewServer answers requests from svc, and reaches agents through r. A nil
+// logf uses log.Printf.
+func NewServer(svc *enrollment.Service, r Relay, logf func(format string, args ...any)) *Server {
 	if logf == nil {
 		logf = log.Printf
 	}
 	self := os.Getuid()
-	return &Server{enrollment: svc, connected: connected, logf: logf, timeout: Timeout,
+	return &Server{enrollment: svc, relay: r, connected: r.Hosts, logf: logf, timeout: Timeout, actionTimeout: ActionTimeout,
 		allowPeer: func(uid int) bool { return peerAllowed(uid, self) }}
 }
 
@@ -107,24 +123,52 @@ func (s *Server) answer(conn *net.UnixConn) any {
 	if err := decoder.Decode(&request); err != nil {
 		return invalid("invalid request: %v", err)
 	}
-	result, err := s.dispatch(request)
+	timeout := s.actionTimeout(request.Action)
+	_ = conn.SetDeadline(time.Now().Add(timeout))
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	// The client sends nothing after its request and keeps the connection
+	// open for the answer, so a read that ends means it went away (or the
+	// deadline passed): stop waiting, and let the relay cancel the agent's
+	// work.
+	go func() {
+		var b [1]byte
+		_, _ = conn.Read(b[:])
+		cancel()
+	}()
+	result, err := s.dispatch(ctx, request)
 	if err != nil {
-		var e *enrollment.Error
-		if errors.As(err, &e) {
-			return errorBody{Error: e.Message, Code: e.Code}
-		}
-		return errorBody{Error: err.Error(), Code: enrollment.CodeUnavailable}
+		return failure(err)
 	}
 	return result
+}
+
+// failure turns an enrollment or relay error into the socket's answer.
+func failure(err error) errorBody {
+	var e *enrollment.Error
+	var remote *relay.RemoteError
+	switch {
+	case errors.As(err, &e):
+		return errorBody{Error: e.Message, Code: e.Code}
+	case errors.As(err, &remote):
+		return errorBody{Error: remote.Message, Code: CodeFailed}
+	case errors.Is(err, relay.ErrTimeout), errors.Is(err, context.DeadlineExceeded):
+		return errorBody{Error: err.Error(), Code: CodeTimeout}
+	default:
+		return errorBody{Error: err.Error(), Code: enrollment.CodeUnavailable}
+	}
 }
 
 func invalid(format string, args ...any) errorBody {
 	return errorBody{Error: fmt.Sprintf(format, args...), Code: enrollment.CodeInvalidRequest}
 }
 
-func (s *Server) dispatch(r Request) (any, error) {
+func (s *Server) dispatch(ctx context.Context, r Request) (any, error) {
 	if r.Action != ActionList && !protocol.ValidHostID(r.HostID) {
 		return invalid("host_id %q is not a valid host ID", r.HostID), nil
+	}
+	if !strings.HasPrefix(r.Action, "stacks.") && (r.Stack != "" || r.Save != nil) {
+		return invalid("%s takes no stack or save", r.Action), nil
 	}
 	switch r.Action {
 	case ActionToken:
@@ -155,9 +199,53 @@ func (s *Server) dispatch(r Request) (any, error) {
 		}
 		s.logf("admin socket: removed host %s", r.HostID)
 		return RemoveResponse{}, nil
+	case ActionStackList, ActionStackInspect, ActionStackSave, ActionStackUp, ActionStackDown, ActionStackRestart:
+		return s.stacks(ctx, r)
 	default:
 		return invalid("unknown action %q", r.Action), nil
 	}
+}
+
+// stacks answers the stack actions for one host, through the same relay
+// calls as the web API. Environment values are never logged.
+func (s *Server) stacks(ctx context.Context, r Request) (any, error) {
+	if r.TTL != "" {
+		return invalid("%s takes no ttl", r.Action), nil
+	}
+	switch r.Action {
+	case ActionStackList:
+		if r.Stack != "" || r.Save != nil {
+			return invalid("stacks.list takes no stack or save"), nil
+		}
+		stacks, err := s.relay.ListStacks(ctx, r.HostID)
+		if err == nil && stacks == nil {
+			stacks = []protocol.Stack{}
+		}
+		return stacks, err
+	case ActionStackSave:
+		if r.Stack != "" || r.Save == nil {
+			return invalid("stacks.save takes a save and no stack"), nil
+		}
+		if !protocol.ValidStackName(r.Save.Name) {
+			return invalid("stack name %q is not valid", r.Save.Name), nil
+		}
+		what := "create"
+		if r.Save.ExpectedVersion != nil {
+			what = fmt.Sprintf("update from version %d", *r.Save.ExpectedVersion)
+		}
+		s.logf("admin socket: stacks.save %s/%s (%s, %d environment entries)", r.HostID, r.Save.Name, what, len(r.Save.Environment))
+		return s.relay.SaveStack(ctx, r.HostID, *r.Save)
+	}
+	if r.Save != nil || !protocol.ValidStackName(r.Stack) {
+		return invalid("%s takes a valid stack name and no save", r.Action), nil
+	}
+	if r.Action == ActionStackInspect {
+		return s.relay.InspectStack(ctx, r.HostID, r.Stack)
+	}
+	s.logf("admin socket: %s %s/%s", r.Action, r.HostID, r.Stack)
+	// A Compose run that failed is an answer with Success false and the
+	// output, not an error.
+	return s.relay.StackOperation(ctx, r.HostID, r.Stack, strings.TrimPrefix(r.Action, "stacks."))
 }
 
 func (s *Server) list() ListResponse {

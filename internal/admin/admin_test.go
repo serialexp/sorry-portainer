@@ -42,7 +42,7 @@ func start(t *testing.T, configure ...func(*Server)) *fixture {
 	t.Helper()
 	m := testcontrol.Start(t)
 	f := &fixture{master: m}
-	f.server = NewServer(m.Enrollment, m.Remote.Hosts, func(format string, args ...any) {
+	f.server = NewServer(m.Enrollment, m.Remote, func(format string, args ...any) {
 		f.mu.Lock()
 		f.logged = append(f.logged, fmt.Sprintf(format, args...))
 		f.mu.Unlock()
@@ -137,7 +137,7 @@ func TestTokenListRemove(t *testing.T) {
 
 func TestEmptyListEncodesArrays(t *testing.T) {
 	m := testcontrol.Start(t)
-	srv := NewServer(m.Enrollment, m.Remote.Hosts, t.Logf)
+	srv := NewServer(m.Enrollment, m.Remote, t.Logf)
 	encoded, err := json.Marshal(srv.list())
 	if err != nil {
 		t.Fatal(err)
@@ -233,10 +233,10 @@ func answerWith(t *testing.T, answer []byte) *Client {
 	return client
 }
 
-// TestClientReadsLargeLists: a list far beyond the request limit, here ten
-// thousand hosts, reaches the client.
+// TestClientReadsLargeLists: a list far beyond the request limit, here
+// thirty thousand hosts, reaches the client.
 func TestClientReadsLargeLists(t *testing.T) {
-	const hosts = 10_000
+	const hosts = 30_000
 	list := ListResponse{Hosts: make([]enrollment.HostStatus, hosts), Tokens: []enrollment.TokenInfo{}}
 	for i := range list.Hosts {
 		id := fmt.Sprintf("host-%05d", i)
@@ -253,7 +253,7 @@ func TestClientReadsLargeLists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got.Hosts) != hosts || got.Hosts[hosts-1].HostID != "host-09999" {
+	if len(got.Hosts) != hosts || got.Hosts[hosts-1].HostID != "host-29999" {
 		t.Fatalf("got %d hosts", len(got.Hosts))
 	}
 }

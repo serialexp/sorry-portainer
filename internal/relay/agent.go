@@ -370,11 +370,23 @@ func (a *Agent) handle(ctx context.Context, operation string, payload json.RawMe
 	case "stacks.save":
 		return a.Stacks.Save(ctx, request.Name, request.ComposeYAML, request.Environment, request.ExpectedVersion)
 	case "stacks.up":
-		return a.Stacks.Up(ctx, request.Name)
+		return operationResult(a.Stacks.Up(ctx, request.Name))
 	case "stacks.down":
-		return a.Stacks.Down(ctx, request.Name)
+		return operationResult(a.Stacks.Down(ctx, request.Name))
 	case "stacks.restart":
-		return a.Stacks.Restart(ctx, request.Name)
+		return operationResult(a.Stacks.Restart(ctx, request.Name))
 	}
 	return nil, unknownOperationError{operation}
+}
+
+// operationResult answers a stack operation that ran and failed with its
+// result (Success false and the Compose output), which is what the web API
+// and the dashboard show. Sent as an error, only the error's text, often
+// just "exit status 1", would arrive. A stack that could not be run at all
+// (unknown, unreadable) is still an error.
+func operationResult(result protocol.StackOperation, err error) (any, error) {
+	if err != nil && result.Operation == "" {
+		return nil, err
+	}
+	return result, nil
 }
