@@ -1888,8 +1888,33 @@ h2 {
   grid-column: 1 / -1;
 }
 .data-table.cols-image-list {
-  --cols: minmax(240px, 2fr) 150px 100px minmax(200px, 1.6fr);
-  min-width: 760px;
+  --cols: minmax(240px, 2fr) 150px 100px minmax(200px, 1.6fr) 120px;
+  min-width: 880px;
+}
+.remove-control {
+  display: grid;
+  justify-items: end;
+  gap: 8px;
+  min-width: 0;
+}
+.remove-button {
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--danger-line);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--danger);
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.remove-button:hover:not(:disabled) {
+  background: var(--danger-chip);
+}
+.remove-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 .data-table.cols-image-layers {
   --cols: 40px minmax(0, 1fr) 180px 90px;

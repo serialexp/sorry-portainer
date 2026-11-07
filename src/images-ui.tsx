@@ -1,11 +1,23 @@
-import { A, useLocation } from "@solidjs/router";
+import { A, useLocation, useNavigate } from "@solidjs/router";
 import { createEffect, createSignal, For, Show } from "solid-js";
 import { ContainerChip } from "./container-chip";
 import { formatBytes } from "./format";
 import { type Image, type ImageDetail, getImage } from "./fleet-api";
-import { filteredImages, fleet, sessionEnded } from "./fleet-store";
+import { filteredImages, fleet, removeImage, sessionEnded } from "./fleet-store";
 import { hostPath, imagePath, parseHostPath } from "./host-route";
 import { splitImageRef } from "./image-ref";
+import { RemoveButton } from "./remove-button";
+
+/** Why an image cannot be removed while containers of this agent use it, or undefined when it can. */
+function usedBy(image: Image): string | undefined {
+  const uses = image.containers ?? [];
+  return uses.length > 0 ? `In use by ${uses.map((use) => use.container).join(", ")}` : undefined;
+}
+
+/** The image's first tag, or its short ID when it has none. */
+function imageName(image: Image): string {
+  return image.tags?.[0] ?? image.id.slice(0, 12);
+}
 
 /** The images of the selected host and the containers of this agent that run them. */
 export function ImageList() {
@@ -35,8 +47,8 @@ export function ImageList() {
             <div class="data-head">
               <span>Repository</span>
               <span>Tag</span>
-              <span>Size</span>
-              <span>Used by</span>
+              <span>Size</span> <span>Used by</span>
+              <span>Action</span>
             </div>
             <For each={filteredImages()}>{(image) => <ImageRow hostID={hostID()} image={image} />}</For>
           </div>
@@ -85,6 +97,12 @@ function ImageRow(props: { hostID: string; image: Image }) {
           </For>
         </Show>
       </div>
+      <RemoveButton
+        label="Remove"
+        question={`Remove image ${imageName(props.image)}? Its layers are deleted from ${props.hostID} and must be pulled again to use it.`}
+        blocked={usedBy(props.image)}
+        onRemove={() => removeImage(props.image.id)}
+      />
     </div>
   );
 }
@@ -93,6 +111,7 @@ function ImageRow(props: { hostID: string; image: Image }) {
 export function ImageDetailPage() {
   const location = useLocation();
   const hostID = () => fleet.selectedHost;
+  const navigate = useNavigate();
   const imageID = () => parseHostPath(location.pathname)?.imageID ?? "";
   const [image, setImage] = createSignal<ImageDetail | null>(null);
   const [loadError, setLoadError] = createSignal("");
@@ -166,6 +185,19 @@ export function ImageDetailPage() {
             }}
           </Show>
         </div>
+        <Show when={image()}>
+          {(current) => (
+            <RemoveButton
+              label="Remove"
+              question={`Remove image ${imageName(current())}? Its layers are deleted from ${hostID()} and must be pulled again to use it.`}
+              blocked={usedBy(current())}
+              onRemove={async () => {
+                await removeImage(current().id);
+                navigate(hostPath(hostID(), "images"));
+              }}
+            />
+          )}
+        </Show>
       </div>
       <Show when={loadError()}>
         <div class="resource-empty">{loadError()}</div>

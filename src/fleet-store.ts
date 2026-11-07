@@ -2,6 +2,8 @@ import { createStore } from "solid-js/store";
 import {
   type Container,
   containerOperation,
+  deleteImage,
+  deleteVolume,
   type Host,
   hostInfo,
   type Image,
@@ -272,6 +274,27 @@ export async function toggleContainer(container: Container) {
   } finally {
     if (request === hostRequest) setFleet("busyContainer", "");
   }
+}
+
+/**
+ * Removes a volume of the selected host and drops it from the list. The
+ * failure is thrown so the page can show the host's reason, such as a volume
+ * that a container still mounts. Nothing changes if the host is no longer
+ * selected when the answer arrives.
+ */
+export async function removeVolume(name: string) {
+  const hostID = fleet.selectedHost;
+  if (!hostID) return;
+  if (!fleet.demo) await deleteVolume(hostID, name);
+  if (hostID === fleet.selectedHost) setFleet("volumes", (list) => list.filter((volume) => volume.name !== name));
+}
+
+/** Removes an image of the selected host and drops it from the list; see removeVolume. */
+export async function removeImage(id: string) {
+  const hostID = fleet.selectedHost;
+  if (!hostID) return;
+  if (!fleet.demo) await deleteImage(hostID, id);
+  if (hostID === fleet.selectedHost) setFleet("images", (list) => list.filter((image) => image.id !== id));
 }
 
 export function setQuery(query: string) {

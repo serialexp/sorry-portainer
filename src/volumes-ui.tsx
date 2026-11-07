@@ -1,9 +1,39 @@
-import { A, useLocation } from "@solidjs/router";
+import { A, useLocation, useNavigate } from "@solidjs/router";
 import { createEffect, createSignal, For, Show } from "solid-js";
 import { ContainerChip } from "./container-chip";
-import { getVolume, type VolumeDetail } from "./fleet-api";
-import { filteredVolumes, fleet, sessionEnded } from "./fleet-store";
+import { getVolume, type Volume, type VolumeDetail } from "./fleet-api";
+import { filteredVolumes, fleet, removeVolume, sessionEnded } from "./fleet-store";
+import { formatBytes } from "./format";
 import { hostPath, parseHostPath, volumePath } from "./host-route";
+import { RemoveButton } from "./remove-button";
+
+/** Why a volume with this many mounts cannot be removed, or undefined when it can. */
+function mountedBy(count: number): string | undefined {
+  if (count === 0) return undefined;
+  return `Mounted by ${count} container${count === 1 ? "" : "s"}`;
+}
+
+/** The size as the agent measured it; "At least" marks a total that skipped unreadable files. */
+function sizeText(volume: Volume): string {
+  if (volume.size_bytes === undefined) return "Not measured yet"; // A non-breaking space keeps the number and its unit on one line in a narrow column.
+  return `${volume.size_partial ? "At least " : ""}${formatBytes(volume.size_bytes).replace(" ", String.fromCharCode(160))}`;
+}
+
+/** When the volume was created, in local time; Podman's own text when it does not parse. */
+function createdText(created: string | undefined): string {
+  if (!created) return "Unknown";
+  const date = new Date(created);
+  return Number.isNaN(date.getTime()) ? created : date.toLocaleString();
+}
+
+/** When the size was measured, in words relative to now. */
+function measuredText(measuredAt: string): string {
+  const formatter = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
+  const seconds = Math.round((Date.parse(measuredAt) - Date.now()) / 1000);
+  if (Math.abs(seconds) < 3600) return formatter.format(Math.round(seconds / 60), "minute");
+  if (Math.abs(seconds) < 86400) return formatter.format(Math.round(seconds / 3600), "hour");
+  return formatter.format(Math.round(seconds / 86400), "day");
+}
 
 /** The volumes of the selected host, each with the containers that mount it. */
 export function VolumeList() {
@@ -84,6 +114,7 @@ export function VolumeList() {
 export function VolumeDetailPage() {
   const location = useLocation();
   const hostID = () => fleet.selectedHost;
+  const navigate = useNavigate();
   const name = () => parseHostPath(location.pathname)?.volumeName ?? "";
   const [volume, setVolume] = createSignal<VolumeDetail | null>(null);
   const [loadError, setLoadError] = createSignal("");
@@ -142,6 +173,19 @@ export function VolumeDetailPage() {
             )}
           </Show>
         </div>
+        <Show when={volume()}>
+          {(current) => (
+            <RemoveButton
+              label="Remove volume"
+              question={`Remove volume ${current().name}? Its files are deleted from ${hostID()} and cannot be recovered.`}
+              blocked={mountedBy(current().mounts?.length ?? 0)}
+              onRemove={async () => {
+                await removeVolume(current().name);
+                navigate(hostPath(hostID(), "volumes"));
+              }}
+            />
+          )}
+        </Show>
       </div>
       <Show when={loadError()}>
         <div class="resource-empty">{loadError()}</div>
@@ -169,9 +213,15 @@ export function VolumeDetailPage() {
               <h3>Details</h3>
               <dl class="fact-list">
                 <dt>Driver</dt>
-                <dd>{current().driver}</dd>
-                <dt>Created</dt>
-                <dd>{current().created || "Unknown"}</dd>
+                <dd>{current().driver}</dd> <dt>Created</dt>
+                <dd>{createdText(current().created)}</dd>
+                <dt>Size on disk</dt>
+                <dd>
+                  {sizeText(current())}
+                  <Show when={current().size_measured_at}>
+                    {(measured) => <span class="cell-muted"> · measured {measuredText(measured())}</span>}
+                  </Show>
+                </dd>
               </dl>
             </div>
             <div class="stack-detail-block detail-wide">

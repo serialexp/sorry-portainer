@@ -43,6 +43,8 @@ func (r execRunner) Run(ctx context.Context, stdout, stderr io.Writer, args ...s
 type Client struct {
 	runner Runner
 	prefix string
+	// sizes holds the volume sizes that the background scan measured.
+	sizes volumeSizes
 }
 
 func New() (*Client, error) {
@@ -214,7 +216,30 @@ type volumeJSON struct {
 	Mountpoint string `json:"Mountpoint"`
 }
 
+// Volumes lists the volumes of this agent's prefix with their mounts and the
+// size the last background scan measured.
 func (c *Client) Volumes(ctx context.Context) ([]protocol.Volume, error) {
+	out, err := c.listVolumes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(out) == 0 {
+		return out, nil
+	}
+	mounts, err := c.volumeMounts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].Mounts = mounts[out[i].Name]
+		c.applySize(&out[i])
+	}
+	return out, nil
+}
+
+// listVolumes lists the volumes of this agent's prefix without their mounts.
+// The size scan uses it, because it needs names and mountpoints only.
+func (c *Client) listVolumes(ctx context.Context) ([]protocol.Volume, error) {
 	data, err := c.run(ctx, "volume", "ls", "--format", "json")
 	if err != nil {
 		return nil, err
@@ -230,16 +255,6 @@ func (c *Client) Volumes(ctx context.Context) ([]protocol.Volume, error) {
 			continue
 		}
 		out = append(out, protocol.Volume{Name: item.Name, Driver: item.Driver, Mountpoint: item.Mountpoint})
-	}
-	if len(out) == 0 {
-		return out, nil
-	}
-	mounts, err := c.volumeMounts(ctx)
-	if err != nil {
-		return nil, err
-	}
-	for i := range out {
-		out[i].Mounts = mounts[out[i].Name]
 	}
 	return out, nil
 }
@@ -345,11 +360,9 @@ func (c *Client) VolumeDetail(ctx context.Context, name string) (protocol.Volume
 		return protocol.VolumeDetail{}, err
 	}
 	item := items[0]
-	return protocol.VolumeDetail{
-		Volume:  protocol.Volume{Name: item.Name, Driver: item.Driver, Mountpoint: item.Mountpoint, Mounts: mounts[item.Name]},
-		Created: item.CreatedAt,
-		Labels:  item.Labels,
-	}, nil
+	volume := protocol.Volume{Name: item.Name, Driver: item.Driver, Mountpoint: item.Mountpoint, Mounts: mounts[item.Name]}
+	c.applySize(&volume)
+	return protocol.VolumeDetail{Volume: volume, Created: item.CreatedAt, Labels: item.Labels}, nil
 }
 
 type imageJSON struct {

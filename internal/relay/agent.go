@@ -330,6 +330,24 @@ func (a *Agent) handle(ctx context.Context, operation string, payload json.RawMe
 			return nil, err
 		}
 		return a.Handler.ImageDetail(ctx, request.ID)
+	case "volumes.remove":
+		request, err := decodePayload[protocol.VolumeRequest](payload)
+		if err != nil {
+			return nil, err
+		}
+		if err := a.Handler.RemoveVolume(ctx, request.Name); err != nil {
+			return nil, err
+		}
+		return protocol.Removed{ID: request.Name}, nil
+	case "images.remove":
+		request, err := decodePayload[protocol.ImageRequest](payload)
+		if err != nil {
+			return nil, err
+		}
+		if err := a.Handler.RemoveImage(ctx, request.ID); err != nil {
+			return nil, err
+		}
+		return protocol.Removed{ID: request.ID}, nil
 	case "container.start", "container.stop":
 		request, err := decodePayload[protocol.StartRequest](payload)
 		if err != nil {

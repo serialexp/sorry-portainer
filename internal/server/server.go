@@ -45,6 +45,8 @@ type Relay interface {
 	VolumeDetail(context.Context, string, string) (protocol.VolumeDetail, error)
 	Images(context.Context, string) ([]protocol.Image, error)
 	ImageDetail(context.Context, string, string) (protocol.ImageDetail, error)
+	RemoveVolume(context.Context, string, string) error
+	RemoveImage(context.Context, string, string) error
 	Start(context.Context, string, string) error
 	Stop(context.Context, string, string) error
 	ListStacks(context.Context, string) ([]protocol.Stack, error)
@@ -192,6 +194,17 @@ func (s *Server) hostOperation(w http.ResponseWriter, r *http.Request) {
 	if len(parts) == 3 && parts[1] == "volumes" && r.Method == http.MethodGet {
 		volume, err := s.relay.VolumeDetail(ctx, parts[0], parts[2])
 		respond(w, volume, err, http.StatusNotFound)
+		return
+	}
+	// A refused removal (a volume or image in use) is a conflict, not a failure of the route.
+	if len(parts) == 3 && parts[1] == "volumes" && r.Method == http.MethodDelete {
+		err := s.relay.RemoveVolume(ctx, parts[0], parts[2])
+		respond(w, protocol.Removed{ID: parts[2]}, err, http.StatusConflict)
+		return
+	}
+	if len(parts) == 3 && parts[1] == "images" && r.Method == http.MethodDelete {
+		err := s.relay.RemoveImage(ctx, parts[0], parts[2])
+		respond(w, protocol.Removed{ID: parts[2]}, err, http.StatusConflict)
 		return
 	}
 	if len(parts) == 4 && parts[1] == "stacks" {

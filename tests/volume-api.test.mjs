@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { getVolume } from "../src/fleet-api.ts";
+import { deleteVolume, getVolume } from "../src/fleet-api.ts";
 
 const ok = (body) => ({ ok: true, json: async () => body });
 const failed = (status, text = "") => ({ ok: false, status, text: async () => text });
@@ -19,4 +19,19 @@ test("a volume is read from its host, with the name escaped", async () => {
 test("a failed read reports the master's message", async () => {
   const request = async () => failed(404, "volume not found");
   await assert.rejects(getVolume("local-a", "missing", request), /volume not found/);
+});
+
+test("a volume is removed with a DELETE on its name", async () => {
+  const calls = [];
+  const request = async (url, init) => {
+    calls.push({ url, method: init?.method });
+    return { ok: true };
+  };
+  await deleteVolume("local a", "app db", request);
+  assert.deepEqual(calls, [{ url: "/api/hosts/local%20a/volumes/app%20db", method: "DELETE" }]);
+});
+
+test("a refused removal reports the host's reason", async () => {
+  const request = async () => failed(409, "volume sorry-a-data is being used\n");
+  await assert.rejects(deleteVolume("local-a", "sorry-a-data", request), /is being used/);
 });

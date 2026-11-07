@@ -84,6 +84,8 @@ func main() {
 	// SIGTERM from systemd cancels in-flight operations and waits for them.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	// Podman cannot report volume sizes, so a background scan measures them.
+	client.StartVolumeSizeScan(ctx, podman.DefaultVolumeSizeInterval, log.Printf)
 
 	vault, err := startSecretSupport(ctx, cfg)
 	if err != nil {

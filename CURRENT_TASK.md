@@ -219,3 +219,24 @@ Not done / next:
 - Built, tested, NOT captured: images (change 01a1b69a-9209-7610-ad88-4cdd63f6ab65 exists but is empty). Image list shows used-by containers; image page shows config, layers and users. Agent op `images.get`, route `/api/hosts/{id}/images/{hex id}`. Files overlap the volume change (adapter.go, protocol.go, relay/*, server.go, index.tsx, styles.css), so committing them needs a bundled change or Bart's decision (Rule 13).
 - Not started: SecretStore states artboard (overlaps rapid-owl's secrets-ui work).
 - Known open items: volume and image "Remove" buttons (no remove op built); volume "Size on disk" (podman 4.9 system df has no per-volume size); TestSecretStoreLifecycleOverHTTP in internal/server is intermittently failing (2 syncs instead of 1, about 1 run in 5), in rapid-owl's secrets code.
+
+## Sorry-portainer redesign: volumes and images, remove and sizes (gentle-badger, 2026-11-08)
+
+Done and captured in Wheat:
+
+- Images and volumes, list and detail pages (change 01a1b69a-9209-7610-ad88-4cdd63f6ab65, revision 41f2481f…, which also holds the volume work that change 01a1b690 captured earlier, so the two overlap).
+- Remove: `DELETE /api/hosts/{id}/volumes/{name}` runs `volume rm --` and `DELETE /api/hosts/{id}/images/{id}` runs `rmi --`, with no force. Podman's refusals (a volume a container mounts, an image a container uses, an image with several tags) come back as HTTP 409 with Podman's message. The UI disables Remove when this prefix's containers use the volume or image, and asks first with `window.confirm`, as the stack pages do.
+- Volume size: a background scan in the agent (`internal/podman/volumesize.go`, started from `cmd/sorry-portainer-agent`) walks each prefixed volume's mountpoint every 15 minutes (`DefaultVolumeSizeInterval`), one volume at a time. Podman 4.9 has no per-volume size. Listings read the stored value and never wait for a walk. Unreadable entries are skipped and mark the size partial ("At least"). Symlinks are not followed. Hard links count once per link.
+- Verified against real Podman on this machine: the scan measured 3,001,000 bytes for a known volume with no partial flag, and the remove worked. The temporary check file was deleted, and no test volumes are left.
+- Benchmark `BenchmarkVolumeSizeScan` (20 volumes, 50,000 one-byte files): about 58 ms and 308k allocations per scan on this machine (Ryzen 9 9900X, warm cache). Most allocations come from `filepath.WalkDir` and `DirEntry.Info()`. A custom walker could cut them, at the cost of more code.
+
+Not done:
+
+- SecretStore states artboard: not started. It overlaps rapid-owl's secrets-ui work.
+- `TestSecretStoreLifecycleOverHTTP` (internal/server/secrets_test.go, rapid-owl's code) failed once in about five runs earlier. It passed 8 of 8 in the latest run. Not investigated (Rule 0.5). Rerun before relying on it.
+
+Open decisions for Bart:
+
+- Image removal is not scoped to the prefix (images belong to the whole Podman install). The UI blocks only when this prefix's containers use the image, so other prefixes' use shows up as Podman's refusal.
+- An image with several tags cannot be removed by ID without force. The UI shows Podman's message. Options: remove a single tag, or add a force option.
+- Partial sizes: the UI shows "At least" when some files were unreadable. Alternative: leave the size out.

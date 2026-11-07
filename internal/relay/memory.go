@@ -19,6 +19,8 @@ type Handler interface {
 	VolumeDetail(context.Context, string) (protocol.VolumeDetail, error)
 	Images(context.Context) ([]protocol.Image, error)
 	ImageDetail(context.Context, string) (protocol.ImageDetail, error)
+	RemoveVolume(context.Context, string) error
+	RemoveImage(context.Context, string) error
 	Start(context.Context, string) error
 	Stop(context.Context, string) error
 }
@@ -123,6 +125,22 @@ func (m *Memory) ImageDetail(ctx context.Context, id, image string) (protocol.Im
 		return protocol.ImageDetail{}, err
 	}
 	return h.ImageDetail(ctx, image)
+}
+
+func (m *Memory) RemoveVolume(ctx context.Context, id, name string) error {
+	h, _, err := m.host(id)
+	if err != nil {
+		return err
+	}
+	return h.RemoveVolume(ctx, name)
+}
+
+func (m *Memory) RemoveImage(ctx context.Context, id, image string) error {
+	h, _, err := m.host(id)
+	if err != nil {
+		return err
+	}
+	return h.RemoveImage(ctx, image)
 }
 
 func (m *Memory) Start(ctx context.Context, id, containerID string) error {

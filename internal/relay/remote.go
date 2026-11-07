@@ -215,6 +215,16 @@ func (r *Remote) ImageDetail(ctx context.Context, hostID, id string) (protocol.I
 	return out, err
 }
 
+// RemoveVolume deletes a volume of the host's prefix. The host refuses a volume a container uses.
+func (r *Remote) RemoveVolume(ctx context.Context, hostID, name string) error {
+	return r.call(ctx, hostID, "volumes.remove", protocol.VolumeRequest{Name: name}, nil, DefaultRequestTimeout)
+}
+
+// RemoveImage deletes an image of the host. The host refuses an image a container uses.
+func (r *Remote) RemoveImage(ctx context.Context, hostID, id string) error {
+	return r.call(ctx, hostID, "images.remove", protocol.ImageRequest{ID: id}, nil, DefaultRequestTimeout)
+}
+
 func (r *Remote) Start(ctx context.Context, hostID, containerID string) error {
 	return r.call(ctx, hostID, "container.start", protocol.StartRequest{ContainerID: containerID}, nil, DefaultRequestTimeout)
 }

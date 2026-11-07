@@ -6,7 +6,17 @@ export type Host = { host_id: string; prefix: string; hostname: string; engine_v
 export type Container = { id: string; name: string; image: string; state: string; status: string };
 /** One container's use of a volume; `mode` is "rw" or "ro". */
 export type VolumeMount = { container_id: string; container: string; destination: string; mode: string; state: string };
-export type Volume = { name: string; driver: string; mountpoint: string; mounts?: VolumeMount[] };
+export type Volume = {
+  name: string;
+  driver: string;
+  mountpoint: string;
+  mounts?: VolumeMount[];
+  /** Size of the volume's files at `size_measured_at`, from the agent's background scan; absent until the first scan. */
+  size_bytes?: number;
+  size_measured_at?: string;
+  /** True when some files could not be read, so `size_bytes` is a lower bound. */
+  size_partial?: boolean;
+};
 export type VolumeDetail = Volume & { created?: string; labels?: Record<string, string> };
 /** One container of this agent that runs an image. */
 export type ImageUse = { container_id: string; container: string; state: string };
@@ -106,6 +116,22 @@ export function getImage(hostID: string, id: string, request: typeof fetch = fet
 
 export function listImages(hostID: string, request: typeof fetch = fetch): Promise<Image[]> {
   return getJSON(hostEndpoint(hostID, "images"), "Could not load images", request);
+}
+
+/** Removes a volume of the host. The host refuses one that a container still mounts. */
+export async function deleteVolume(hostID: string, name: string, request: typeof fetch = fetch): Promise<void> {
+  const response = await request(`${hostEndpoint(hostID, "volumes")}/${encodeURIComponent(name)}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) throw await failure(response, "Could not remove the volume");
+}
+
+/** Removes an image of the host. The host refuses one that a container uses, or one with several tags. */
+export async function deleteImage(hostID: string, id: string, request: typeof fetch = fetch): Promise<void> {
+  const response = await request(`${hostEndpoint(hostID, "images")}/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) throw await failure(response, "Could not remove the image");
 }
 
 export async function containerOperation(

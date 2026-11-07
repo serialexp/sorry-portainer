@@ -39,6 +39,10 @@ func (h *fakeHost) VolumeDetail(_ context.Context, name string) (protocol.Volume
 	return protocol.VolumeDetail{Volume: protocol.Volume{Name: name}}, nil
 }
 
+func (h *fakeHost) RemoveVolume(_ context.Context, _ string) error { return nil }
+
+func (h *fakeHost) RemoveImage(_ context.Context, _ string) error { return nil }
+
 func (h *fakeHost) ImageDetail(_ context.Context, id string) (protocol.ImageDetail, error) {
 	return protocol.ImageDetail{Image: protocol.Image{ID: id}}, nil
 }

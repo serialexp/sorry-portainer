@@ -25,6 +25,8 @@ type stackRelay struct {
 	volumeRequested string
 	// imageRequested is the image the last detail read asked for.
 	imageRequested string
+	// removed names the volume or image the last removal asked for.
+	removed string
 }
 
 func (r *stackRelay) Hosts() []protocol.HostInfo { return nil }
@@ -36,6 +38,16 @@ func (r *stackRelay) VolumeDetail(_ context.Context, _ string, name string) (pro
 	r.volumeRequested = name
 	return protocol.VolumeDetail{Volume: protocol.Volume{Name: name}}, nil
 }
+func (r *stackRelay) RemoveVolume(_ context.Context, _ string, name string) error {
+	r.removed = "volume:" + name
+	return r.err
+}
+
+func (r *stackRelay) RemoveImage(_ context.Context, _ string, id string) error {
+	r.removed = "image:" + id
+	return r.err
+}
+
 func (r *stackRelay) ImageDetail(_ context.Context, _ string, id string) (protocol.ImageDetail, error) {
 	r.imageRequested = id
 	return protocol.ImageDetail{Image: protocol.Image{ID: id}}, nil
@@ -153,6 +165,31 @@ func TestVolumeDetailHTTP(t *testing.T) {
 	w = authenticatedStackRequest(t, s, http.MethodGet, "/api/hosts/host/volumes/app-data/extra", "")
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("nested path status = %d", w.Code)
+	}
+}
+
+func TestRemoveHTTP(t *testing.T) {
+	relay := &stackRelay{}
+	s := New(testSessions, relay, nil)
+	w := authenticatedStackRequest(t, s, http.MethodDelete, "/api/hosts/host/volumes/app-data", "")
+	if w.Code != http.StatusOK || relay.removed != "volume:app-data" || !strings.Contains(w.Body.String(), `"id":"app-data"`) {
+		t.Fatalf("volume removal = %d (removed %q): %s", w.Code, relay.removed, w.Body.String())
+	}
+	w = authenticatedStackRequest(t, s, http.MethodDelete, "/api/hosts/host/images/abcdef012345", "")
+	if w.Code != http.StatusOK || relay.removed != "image:abcdef012345" {
+		t.Fatalf("image removal = %d (removed %q)", w.Code, relay.removed)
+	}
+}
+
+// A refused removal, such as a volume a container uses, is a conflict.
+func TestRemoveRefusedHTTPConflict(t *testing.T) {
+	relay := &stackRelay{err: &relay.RemoteError{Code: protocol.CodeOperationFailed, Message: "volume is being used"}}
+	s := New(testSessions, relay, nil)
+	for _, path := range []string{"/api/hosts/host/volumes/app-data", "/api/hosts/host/images/abcdef012345"} {
+		w := authenticatedStackRequest(t, s, http.MethodDelete, path, "")
+		if w.Code != http.StatusConflict {
+			t.Fatalf("DELETE %s status = %d, want %d", path, w.Code, http.StatusConflict)
+		}
 	}
 }
 

@@ -101,6 +101,32 @@ func TestLocalClusterStartRoutesByHostPrefix(t *testing.T) {
 	}
 }
 
+func TestLocalClusterRemoveRoutesByHostPrefix(t *testing.T) {
+	cluster := newFakeCluster()
+	api := httptest.NewServer(server.New(testSessions("integration-test-admin-password"), cluster.registry, nil).Handler(nil))
+	defer api.Close()
+	client := mustAuthenticatedClient(t, api.URL, "integration-test-admin-password")
+
+	request, err := http.NewRequest(http.MethodDelete, api.URL+"/api/hosts/local-b/volumes/local-b-data", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("remove status = %d, want %d", response.StatusCode, http.StatusOK)
+	}
+	if got := cluster.agents["local-b"].removed; got != "volume:local-b-data" {
+		t.Fatalf("local-b removed %q", got)
+	}
+	if got := cluster.agents["local-a"].removed; got != "" {
+		t.Fatalf("local-a received a removal: %q", got)
+	}
+}
+
 type fakeCluster struct {
 	registry *relay.Memory
 	agents   map[string]*fakeAgent
@@ -121,6 +147,7 @@ func newFakeCluster() *fakeCluster {
 type fakeAgent struct {
 	id      string
 	started string
+	removed string
 }
 
 func (a *fakeAgent) Info(context.Context) (protocol.HostInfo, error) {
@@ -132,6 +159,16 @@ func (a *fakeAgent) Containers(context.Context) ([]protocol.Container, error) {
 func (a *fakeAgent) VolumeDetail(_ context.Context, name string) (protocol.VolumeDetail, error) {
 	return protocol.VolumeDetail{Volume: protocol.Volume{Name: name}}, nil
 }
+func (a *fakeAgent) RemoveVolume(_ context.Context, name string) error {
+	a.removed = "volume:" + name
+	return nil
+}
+
+func (a *fakeAgent) RemoveImage(_ context.Context, id string) error {
+	a.removed = "image:" + id
+	return nil
+}
+
 func (a *fakeAgent) ImageDetail(_ context.Context, id string) (protocol.ImageDetail, error) {
 	return protocol.ImageDetail{Image: protocol.Image{ID: id}}, nil
 }

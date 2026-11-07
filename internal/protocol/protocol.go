@@ -248,6 +248,13 @@ type Volume struct {
 	Mountpoint string `json:"mountpoint"`
 	// Mounts lists the containers of this agent's prefix that mount the volume.
 	Mounts []VolumeMount `json:"mounts,omitempty"`
+	// SizeBytes is the total size of the volume's files as the last background scan measured it.
+	// It is nil until the first scan of the volume completes.
+	SizeBytes *int64 `json:"size_bytes,omitempty"`
+	// SizeMeasuredAt is when that scan measured SizeBytes, in RFC 3339.
+	SizeMeasuredAt string `json:"size_measured_at,omitempty"`
+	// SizePartial is set when some files could not be read, so SizeBytes is a lower bound.
+	SizePartial bool `json:"size_partial,omitempty"`
 }
 
 // VolumeMount is one container's use of a named volume.
@@ -304,5 +311,10 @@ type ImageLayer struct {
 }
 
 type ImageRequest struct {
+	ID string `json:"id"`
+}
+
+// Removed names the volume or image that a remove operation deleted.
+type Removed struct {
 	ID string `json:"id"`
 }
