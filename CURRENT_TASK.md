@@ -212,3 +212,10 @@ Not done / next:
 - Migrated the Compose stack backend to bounded `podman compose` execution with an explicit distro `podman-compose` provider; stack UI, status refresh, Git sources, templates, live acceptance, and the secret workflow remain outstanding.
 - mTLS reconnect/heartbeat, certificate allowlisting, and full disconnect cleanup remain outstanding.
 - `README.md` and `NOTES.md` are existing scratch files and remain outside the captured change.
+
+## Sorry-portainer redesign: volumes and images (gentle-badger, 2026-11-08)
+
+- Done and captured in Wheat: volumes (change 01a1b690-7d78-7a60-b0e4-c9a1e879d1f3, "Volumes: mounted-by list and volume page"). Volume list shows the containers that mount each volume; volume page shows mountpoint, created, labels and mounted-by. Agent op `volumes.get`, route `/api/hosts/{id}/volumes/{name}`.
+- Built, tested, NOT captured: images (change 01a1b69a-9209-7610-ad88-4cdd63f6ab65 exists but is empty). Image list shows used-by containers; image page shows config, layers and users. Agent op `images.get`, route `/api/hosts/{id}/images/{hex id}`. Files overlap the volume change (adapter.go, protocol.go, relay/*, server.go, index.tsx, styles.css), so committing them needs a bundled change or Bart's decision (Rule 13).
+- Not started: SecretStore states artboard (overlaps rapid-owl's secrets-ui work).
+- Known open items: volume and image "Remove" buttons (no remove op built); volume "Size on disk" (podman 4.9 system df has no per-volume size); TestSecretStoreLifecycleOverHTTP in internal/server is intermittently failing (2 syncs instead of 1, about 1 run in 5), in rapid-owl's secrets code.

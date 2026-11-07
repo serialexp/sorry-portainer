@@ -1790,14 +1790,14 @@ h2 {
 .volume-name:hover {
   text-decoration: underline;
 }
-.volume-mounts {
+.container-chips {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   min-width: 0;
 }
-.volume-mount {
+.container-chip {
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -1809,37 +1809,37 @@ h2 {
   font-size: 13px;
   font-weight: 500;
 }
-.volume-mount a {
+.container-chip a {
   color: var(--ink);
   text-decoration: none;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.volume-mount a:hover {
+.container-chip a:hover {
   text-decoration: underline;
 }
-.volume-target {
+.container-detail {
   font: 12.5px var(--mono);
   color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.volume-dot {
+.container-dot {
   flex: none;
   width: 7px;
   height: 7px;
   border-radius: 999px;
   background: var(--stopped-dot);
 }
-.volume-dot.up {
+.container-dot.up {
   background: var(--green);
 }
 .volume-title {
   overflow-wrap: anywhere;
 }
-.volume-path {
+.copy-box {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -1848,7 +1848,7 @@ h2 {
   border-radius: 10px;
   background: var(--sidebar);
 }
-.volume-path code {
+.copy-box code {
   flex: 1;
   min-width: 0;
   padding: 8px 0;
@@ -1856,7 +1856,7 @@ h2 {
   font: 13px var(--mono);
   color: #d9e3dd;
 }
-.volume-copy {
+.copy-button {
   flex: none;
   min-height: 36px;
   padding: 0 12px;
@@ -1869,21 +1869,56 @@ h2 {
   font-weight: 600;
   cursor: pointer;
 }
-.volume-facts {
+.fact-list {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
   gap: 10px 16px;
   margin: 0;
   font-size: 14px;
 }
-.volume-facts dt {
+.fact-list dt {
   color: var(--muted);
 }
-.volume-facts dd {
+.fact-list dd {
   margin: 0;
   font: 13px var(--mono);
   overflow-wrap: anywhere;
 }
-.volume-wide {
+.detail-wide {
   grid-column: 1 / -1;
+}
+.data-table.cols-image-list {
+  --cols: minmax(240px, 2fr) 150px 100px minmax(200px, 1.6fr);
+  min-width: 760px;
+}
+.data-table.cols-image-layers {
+  --cols: 40px minmax(0, 1fr) 180px 90px;
+  min-width: 620px;
+}
+.tag-cell {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.layer-command {
+  min-width: 0;
+  font: 13px var(--mono);
+  color: #2e3a34;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.layer-track {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--line-soft);
+  overflow: hidden;
+}
+.layer-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--focus);
 }

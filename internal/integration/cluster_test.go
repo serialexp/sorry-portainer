@@ -132,6 +132,9 @@ func (a *fakeAgent) Containers(context.Context) ([]protocol.Container, error) {
 func (a *fakeAgent) VolumeDetail(_ context.Context, name string) (protocol.VolumeDetail, error) {
 	return protocol.VolumeDetail{Volume: protocol.Volume{Name: name}}, nil
 }
+func (a *fakeAgent) ImageDetail(_ context.Context, id string) (protocol.ImageDetail, error) {
+	return protocol.ImageDetail{Image: protocol.Image{ID: id}}, nil
+}
 func (a *fakeAgent) Volumes(context.Context) ([]protocol.Volume, error) {
 	return []protocol.Volume{{Name: a.id + "-data"}}, nil
 }

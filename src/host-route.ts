@@ -5,6 +5,7 @@ export type HostRoute = {
   action?: "new" | "edit" | "view";
   stackName?: string;
   volumeName?: string;
+  imageID?: string;
 };
 
 const sections: readonly string[] = ["containers", "images", "volumes", "stacks"];
@@ -28,12 +29,18 @@ export function editStackPath(hostID: string, name: string): string {
   return `${stackPath(hostID, name)}/edit`;
 }
 
+export function imagePath(hostID: string, id: string): string {
+  return `${hostPath(hostID, "images")}/${encodeURIComponent(id)}`;
+}
+
 export function volumePath(hostID: string, name: string): string {
   return `${hostPath(hostID, "volumes")}/${encodeURIComponent(name)}`;
 }
 
 // Podman's own volume name rule: letters and digits first, then letters, digits, '_', '.' or '-'.
 const volumeNamePattern = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
+// A full image ID or a short prefix of one, as podman takes them.
+const imageIDPattern = /^[0-9a-f]{12,64}$/;
 
 export function parseHostPath(pathname: string): HostRoute | null {
   const parts = pathname.split("/");
@@ -44,10 +51,17 @@ export function parseHostPath(pathname: string): HostRoute | null {
   const isView = parts.length === 4 && parts[2] === "stacks" && !isNew;
   // A volume's own page. Volumes have no create or edit page, so the name is all there is.
   const isVolume = parts.length === 4 && parts[2] === "volumes";
-  if (parts.length !== 3 && !isNew && !isEdit && !isView && !isVolume) return null;
+  // An image's own page, named by its ID or a short prefix of one.
+  const isImage = parts.length === 4 && parts[2] === "images";
+  if (parts.length !== 3 && !isNew && !isEdit && !isView && !isVolume && !isImage) return null;
   try {
     const hostID = decodeURIComponent(parts[1]);
     if (!hostID || hostID.includes("/") || hostID === "." || hostID === "..") return null;
+    if (isImage) {
+      const imageID = decodeURIComponent(parts[3]);
+      if (!imageIDPattern.test(imageID)) return null;
+      return { hostID, section: "images", action: "view", imageID };
+    }
     if (isVolume) {
       const volumeName = decodeURIComponent(parts[3]);
       if (!volumeNamePattern.test(volumeName)) return null;

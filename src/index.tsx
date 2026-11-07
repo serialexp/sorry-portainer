@@ -1,13 +1,10 @@
 import { createEffect, createSignal, For, Match, Show, Switch, onMount, untrack } from "solid-js";
 import { A, Route, Router, useLocation, useNavigate } from "@solidjs/router";
 import { render } from "solid-js/web";
-import type { Image, Volume } from "./fleet-api";
 import {
   boot,
   filteredContainers,
   filteredHosts,
-  filteredImages,
-  filteredVolumes,
   fleet,
   selectedHost,
   setQuery,
@@ -21,6 +18,7 @@ import { enrollmentPath, hostPath, parseHostPath } from "./host-route";
 import { HostSecretWarnings, SecretStoreBanner } from "./secrets-ui";
 import { StackDetail, StackEditor, StackList } from "./stacks-ui";
 import { VolumeDetailPage, VolumeList } from "./volumes-ui";
+import { ImageDetailPage, ImageList } from "./images-ui";
 import "./styles.css";
 
 function App() {
@@ -142,7 +140,11 @@ function Dashboard() {
             <HostPage />
           </Show>
           <Show when={section() === "images"}>
-            <ResourcePage />
+            <Switch fallback={<ImageList />}>
+              <Match when={route()?.action === "view"}>
+                <ImageDetailPage />
+              </Match>
+            </Switch>
           </Show>
           <Show when={section() === "volumes"}>
             <Switch fallback={<VolumeList />}>
@@ -187,7 +189,9 @@ function pageHeading(pathname: string): { eyebrow: string; title: string; subtit
   const search = `Search ${route.section}`;
   switch (route.section) {
     case "images":
-      return { eyebrow, search, title: "Images", subtitle: "Images available on this host's Podman installation." };
+      return route.action === "view"
+        ? { eyebrow, search, title: "Image", subtitle: `Image on ${route.hostID}'s Podman installation.` }
+        : { eyebrow, search, title: "Images", subtitle: "Images available on this host's Podman installation." };
     case "volumes":
       return route.action === "view"
         ? { eyebrow, search, title: "Volume", subtitle: `Persistent storage on ${route.hostID}.` }
@@ -348,46 +352,6 @@ function HostPage() {
     </>
   );
 }
-function ResourcePage() {
-  const count = () => filteredImages().length;
-  return (
-    <section class="resource-page panel" aria-label="Images">
-      <div class="panel-heading">
-        <div>
-          <h2>All images</h2>
-        </div>
-        <span class="resource-count">{count()}</span>
-      </div>
-      <Show when={count()} fallback={<div class="resource-empty">No images match this search.</div>}>
-        <div class="data-scroll">
-          <div class="data-table cols-images">
-            <div class="data-head">
-              <span>Image</span>
-              <span>ID</span>
-              <span>Size</span>
-            </div>
-            <For each={filteredImages()}>
-              {(image) => (
-                <div class="data-row">
-                  <div class="cell-name">
-                    <span class="resource-icon image" aria-hidden="true">
-                      ◈
-                    </span>
-                    <div>
-                      <strong>{image.tags?.[0] ?? "untagged image"}</strong>
-                    </div>
-                  </div>
-                  <span class="cell-muted">{image.id.slice(0, 19)}</span>
-                  <span class="cell-value">{formatBytes(image.size)}</span>
-                </div>
-              )}
-            </For>
-          </div>
-        </div>
-      </Show>
-    </section>
-  );
-}
 function Login() {
   const [password, setPassword] = createSignal("");
   const [showPassword, setShowPassword] = createSignal(false);
@@ -479,12 +443,6 @@ function Login() {
       </div>
     </div>
   );
-}
-function formatBytes(bytes: number) {
-  if (!bytes) return "0 B";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
-  return `${(bytes / 1024 ** index).toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
 }
 
 render(

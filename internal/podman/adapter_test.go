@@ -52,6 +52,7 @@ func TestProtocolMappingsAndPrefixFiltering(t *testing.T) {
 		{stdout: `[{"Id":"abc","Names":["owned-web"],"Image":"example/web:1","State":"running","Status":"Up 2 minutes"},{"Id":"def","Names":["other-web"],"Image":"example/web:2","State":"exited","Status":"Exited (0)"}]`},
 		{stdout: "abc\t[{\"Type\":\"volume\",\"Name\":\"owned-data\",\"Destination\":\"/data\",\"RW\":true}]\n"},
 		{stdout: `[{"Id":"sha256:123","RepoTags":["example/web:1","example/web:latest"],"Size":12345,"Created":1700000000}]`},
+		{stdout: `[]`},
 	}}
 	client := NewWithRunner(runner, "owned-")
 	ctx := context.Background()
@@ -83,6 +84,7 @@ func TestProtocolMappingsAndPrefixFiltering(t *testing.T) {
 		{"ps", "--all", "--format", "json"},
 		{"container", "inspect", "--format", `{{.ID}}{{"\t"}}{{json .Mounts}}`, "--", "abc"},
 		{"images", "--all", "--format", "json"},
+		{"ps", "--all", "--format", "json"},
 	}
 	if !reflect.DeepEqual(runner.calls, wantCalls) {
 		t.Fatalf("direct argv calls = %#v, want %#v", runner.calls, wantCalls)
@@ -136,6 +138,49 @@ func TestVolumesWithoutContainersSkipInspect(t *testing.T) {
 	}
 }
 
+func TestImageDetailReadsConfigLayersAndUsers(t *testing.T) {
+	runner := &fakeRunner{responses: []response{
+		{stdout: `[{"Id":"abcdef0123456789abcdef","RepoTags":["example/web:1"],"Created":"2026-10-12T10:00:00Z","Size":4096,"Os":"linux","Architecture":"amd64","Config":{"Cmd":["caddy","run"],"Entrypoint":null,"WorkingDir":"/srv","Env":["PATH=/bin"],"ExposedPorts":{"443/tcp":{},"80/tcp":{}}}}]`},
+		{stdout: `[{"CreatedBy":"CMD [\"caddy\"]","size":0},{"CreatedBy":"ADD rootfs","size":4000}]`},
+		{stdout: `[{"Id":"c1","Names":["owned-web"],"ImageID":"abcdef0123456789abcdef","State":"running"},{"Id":"c2","Names":["other-web"],"ImageID":"abcdef0123456789abcdef","State":"running"}]`},
+	}}
+	client := NewWithRunner(runner, "owned-")
+	detail, err := client.ImageDetail(context.Background(), "abcdef012345")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.ID != "abcdef0123456789abcdef" || detail.Platform != "linux/amd64" || detail.Created != time.Date(2026, 10, 12, 10, 0, 0, 0, time.UTC).Unix() {
+		t.Fatalf("ImageDetail() = %#v", detail)
+	}
+	if !reflect.DeepEqual(detail.Ports, []string{"443/tcp", "80/tcp"}) || !reflect.DeepEqual(detail.Command, []string{"caddy", "run"}) || detail.WorkingDir != "/srv" {
+		t.Fatalf("configuration = %#v", detail)
+	}
+	wantLayers := []protocol.ImageLayer{{CreatedBy: "ADD rootfs", Size: 4000}, {CreatedBy: `CMD ["caddy"]`, Size: 0}}
+	if !reflect.DeepEqual(detail.Layers, wantLayers) {
+		t.Fatalf("layers = %#v, want oldest first %#v", detail.Layers, wantLayers)
+	}
+	wantUsers := []protocol.ImageUse{{ContainerID: "c1", Container: "owned-web", State: "running"}}
+	if !reflect.DeepEqual(detail.Containers, wantUsers) {
+		t.Fatalf("users = %#v, want %#v (other prefixes stay hidden)", detail.Containers, wantUsers)
+	}
+	if len(runner.calls) != 3 || runner.calls[0][0] != "image" || runner.calls[1][0] != "history" || runner.calls[2][0] != "ps" {
+		t.Fatalf("calls = %#v", runner.calls)
+	}
+}
+
+func TestImageDetailRejectsIDsThatAreNotHex(t *testing.T) {
+	for _, bad := range []string{"--all", "abc", "owned-web", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdefa", "ABCDEF0123"} {
+		runner := &fakeRunner{}
+		client := NewWithRunner(runner)
+		if _, err := client.ImageDetail(context.Background(), bad); err == nil || !strings.Contains(err.Error(), "not a hexadecimal") {
+			t.Fatalf("ImageDetail(%q) error = %v", bad, err)
+		}
+		if len(runner.calls) != 0 {
+			t.Fatalf("ImageDetail(%q) ran %#v", bad, runner.calls)
+		}
+	}
+}
+
 // benchmarkHostFixtures writes the command output of a host with the given
 // numbers of containers and volumes, each container mounting one volume.
 func benchmarkHostFixtures(containers, volumes int) (ps, volumeList, inspect string) {
@@ -158,6 +203,38 @@ func benchmarkHostFixtures(containers, volumes int) (ps, volumeList, inspect str
 	}
 	p.WriteString("]")
 	return p.String(), v.String(), in.String()
+}
+
+// BenchmarkImagesWithUsers is the image list on a busy host: 500 images, 1000
+// containers, and the containers that run each image.
+func BenchmarkImagesWithUsers(b *testing.B) {
+	var images, ps strings.Builder
+	images.WriteString("[")
+	ps.WriteString("[")
+	for i := 0; i < 500; i++ {
+		if i > 0 {
+			images.WriteString(",")
+		}
+		fmt.Fprintf(&images, `{"Id":"%064x","RepoTags":["example/app%03d:latest"],"Size":%d,"Created":1700000000}`, i, i, 1000+i)
+	}
+	for i := 0; i < 1000; i++ {
+		if i > 0 {
+			ps.WriteString(",")
+		}
+		fmt.Fprintf(&ps, `{"Id":"id%06d","Names":["owned-c%06d"],"ImageID":"%064x","State":"running"}`, i, i, i%500)
+	}
+	images.WriteString("]")
+	ps.WriteString("]")
+	imageList, containerList := images.String(), ps.String()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		runner := &fakeRunner{responses: []response{{stdout: imageList}, {stdout: containerList}}}
+		client := NewWithRunner(runner, "owned-")
+		out, err := client.Images(context.Background())
+		if err != nil || len(out) != 500 || len(out[0].Containers) != 2 {
+			b.Fatalf("Images() = %d images, %v", len(out), err)
+		}
+	}
 }
 
 // BenchmarkVolumesWithMounts is the volume list on a busy host: 1000 containers

@@ -9,10 +9,12 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/serialexp/sorry-portainer/internal/protocol"
 )
@@ -174,11 +176,12 @@ func supportedVersion(version string) bool {
 }
 
 type containerJSON struct {
-	ID     string   `json:"Id"`
-	Names  []string `json:"Names"`
-	Image  string   `json:"Image"`
-	State  string   `json:"State"`
-	Status string   `json:"Status"`
+	ID      string   `json:"Id"`
+	Names   []string `json:"Names"`
+	Image   string   `json:"Image"`
+	ImageID string   `json:"ImageID"`
+	State   string   `json:"State"`
+	Status  string   `json:"Status"`
 }
 
 func (c *Client) Containers(ctx context.Context) ([]protocol.Container, error) {
@@ -356,6 +359,9 @@ type imageJSON struct {
 	Created int64    `json:"Created"`
 }
 
+// Images lists every image on the host. Images are shared by the whole Podman
+// installation, so they are not filtered by prefix; only the containers that
+// use them are, because those belong to this agent.
 func (c *Client) Images(ctx context.Context) ([]protocol.Image, error) {
 	data, err := c.run(ctx, "images", "--all", "--format", "json")
 	if err != nil {
@@ -370,7 +376,133 @@ func (c *Client) Images(ctx context.Context) ([]protocol.Image, error) {
 		item := &items[i]
 		out[i] = protocol.Image{ID: item.ID, Tags: item.Tags, Size: item.Size, Created: item.Created}
 	}
+	if len(out) == 0 {
+		return out, nil
+	}
+	users, err := c.imageUsers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].Containers = users[out[i].ID]
+	}
 	return out, nil
+}
+
+// imageUsers maps each image ID to the containers of this agent's prefix that run it.
+func (c *Client) imageUsers(ctx context.Context) (map[string][]protocol.ImageUse, error) {
+	data, err := c.run(ctx, "ps", "--all", "--format", "json")
+	if err != nil {
+		return nil, err
+	}
+	items, err := decodeJSON[[]containerJSON]("ps", data)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string][]protocol.ImageUse)
+	for i := range items {
+		item := &items[i]
+		name := ""
+		if len(item.Names) != 0 {
+			name = strings.TrimPrefix(item.Names[0], "/")
+		}
+		if c.prefix != "" && !strings.HasPrefix(name, c.prefix) {
+			continue
+		}
+		out[item.ImageID] = append(out[item.ImageID], protocol.ImageUse{ContainerID: item.ID, Container: name, State: item.State})
+	}
+	for id := range out {
+		uses := out[id]
+		sort.Slice(uses, func(i, j int) bool { return uses[i].Container < uses[j].Container })
+	}
+	return out, nil
+}
+
+// imageIDPattern accepts a full image ID or a short prefix of one, never anything
+// that podman could read as an option or a reference.
+var imageIDPattern = regexp.MustCompile(`^[0-9a-f]{12,64}$`)
+
+type imageInspectJSON struct {
+	ID           string   `json:"Id"`
+	RepoTags     []string `json:"RepoTags"`
+	Created      string   `json:"Created"`
+	Size         int64    `json:"Size"`
+	OS           string   `json:"Os"`
+	Architecture string   `json:"Architecture"`
+	Config       struct {
+		Cmd          []string            `json:"Cmd"`
+		Entrypoint   []string            `json:"Entrypoint"`
+		WorkingDir   string              `json:"WorkingDir"`
+		Env          []string            `json:"Env"`
+		ExposedPorts map[string]struct{} `json:"ExposedPorts"`
+	} `json:"Config"`
+}
+
+type imageHistoryJSON struct {
+	CreatedBy string `json:"CreatedBy"`
+	Size      int64  `json:"size"`
+}
+
+// ImageDetail inspects one image, its build steps and the containers of this
+// agent's prefix that run it. The ID is a full ID or a short prefix of one.
+func (c *Client) ImageDetail(ctx context.Context, id string) (protocol.ImageDetail, error) {
+	if !imageIDPattern.MatchString(id) {
+		return protocol.ImageDetail{}, fmt.Errorf("image %q is not a hexadecimal image ID", id)
+	}
+	data, err := c.run(ctx, "image", "inspect", "--format", "json", "--", id)
+	if err != nil {
+		return protocol.ImageDetail{}, err
+	}
+	items, err := decodeJSON[[]imageInspectJSON]("image inspect", data)
+	if err != nil {
+		return protocol.ImageDetail{}, err
+	}
+	if len(items) != 1 || items[0].ID == "" {
+		return protocol.ImageDetail{}, fmt.Errorf("podman image inspect returned no unique image for %q", id)
+	}
+	item := items[0]
+	created, err := time.Parse(time.RFC3339Nano, item.Created)
+	if err != nil {
+		return protocol.ImageDetail{}, fmt.Errorf("podman image inspect: created time of %s: %w", item.ID, err)
+	}
+	historyData, err := c.run(ctx, "history", "--format", "json", "--", item.ID)
+	if err != nil {
+		return protocol.ImageDetail{}, err
+	}
+	history, err := decodeJSON[[]imageHistoryJSON]("history", historyData)
+	if err != nil {
+		return protocol.ImageDetail{}, err
+	}
+	// podman lists the newest step first.
+	layers := make([]protocol.ImageLayer, 0, len(history))
+	for i := len(history) - 1; i >= 0; i-- {
+		layers = append(layers, protocol.ImageLayer{CreatedBy: history[i].CreatedBy, Size: history[i].Size})
+	}
+	users, err := c.imageUsers(ctx)
+	if err != nil {
+		return protocol.ImageDetail{}, err
+	}
+	var ports []string
+	for port := range item.Config.ExposedPorts {
+		ports = append(ports, port)
+	}
+	sort.Strings(ports)
+	return protocol.ImageDetail{
+		Image: protocol.Image{
+			ID:         item.ID,
+			Tags:       item.RepoTags,
+			Size:       item.Size,
+			Created:    created.Unix(),
+			Containers: users[item.ID],
+		},
+		Platform:   item.OS + "/" + item.Architecture,
+		Command:    item.Config.Cmd,
+		Entrypoint: item.Config.Entrypoint,
+		WorkingDir: item.Config.WorkingDir,
+		Ports:      ports,
+		Env:        item.Config.Env,
+		Layers:     layers,
+	}, nil
 }
 
 type inspectJSON struct {

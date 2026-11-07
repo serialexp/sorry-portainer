@@ -1,6 +1,7 @@
 import { A, useLocation } from "@solidjs/router";
 import { createEffect, createSignal, For, Show } from "solid-js";
-import { getVolume, type VolumeDetail, type VolumeMount } from "./fleet-api";
+import { ContainerChip } from "./container-chip";
+import { getVolume, type VolumeDetail } from "./fleet-api";
 import { filteredVolumes, fleet, sessionEnded } from "./fleet-store";
 import { hostPath, parseHostPath, volumePath } from "./host-route";
 
@@ -51,12 +52,22 @@ export function VolumeList() {
                     </div>
                   </div>
                   <span class="chip-code">{volume.driver}</span>
-                  <div class="volume-mounts">
+                  <div class="container-chips">
                     <Show
                       when={(volume.mounts?.length ?? 0) > 0}
                       fallback={<span class="cell-muted">Not mounted</span>}
                     >
-                      <For each={volume.mounts}>{(mount) => <MountChip hostID={hostID()} mount={mount} />}</For>
+                      <For each={volume.mounts}>
+                        {(mount) => (
+                          <ContainerChip
+                            href={hostPath(hostID(), "containers")}
+                            container={mount.container}
+                            state={mount.state}
+                            detail={mount.destination}
+                            title={`${mount.container} mounts this at ${mount.destination}`}
+                          />
+                        )}
+                      </For>
                     </Show>
                   </div>
                 </div>
@@ -66,17 +77,6 @@ export function VolumeList() {
         </div>
       </Show>
     </section>
-  );
-}
-
-/** One container's mount, as a link to its host's containers and the path it sees. */
-function MountChip(props: { hostID: string; mount: VolumeMount }) {
-  return (
-    <span class="volume-mount" title={`${props.mount.container} mounts this at ${props.mount.destination}`}>
-      <span class={`volume-dot ${props.mount.state === "running" ? "up" : "down"}`} aria-hidden="true" />
-      <A href={hostPath(props.hostID, "containers")}>{props.mount.container}</A>
-      <span class="volume-target">→ {props.mount.destination}</span>
-    </span>
   );
 }
 
@@ -149,14 +149,13 @@ export function VolumeDetailPage() {
       <Show when={volume()}>
         {(current) => (
           <div class="stack-detail-grid">
-            <div class="stack-detail-block volume-wide">
-              {" "}
+            <div class="stack-detail-block detail-wide">
               <h3>Mountpoint</h3>
-              <div class="volume-path">
+              <div class="copy-box">
                 <code>{current().mountpoint || "Podman managed"}</code>
                 <Show when={current().mountpoint}>
                   <button
-                    class="volume-copy"
+                    class="copy-button"
                     type="button"
                     aria-label="Copy mountpoint"
                     onClick={() => copyMountpoint(current().mountpoint)}
@@ -168,14 +167,14 @@ export function VolumeDetailPage() {
             </div>
             <div class="stack-detail-block">
               <h3>Details</h3>
-              <dl class="volume-facts">
+              <dl class="fact-list">
                 <dt>Driver</dt>
                 <dd>{current().driver}</dd>
                 <dt>Created</dt>
                 <dd>{current().created || "Unknown"}</dd>
               </dl>
             </div>
-            <div class="stack-detail-block volume-wide">
+            <div class="stack-detail-block detail-wide">
               <h3>Mounted by</h3>
               <Show
                 when={(current().mounts?.length ?? 0) > 0}
@@ -205,13 +204,13 @@ export function VolumeDetailPage() {
                 </div>
               </Show>
             </div>
-            <div class="stack-detail-block volume-wide">
+            <div class="stack-detail-block detail-wide">
               <h3>Labels</h3>
               <Show
                 when={Object.keys(current().labels ?? {}).length > 0}
                 fallback={<p class="stack-note">No labels.</p>}
               >
-                <dl class="volume-facts">
+                <dl class="fact-list">
                   <For each={Object.entries(current().labels ?? {}).sort(([a], [b]) => a.localeCompare(b))}>
                     {([key, value]) => (
                       <>

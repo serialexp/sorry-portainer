@@ -324,6 +324,12 @@ func (a *Agent) handle(ctx context.Context, operation string, payload json.RawMe
 		return a.Handler.VolumeDetail(ctx, request.Name)
 	case "images.list":
 		return a.Handler.Images(ctx)
+	case "images.get":
+		request, err := decodePayload[protocol.ImageRequest](payload)
+		if err != nil {
+			return nil, err
+		}
+		return a.Handler.ImageDetail(ctx, request.ID)
 	case "container.start", "container.stop":
 		request, err := decodePayload[protocol.StartRequest](payload)
 		if err != nil {

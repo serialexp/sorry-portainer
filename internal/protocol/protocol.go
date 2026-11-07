@@ -274,4 +274,35 @@ type Image struct {
 	Tags    []string `json:"tags,omitempty"`
 	Size    int64    `json:"size"`
 	Created int64    `json:"created"`
+	// Containers lists the containers of this agent's prefix that run the image.
+	Containers []ImageUse `json:"containers,omitempty"`
+}
+
+// ImageUse is a container of this agent's prefix that runs an image.
+type ImageUse struct {
+	ContainerID string `json:"container_id"`
+	Container   string `json:"container"`
+	State       string `json:"state"`
+}
+
+// ImageDetail is an image with its configuration and its build steps.
+type ImageDetail struct {
+	Image
+	Platform   string       `json:"platform"`
+	Command    []string     `json:"command,omitempty"`
+	Entrypoint []string     `json:"entrypoint,omitempty"`
+	WorkingDir string       `json:"working_dir,omitempty"`
+	Ports      []string     `json:"ports,omitempty"`
+	Env        []string     `json:"env,omitempty"`
+	Layers     []ImageLayer `json:"layers,omitempty"`
+}
+
+// ImageLayer is one build step of an image, oldest first.
+type ImageLayer struct {
+	CreatedBy string `json:"created_by"`
+	Size      int64  `json:"size"`
+}
+
+type ImageRequest struct {
+	ID string `json:"id"`
 }

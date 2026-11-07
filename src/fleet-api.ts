@@ -8,7 +8,19 @@ export type Container = { id: string; name: string; image: string; state: string
 export type VolumeMount = { container_id: string; container: string; destination: string; mode: string; state: string };
 export type Volume = { name: string; driver: string; mountpoint: string; mounts?: VolumeMount[] };
 export type VolumeDetail = Volume & { created?: string; labels?: Record<string, string> };
-export type Image = { id: string; tags?: string[]; size: number; created: number };
+/** One container of this agent that runs an image. */
+export type ImageUse = { container_id: string; container: string; state: string };
+export type Image = { id: string; tags?: string[]; size: number; created: number; containers?: ImageUse[] };
+export type ImageLayer = { created_by: string; size: number };
+export type ImageDetail = Image & {
+  platform: string;
+  command?: string[];
+  entrypoint?: string[];
+  working_dir?: string;
+  ports?: string[];
+  env?: string[];
+  layers?: ImageLayer[];
+};
 export type ContainerOperation = "start" | "stop";
 
 /** Thrown when the master answers 401: no session, or a wrong password. */
@@ -86,6 +98,10 @@ export function getVolume(hostID: string, name: string, request: typeof fetch = 
     "Could not load the volume",
     request,
   );
+}
+
+export function getImage(hostID: string, id: string, request: typeof fetch = fetch): Promise<ImageDetail> {
+  return getJSON(`${hostEndpoint(hostID, "images")}/${encodeURIComponent(id)}`, "Could not load the image", request);
 }
 
 export function listImages(hostID: string, request: typeof fetch = fetch): Promise<Image[]> {

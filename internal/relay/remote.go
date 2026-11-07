@@ -208,6 +208,13 @@ func (r *Remote) Images(ctx context.Context, hostID string) ([]protocol.Image, e
 	return out, nil
 }
 
+// ImageDetail reads one image on the host, with its configuration and build steps.
+func (r *Remote) ImageDetail(ctx context.Context, hostID, id string) (protocol.ImageDetail, error) {
+	var out protocol.ImageDetail
+	err := r.call(ctx, hostID, "images.get", protocol.ImageRequest{ID: id}, &out, DefaultRequestTimeout)
+	return out, err
+}
+
 func (r *Remote) Start(ctx context.Context, hostID, containerID string) error {
 	return r.call(ctx, hostID, "container.start", protocol.StartRequest{ContainerID: containerID}, nil, DefaultRequestTimeout)
 }

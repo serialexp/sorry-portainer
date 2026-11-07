@@ -23,6 +23,8 @@ type stackRelay struct {
 	revisionRequested int
 	// volumeRequested is the volume the last detail read asked for.
 	volumeRequested string
+	// imageRequested is the image the last detail read asked for.
+	imageRequested string
 }
 
 func (r *stackRelay) Hosts() []protocol.HostInfo { return nil }
@@ -33,6 +35,10 @@ func (r *stackRelay) Volumes(context.Context, string) ([]protocol.Volume, error)
 func (r *stackRelay) VolumeDetail(_ context.Context, _ string, name string) (protocol.VolumeDetail, error) {
 	r.volumeRequested = name
 	return protocol.VolumeDetail{Volume: protocol.Volume{Name: name}}, nil
+}
+func (r *stackRelay) ImageDetail(_ context.Context, _ string, id string) (protocol.ImageDetail, error) {
+	r.imageRequested = id
+	return protocol.ImageDetail{Image: protocol.Image{ID: id}}, nil
 }
 func (r *stackRelay) Images(context.Context, string) ([]protocol.Image, error) { return nil, nil }
 func (r *stackRelay) Start(context.Context, string, string) error              { return nil }
