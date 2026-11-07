@@ -255,6 +255,8 @@ type Volume struct {
 	SizeMeasuredAt string `json:"size_measured_at,omitempty"`
 	// SizePartial is set when some files could not be read, so SizeBytes is a lower bound.
 	SizePartial bool `json:"size_partial,omitempty"`
+	// MountedOutsidePrefix is set when a container outside this agent's prefix mounts the volume.
+	MountedOutsidePrefix bool `json:"mounted_outside_prefix,omitempty"`
 }
 
 // VolumeMount is one container's use of a named volume.

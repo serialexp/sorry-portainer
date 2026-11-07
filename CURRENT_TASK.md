@@ -265,3 +265,10 @@ Open:
 
 - Volumes have the same outside-prefix gap: a volume a container outside the prefix mounts is shown as not mounted here, and Podman's refusal is the only block. The volume side has not been changed.
 - The image pre-check adds `ps --all` and `image inspect` calls to each removal. Cheap for this scale; noted.
+
+## Sorry-portainer: volumes used from outside the prefix (gentle-badger, 2026-11-08, round 3)
+
+- Done: a volume that a container outside the prefix mounts is flagged (`Volume.mounted_outside_prefix`). `volumeMounts` now reads every container's mounts in one call and keeps only the prefix's mounts in the list. The UI shows "Mounted outside this prefix" in the list, "In use elsewhere" in the detail chip, and a disabled "In use elsewhere" Remove button. The volume Remove path is unchanged on the backend: Podman refuses a mounted volume without partial effects.
+- Verified on real Podman: a volume inside the prefix mounted only by a container outside it was flagged on the list and the detail; Podman's `volume rm` still refused it ("is being used"). Test objects deleted.
+- Browser check on the scratch mock: list and detail show the new state. Not checked: the Remove confirmation on an enabled volume.
+- Resolved: the outside-prefix gap for volumes listed under round 2.

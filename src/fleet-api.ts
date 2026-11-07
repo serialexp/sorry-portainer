@@ -11,6 +11,8 @@ export type Volume = {
   driver: string;
   mountpoint: string;
   mounts?: VolumeMount[];
+  /** True when a container outside this agent's prefix mounts the volume. */
+  mounted_outside_prefix?: boolean;
   /** Size of the volume's files at `size_measured_at`, from the agent's background scan; absent until the first scan. */
   size_bytes?: number;
   size_measured_at?: string;

@@ -226,12 +226,13 @@ func (c *Client) Volumes(ctx context.Context) ([]protocol.Volume, error) {
 	if len(out) == 0 {
 		return out, nil
 	}
-	mounts, err := c.volumeMounts(ctx)
+	usage, err := c.volumeMounts(ctx)
 	if err != nil {
 		return nil, err
 	}
 	for i := range out {
-		out[i].Mounts = mounts[out[i].Name]
+		out[i].Mounts = usage[out[i].Name].mounts
+		out[i].MountedOutsidePrefix = usage[out[i].Name].elsewhere
 		c.applySize(&out[i])
 	}
 	return out, nil
@@ -266,27 +267,49 @@ type mountJSON struct {
 	RW          bool   `json:"RW"`
 }
 
-// volumeMounts maps each named volume to the containers of this agent's prefix
-// that mount it. The mounts of every such container come from one podman call.
-// A template prints only each container's mounts: the full inspect document of
-// a busy host would not fit the command output bound.
-func (c *Client) volumeMounts(ctx context.Context) (map[string][]protocol.VolumeMount, error) {
-	containers, err := c.Containers(ctx)
+// volumeUsage is how the containers of one volume relate to this agent's prefix.
+type volumeUsage struct {
+	// mounts are the mounts of the volume by containers of this agent's prefix.
+	mounts []protocol.VolumeMount
+	// elsewhere is set when a container outside the prefix mounts the volume.
+	elsewhere bool
+}
+
+// volumeMounts maps each named volume to the containers that mount it. Mounts by
+// containers outside the prefix are not listed, but they make the volume mounted
+// elsewhere. Every container's mounts come from one podman call. A template
+// prints only each container's mounts: the full inspect document of a busy host
+// would not fit the command output bound.
+func (c *Client) volumeMounts(ctx context.Context) (map[string]volumeUsage, error) {
+	data, err := c.run(ctx, "ps", "--all", "--format", "json")
 	if err != nil {
 		return nil, err
 	}
-	out := make(map[string][]protocol.VolumeMount)
-	if len(containers) == 0 {
+	items, err := decodeJSON[[]containerJSON]("ps", data)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]volumeUsage)
+	if len(items) == 0 {
 		return out, nil
 	}
-	byID := make(map[string]protocol.Container, len(containers))
-	args := make([]string, 0, len(containers)+5)
+	type owner struct {
+		protocol.Container
+		inPrefix bool
+	}
+	byID := make(map[string]owner, len(items))
+	args := make([]string, 0, len(items)+5)
 	args = append(args, "container", "inspect", "--format", `{{.ID}}{{"\t"}}{{json .Mounts}}`, "--")
-	for _, item := range containers {
-		byID[item.ID] = item
+	for i := range items {
+		item := &items[i]
+		name := containerName(item)
+		byID[item.ID] = owner{
+			Container: protocol.Container{ID: item.ID, Name: name, Image: item.Image, State: item.State, Status: item.Status},
+			inPrefix:  c.prefix == "" || strings.HasPrefix(name, c.prefix),
+		}
 		args = append(args, item.ID)
 	}
-	data, err := c.run(ctx, args...)
+	data, err = c.run(ctx, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -300,35 +323,50 @@ func (c *Client) volumeMounts(ctx context.Context) (map[string][]protocol.Volume
 		if !ok {
 			return nil, fmt.Errorf("podman container inspect: unexpected line %q", line)
 		}
-		owner, known := byID[id]
+		owned, known := byID[id]
 		if !known {
 			continue
 		}
 		if err := json.Unmarshal([]byte(mountsJSON), &mounts); err != nil {
-			return nil, fmt.Errorf("podman container inspect: mounts of %q: %w", owner.Name, err)
+			return nil, fmt.Errorf("podman container inspect: mounts of %q: %w", owned.Name, err)
 		}
 		for _, mount := range mounts {
 			if mount.Type != "volume" || mount.Name == "" {
+				continue
+			}
+			usage := out[mount.Name]
+			if !owned.inPrefix {
+				usage.elsewhere = true
+				out[mount.Name] = usage
 				continue
 			}
 			mode := "ro"
 			if mount.RW {
 				mode = "rw"
 			}
-			out[mount.Name] = append(out[mount.Name], protocol.VolumeMount{
-				ContainerID: owner.ID,
-				Container:   owner.Name,
+			usage.mounts = append(usage.mounts, protocol.VolumeMount{
+				ContainerID: owned.ID,
+				Container:   owned.Name,
 				Destination: mount.Destination,
 				Mode:        mode,
-				State:       owner.State,
+				State:       owned.State,
 			})
+			out[mount.Name] = usage
 		}
 	}
-	for name := range out {
-		mounts := out[name]
-		sort.Slice(mounts, func(i, j int) bool { return mounts[i].Container < mounts[j].Container })
+	for name, usage := range out {
+		sort.Slice(usage.mounts, func(i, j int) bool { return usage.mounts[i].Container < usage.mounts[j].Container })
+		out[name] = usage
 	}
 	return out, nil
+}
+
+// containerName is the canonical name of a container, without Podman's leading slash.
+func containerName(item *containerJSON) string {
+	if len(item.Names) == 0 {
+		return ""
+	}
+	return strings.TrimPrefix(item.Names[0], "/")
 }
 
 type volumeInspectJSON struct {
@@ -355,12 +393,18 @@ func (c *Client) VolumeDetail(ctx context.Context, name string) (protocol.Volume
 	if len(items) != 1 || items[0].Name != name {
 		return protocol.VolumeDetail{}, fmt.Errorf("podman volume inspect returned no unique volume for %q", name)
 	}
-	mounts, err := c.volumeMounts(ctx)
+	usage, err := c.volumeMounts(ctx)
 	if err != nil {
 		return protocol.VolumeDetail{}, err
 	}
 	item := items[0]
-	volume := protocol.Volume{Name: item.Name, Driver: item.Driver, Mountpoint: item.Mountpoint, Mounts: mounts[item.Name]}
+	volume := protocol.Volume{
+		Name:                 item.Name,
+		Driver:               item.Driver,
+		Mountpoint:           item.Mountpoint,
+		Mounts:               usage[item.Name].mounts,
+		MountedOutsidePrefix: usage[item.Name].elsewhere,
+	}
 	c.applySize(&volume)
 	return protocol.VolumeDetail{Volume: volume, Created: item.CreatedAt, Labels: item.Labels}, nil
 }

@@ -7,10 +7,20 @@ import { formatBytes } from "./format";
 import { hostPath, parseHostPath, volumePath } from "./host-route";
 import { RemoveButton } from "./remove-button";
 
-/** Why a volume with this many mounts cannot be removed, or undefined when it can. */
-function mountedBy(count: number): string | undefined {
-  if (count === 0) return undefined;
-  return `Mounted by ${count} container${count === 1 ? "" : "s"}`;
+/**
+ * Why a volume cannot be removed, or undefined when it can. A volume that a container
+ * of this prefix mounts names the containers; one that only another prefix mounts says so.
+ */
+function blockedBy(volume: Volume): string | undefined {
+  const count = volume.mounts?.length ?? 0;
+  if (count > 0) return `Mounted by ${count} container${count === 1 ? "" : "s"}`;
+  if (volume.mounted_outside_prefix) return "Mounted by a container outside this agent's prefix";
+  return undefined;
+}
+
+/** The button's text while the volume is blocked only by another prefix; undefined keeps "Remove volume". */
+function blockedLabel(volume: Volume): string | undefined {
+  return (volume.mounts?.length ?? 0) === 0 && volume.mounted_outside_prefix ? "In use elsewhere" : undefined;
 }
 
 /** The size as the agent measured it; "At least" marks a total that skipped unreadable files. */
@@ -85,7 +95,11 @@ export function VolumeList() {
                   <div class="container-chips">
                     <Show
                       when={(volume.mounts?.length ?? 0) > 0}
-                      fallback={<span class="cell-muted">Not mounted</span>}
+                      fallback={
+                        <span class="cell-muted">
+                          {volume.mounted_outside_prefix ? "Mounted outside this prefix" : "Not mounted"}
+                        </span>
+                      }
                     >
                       <For each={volume.mounts}>
                         {(mount) => (
@@ -166,7 +180,11 @@ export function VolumeDetailPage() {
                 </span>
                 <div class="stack-detail-chips">
                   <span class={(current().mounts?.length ?? 0) > 0 ? "state" : "state stopped"}>
-                    {(current().mounts?.length ?? 0) > 0 ? "In use" : "Not in use"}
+                    {(current().mounts?.length ?? 0) > 0
+                      ? "In use"
+                      : current().mounted_outside_prefix
+                        ? "In use elsewhere"
+                        : "Not in use"}
                   </span>
                 </div>
               </>
@@ -178,7 +196,8 @@ export function VolumeDetailPage() {
             <RemoveButton
               label="Remove volume"
               question={`Remove volume ${current().name}? Its files are deleted from ${hostID()} and cannot be recovered.`}
-              blocked={mountedBy(current().mounts?.length ?? 0)}
+              blocked={blockedBy(current())}
+              blockedLabel={blockedLabel(current())}
               onRemove={async () => {
                 await removeVolume(current().name);
                 navigate(hostPath(hostID(), "volumes"));
@@ -228,7 +247,13 @@ export function VolumeDetailPage() {
               <h3>Mounted by</h3>
               <Show
                 when={(current().mounts?.length ?? 0) > 0}
-                fallback={<p class="stack-note">No container of this prefix mounts the volume.</p>}
+                fallback={
+                  <p class="stack-note">
+                    {current().mounted_outside_prefix
+                      ? "No container of this prefix mounts the volume. A container outside this prefix does."
+                      : "No container of this prefix mounts the volume."}
+                  </p>
+                }
               >
                 <div class="data-scroll">
                   <div class="data-table cols-volume-mounts">

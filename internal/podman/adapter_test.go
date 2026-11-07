@@ -82,7 +82,7 @@ func TestProtocolMappingsAndPrefixFiltering(t *testing.T) {
 		{"ps", "--all", "--format", "json"},
 		{"volume", "ls", "--format", "json"},
 		{"ps", "--all", "--format", "json"},
-		{"container", "inspect", "--format", `{{.ID}}{{"\t"}}{{json .Mounts}}`, "--", "abc"},
+		{"container", "inspect", "--format", `{{.ID}}{{"\t"}}{{json .Mounts}}`, "--", "abc", "def"},
 		{"images", "--all", "--format", "json"},
 		{"ps", "--all", "--format", "json"},
 	}
@@ -397,5 +397,27 @@ func TestImagesFlagUseOutsidePrefixWithoutListingTheContainer(t *testing.T) {
 	}
 	if got := images[0].Containers; len(got) != 1 || got[0].Container != "owned-web" {
 		t.Fatalf("containers = %+v; want only owned-web, which is in the prefix", got)
+	}
+}
+func TestVolumesFlagMountsOutsidePrefixWithoutListingTheContainer(t *testing.T) {
+	runner := &fakeRunner{responses: []response{
+		{stdout: `[{"Name":"owned-data","Driver":"local","Mountpoint":"/volumes/owned-data"},{"Name":"owned-cache","Driver":"local","Mountpoint":"/volumes/owned-cache"}]`},
+		{stdout: `[{"Id":"c1","Names":["other-web"],"Image":"example/web:1","State":"running","Status":"Up"},{"Id":"c2","Names":["owned-web"],"Image":"example/web:1","State":"exited","Status":"Exited"}]`},
+		{stdout: "c1\t[{\"Type\":\"volume\",\"Name\":\"owned-data\",\"Destination\":\"/data\",\"RW\":true}]\nc2\t[{\"Type\":\"volume\",\"Name\":\"owned-cache\",\"Destination\":\"/cache\",\"RW\":false}]\n"},
+	}}
+	client := NewWithRunner(runner, "owned-")
+	volumes, err := client.Volumes(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(volumes) != 2 {
+		t.Fatalf("volumes = %+v; want two", volumes)
+	}
+	data, cache := volumes[0], volumes[1]
+	if data.Name != "owned-data" || !data.MountedOutsidePrefix || len(data.Mounts) != 0 {
+		t.Fatalf("owned-data = %+v; want mounted outside the prefix and no mount of this prefix", data)
+	}
+	if cache.Name != "owned-cache" || cache.MountedOutsidePrefix || len(cache.Mounts) != 1 || cache.Mounts[0].Container != "owned-web" {
+		t.Fatalf("owned-cache = %+v; want the prefix's mount only", cache)
 	}
 }
