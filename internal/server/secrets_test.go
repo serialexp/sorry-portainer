@@ -55,6 +55,29 @@ func (r *secretRelay) RetainSecrets(_ context.Context, host string, stacks []str
 	return nil
 }
 
+// waitForRetains waits until every host in want has been told to retain
+// exactly those stacks: the mark of a finished background push to it.
+func (r *secretRelay) waitForRetains(t *testing.T, what string, want map[string][]string) {
+	t.Helper()
+	waitUntil(t, what, func() bool {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		for host, stacks := range want {
+			got, ok := r.retained[host]
+			if !ok || !reflect.DeepEqual(got, stacks) {
+				return false
+			}
+		}
+		return true
+	})
+}
+
+func (r *secretRelay) forgetRetains() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.retained = nil
+}
+
 func (r *secretRelay) syncs() []protocol.SecretSync {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -99,6 +122,9 @@ func TestSecretStoreLifecycleOverHTTP(t *testing.T) {
 	if w := call(http.MethodPost, "/api/secrets/initialize", `{"passphrase":"correct horse battery"}`); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"unlocked"`) {
 		t.Fatalf("init %d %s", w.Code, w.Body.String())
 	}
+	// Initializing pushes every connected host in the background. Wait for
+	// it, so it can't resend the secret stored below.
+	r.waitForRetains(t, "initialize push", map[string][]string{"h1": {}, "h2": {}})
 	if w := call(http.MethodPost, "/api/secrets/initialize", `{"passphrase":"correct horse battery"}`); w.Code != http.StatusConflict {
 		t.Fatalf("second init %d", w.Code)
 	}
@@ -139,15 +165,12 @@ func TestSecretStoreLifecycleOverHTTP(t *testing.T) {
 	if w := call(http.MethodPost, "/api/secrets/unlock", `{"passphrase":"wrong passphrase!!"}`); w.Code != http.StatusForbidden {
 		t.Fatalf("wrong unlock %d", w.Code)
 	}
+	r.forgetRetains()
 	if w := call(http.MethodPost, "/api/secrets/unlock", `{"passphrase":"correct horse battery"}`); w.Code != http.StatusOK {
 		t.Fatalf("unlock %d", w.Code)
 	}
 	// Unlock pushes every connected host in the background.
-	waitUntil(t, "unlock push", func() bool {
-		r.mu.Lock()
-		defer r.mu.Unlock()
-		return reflect.DeepEqual(r.retained["h1"], []string{"web"}) && r.retained["h2"] != nil
-	})
+	r.waitForRetains(t, "unlock push", map[string][]string{"h1": {"web"}, "h2": {}})
 
 	if w := call(http.MethodDelete, "/api/hosts/h1/stacks/web/secrets/db", ""); w.Code != http.StatusOK {
 		t.Fatalf("delete %d", w.Code)
