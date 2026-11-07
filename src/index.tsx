@@ -20,6 +20,7 @@ import { EnrollmentPage } from "./enrollment-ui";
 import { enrollmentPath, hostPath, parseHostPath } from "./host-route";
 import { HostSecretWarnings, SecretStoreBanner } from "./secrets-ui";
 import { StackDetail, StackEditor, StackList } from "./stacks-ui";
+import { VolumeDetailPage, VolumeList } from "./volumes-ui";
 import "./styles.css";
 
 function App() {
@@ -141,10 +142,14 @@ function Dashboard() {
             <HostPage />
           </Show>
           <Show when={section() === "images"}>
-            <ResourcePage kind="images" />
+            <ResourcePage />
           </Show>
           <Show when={section() === "volumes"}>
-            <ResourcePage kind="volumes" />
+            <Switch fallback={<VolumeList />}>
+              <Match when={route()?.action === "view"}>
+                <VolumeDetailPage />
+              </Match>
+            </Switch>
           </Show>
           <Show when={section() === "stacks"}>
             <Switch fallback={<StackList />}>
@@ -184,7 +189,9 @@ function pageHeading(pathname: string): { eyebrow: string; title: string; subtit
     case "images":
       return { eyebrow, search, title: "Images", subtitle: "Images available on this host's Podman installation." };
     case "volumes":
-      return { eyebrow, search, title: "Volumes", subtitle: `Persistent storage owned by ${route.hostID}.` };
+      return route.action === "view"
+        ? { eyebrow, search, title: "Volume", subtitle: `Persistent storage on ${route.hostID}.` }
+        : { eyebrow, search, title: "Volumes", subtitle: `Persistent storage owned by ${route.hostID}.` };
     case "containers":
       return { eyebrow, search, title: "Containers", subtitle: `Containers on ${route.hostID}.` };
     case "stacks":
@@ -341,73 +348,41 @@ function HostPage() {
     </>
   );
 }
-function ResourcePage(props: { kind: "images" | "volumes" }) {
-  const isImages = props.kind === "images";
-  const count = () => (isImages ? filteredImages().length : filteredVolumes().length);
+function ResourcePage() {
+  const count = () => filteredImages().length;
   return (
-    <section class="resource-page panel" aria-label={isImages ? "Images" : "Volumes"}>
+    <section class="resource-page panel" aria-label="Images">
       <div class="panel-heading">
         <div>
-          <h2>{isImages ? "All images" : "All volumes"}</h2>
+          <h2>All images</h2>
         </div>
         <span class="resource-count">{count()}</span>
       </div>
-      <Show when={count()} fallback={<div class="resource-empty">No {props.kind} match this search.</div>}>
+      <Show when={count()} fallback={<div class="resource-empty">No images match this search.</div>}>
         <div class="data-scroll">
-          <Show
-            when={isImages}
-            fallback={
-              <div class="data-table cols-volumes">
-                <div class="data-head">
-                  <span>Volume</span>
-                  <span>Driver</span>
-                  <span>Mountpoint</span>
-                </div>
-                <For each={filteredVolumes()}>
-                  {(volume) => (
-                    <div class="data-row">
-                      <div class="cell-name">
-                        <span class="resource-icon" aria-hidden="true">
-                          ◫
-                        </span>
-                        <div>
-                          <strong>{volume.name}</strong>
-                        </div>
-                      </div>
-                      <span class="chip-code">{volume.driver}</span>
-                      <span class="cell-muted" title={volume.mountpoint}>
-                        {volume.mountpoint || "Podman managed"}
-                      </span>
-                    </div>
-                  )}
-                </For>
-              </div>
-            }
-          >
-            <div class="data-table cols-images">
-              <div class="data-head">
-                <span>Image</span>
-                <span>ID</span>
-                <span>Size</span>
-              </div>
-              <For each={filteredImages()}>
-                {(image) => (
-                  <div class="data-row">
-                    <div class="cell-name">
-                      <span class="resource-icon image" aria-hidden="true">
-                        ◈
-                      </span>
-                      <div>
-                        <strong>{image.tags?.[0] ?? "untagged image"}</strong>
-                      </div>
-                    </div>
-                    <span class="cell-muted">{image.id.slice(0, 19)}</span>
-                    <span class="cell-value">{formatBytes(image.size)}</span>
-                  </div>
-                )}
-              </For>
+          <div class="data-table cols-images">
+            <div class="data-head">
+              <span>Image</span>
+              <span>ID</span>
+              <span>Size</span>
             </div>
-          </Show>
+            <For each={filteredImages()}>
+              {(image) => (
+                <div class="data-row">
+                  <div class="cell-name">
+                    <span class="resource-icon image" aria-hidden="true">
+                      ◈
+                    </span>
+                    <div>
+                      <strong>{image.tags?.[0] ?? "untagged image"}</strong>
+                    </div>
+                  </div>
+                  <span class="cell-muted">{image.id.slice(0, 19)}</span>
+                  <span class="cell-value">{formatBytes(image.size)}</span>
+                </div>
+              )}
+            </For>
+          </div>
         </div>
       </Show>
     </section>

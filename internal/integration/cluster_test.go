@@ -129,6 +129,9 @@ func (a *fakeAgent) Info(context.Context) (protocol.HostInfo, error) {
 func (a *fakeAgent) Containers(context.Context) ([]protocol.Container, error) {
 	return []protocol.Container{{ID: a.id + "-worker-1", Name: a.id + "-worker-1", State: "running"}}, nil
 }
+func (a *fakeAgent) VolumeDetail(_ context.Context, name string) (protocol.VolumeDetail, error) {
+	return protocol.VolumeDetail{Volume: protocol.Volume{Name: name}}, nil
+}
 func (a *fakeAgent) Volumes(context.Context) ([]protocol.Volume, error) {
 	return []protocol.Volume{{Name: a.id + "-data"}}, nil
 }

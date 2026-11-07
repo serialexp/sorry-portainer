@@ -42,6 +42,7 @@ type Relay interface {
 	Info(context.Context, string) (protocol.HostInfo, error)
 	Containers(context.Context, string) ([]protocol.Container, error)
 	Volumes(context.Context, string) ([]protocol.Volume, error)
+	VolumeDetail(context.Context, string, string) (protocol.VolumeDetail, error)
 	Images(context.Context, string) ([]protocol.Image, error)
 	Start(context.Context, string, string) error
 	Stop(context.Context, string, string) error
@@ -180,6 +181,11 @@ func (s *Server) hostOperation(w http.ResponseWriter, r *http.Request) {
 		}
 		revision, err := s.relay.StackRevision(ctx, parts[0], parts[2], version)
 		respond(w, revision, err, http.StatusNotFound)
+		return
+	}
+	if len(parts) == 3 && parts[1] == "volumes" && r.Method == http.MethodGet {
+		volume, err := s.relay.VolumeDetail(ctx, parts[0], parts[2])
+		respond(w, volume, err, http.StatusNotFound)
 		return
 	}
 	if len(parts) == 4 && parts[1] == "stacks" {

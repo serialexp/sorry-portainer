@@ -35,6 +35,10 @@ func (h *fakeHost) Containers(ctx context.Context) ([]protocol.Container, error)
 	return []protocol.Container{{ID: "local-b-worker-1", Name: "local-b-worker-1", State: "created"}}, nil
 }
 
+func (h *fakeHost) VolumeDetail(_ context.Context, name string) (protocol.VolumeDetail, error) {
+	return protocol.VolumeDetail{Volume: protocol.Volume{Name: name}}, nil
+}
+
 func (h *fakeHost) Volumes(ctx context.Context) ([]protocol.Volume, error) {
 	if h.volumes != nil {
 		return h.volumes(ctx)

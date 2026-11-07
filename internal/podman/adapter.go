@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -227,7 +228,125 @@ func (c *Client) Volumes(ctx context.Context) ([]protocol.Volume, error) {
 		}
 		out = append(out, protocol.Volume{Name: item.Name, Driver: item.Driver, Mountpoint: item.Mountpoint})
 	}
+	if len(out) == 0 {
+		return out, nil
+	}
+	mounts, err := c.volumeMounts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].Mounts = mounts[out[i].Name]
+	}
 	return out, nil
+}
+
+type mountJSON struct {
+	Type        string `json:"Type"`
+	Name        string `json:"Name"`
+	Destination string `json:"Destination"`
+	RW          bool   `json:"RW"`
+}
+
+// volumeMounts maps each named volume to the containers of this agent's prefix
+// that mount it. The mounts of every such container come from one podman call.
+// A template prints only each container's mounts: the full inspect document of
+// a busy host would not fit the command output bound.
+func (c *Client) volumeMounts(ctx context.Context) (map[string][]protocol.VolumeMount, error) {
+	containers, err := c.Containers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string][]protocol.VolumeMount)
+	if len(containers) == 0 {
+		return out, nil
+	}
+	byID := make(map[string]protocol.Container, len(containers))
+	args := make([]string, 0, len(containers)+5)
+	args = append(args, "container", "inspect", "--format", `{{.ID}}{{"\t"}}{{json .Mounts}}`, "--")
+	for _, item := range containers {
+		byID[item.ID] = item
+		args = append(args, item.ID)
+	}
+	data, err := c.run(ctx, args...)
+	if err != nil {
+		return nil, err
+	}
+	// One scratch slice serves every container: Unmarshal resets its length.
+	var mounts []mountJSON
+	for _, line := range strings.Split(string(data), "\n") {
+		if line == "" {
+			continue
+		}
+		id, mountsJSON, ok := strings.Cut(line, "\t")
+		if !ok {
+			return nil, fmt.Errorf("podman container inspect: unexpected line %q", line)
+		}
+		owner, known := byID[id]
+		if !known {
+			continue
+		}
+		if err := json.Unmarshal([]byte(mountsJSON), &mounts); err != nil {
+			return nil, fmt.Errorf("podman container inspect: mounts of %q: %w", owner.Name, err)
+		}
+		for _, mount := range mounts {
+			if mount.Type != "volume" || mount.Name == "" {
+				continue
+			}
+			mode := "ro"
+			if mount.RW {
+				mode = "rw"
+			}
+			out[mount.Name] = append(out[mount.Name], protocol.VolumeMount{
+				ContainerID: owner.ID,
+				Container:   owner.Name,
+				Destination: mount.Destination,
+				Mode:        mode,
+				State:       owner.State,
+			})
+		}
+	}
+	for name := range out {
+		mounts := out[name]
+		sort.Slice(mounts, func(i, j int) bool { return mounts[i].Container < mounts[j].Container })
+	}
+	return out, nil
+}
+
+type volumeInspectJSON struct {
+	Name       string            `json:"Name"`
+	Driver     string            `json:"Driver"`
+	Mountpoint string            `json:"Mountpoint"`
+	CreatedAt  string            `json:"CreatedAt"`
+	Labels     map[string]string `json:"Labels"`
+}
+
+// VolumeDetail inspects one volume of this agent's prefix, with the containers that mount it.
+func (c *Client) VolumeDetail(ctx context.Context, name string) (protocol.VolumeDetail, error) {
+	if c.prefix != "" && !strings.HasPrefix(name, c.prefix) {
+		return protocol.VolumeDetail{}, fmt.Errorf("volume %q is outside agent prefix %q", name, c.prefix)
+	}
+	data, err := c.run(ctx, "volume", "inspect", "--format", "json", "--", name)
+	if err != nil {
+		return protocol.VolumeDetail{}, err
+	}
+	items, err := decodeJSON[[]volumeInspectJSON]("volume inspect", data)
+	if err != nil {
+		return protocol.VolumeDetail{}, err
+	}
+	if len(items) != 1 || items[0].Name != name {
+		return protocol.VolumeDetail{}, fmt.Errorf("podman volume inspect returned no unique volume for %q", name)
+	}
+	mounts, err := c.volumeMounts(ctx)
+	if err != nil {
+		return protocol.VolumeDetail{}, err
+	}
+	item := items[0]
+	return protocol.VolumeDetail{
+		Volume:  protocol.Volume{Name: item.Name, Driver: item.Driver, Mountpoint: item.Mountpoint, Mounts: mounts[item.Name]},
+		Created: item.CreatedAt,
+		Labels:  item.Labels,
+	}, nil
 }
 
 type imageJSON struct {

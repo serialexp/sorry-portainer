@@ -3,12 +3,15 @@ package podman
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"reflect"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/serialexp/sorry-portainer/internal/protocol"
 )
 
 type response struct {
@@ -46,6 +49,8 @@ func TestProtocolMappingsAndPrefixFiltering(t *testing.T) {
 		{stdout: `{"host":{"hostname":"host-a"},"version":{"Version":"5.4.2"}}`},
 		{stdout: `[{"Id":"abc","Names":["owned-web"],"Image":"example/web:1","State":"running","Status":"Up 2 minutes"},{"Id":"def","Names":["other-web"],"Image":"example/web:2","State":"exited","Status":"Exited (0)"}]`},
 		{stdout: `[{"Name":"owned-data","Driver":"local","Mountpoint":"/volumes/owned-data"},{"Name":"other-data","Driver":"local","Mountpoint":"/volumes/other-data"}]`},
+		{stdout: `[{"Id":"abc","Names":["owned-web"],"Image":"example/web:1","State":"running","Status":"Up 2 minutes"},{"Id":"def","Names":["other-web"],"Image":"example/web:2","State":"exited","Status":"Exited (0)"}]`},
+		{stdout: "abc\t[{\"Type\":\"volume\",\"Name\":\"owned-data\",\"Destination\":\"/data\",\"RW\":true}]\n"},
 		{stdout: `[{"Id":"sha256:123","RepoTags":["example/web:1","example/web:latest"],"Size":12345,"Created":1700000000}]`},
 	}}
 	client := NewWithRunner(runner, "owned-")
@@ -75,10 +80,98 @@ func TestProtocolMappingsAndPrefixFiltering(t *testing.T) {
 		{"info", "--format", "json"},
 		{"ps", "--all", "--format", "json"},
 		{"volume", "ls", "--format", "json"},
+		{"ps", "--all", "--format", "json"},
+		{"container", "inspect", "--format", `{{.ID}}{{"\t"}}{{json .Mounts}}`, "--", "abc"},
 		{"images", "--all", "--format", "json"},
 	}
 	if !reflect.DeepEqual(runner.calls, wantCalls) {
 		t.Fatalf("direct argv calls = %#v, want %#v", runner.calls, wantCalls)
+	}
+}
+
+func TestVolumeDetailInspectsOnePrefixedVolume(t *testing.T) {
+	runner := &fakeRunner{responses: []response{
+		{stdout: `[{"Name":"owned-data","Driver":"local","Mountpoint":"/volumes/owned-data","CreatedAt":"2026-10-12T10:00:00Z","Labels":{"com.docker.compose.volume":"data"}}]`},
+		{stdout: `[{"Id":"abc","Names":["owned-web"],"Image":"example/web:1","State":"running","Status":"Up"}]`},
+		{stdout: "abc\t[{\"Type\":\"volume\",\"Name\":\"owned-data\",\"Destination\":\"/data\",\"RW\":false},{\"Type\":\"bind\",\"Source\":\"/srv\",\"Destination\":\"/srv\",\"RW\":true}]\n"},
+	}}
+	client := NewWithRunner(runner, "owned-")
+	detail, err := client.VolumeDetail(context.Background(), "owned-data")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.Name != "owned-data" || detail.Driver != "local" || detail.Mountpoint != "/volumes/owned-data" || detail.Created != "2026-10-12T10:00:00Z" || detail.Labels["com.docker.compose.volume"] != "data" {
+		t.Fatalf("VolumeDetail() = %#v", detail)
+	}
+	want := []protocol.VolumeMount{{ContainerID: "abc", Container: "owned-web", Destination: "/data", Mode: "ro", State: "running"}}
+	if !reflect.DeepEqual(detail.Mounts, want) {
+		t.Fatalf("mounts = %#v, want %#v", detail.Mounts, want)
+	}
+}
+
+func TestVolumeDetailRefusesVolumesOutsidePrefix(t *testing.T) {
+	runner := &fakeRunner{}
+	client := NewWithRunner(runner, "owned-")
+	if _, err := client.VolumeDetail(context.Background(), "other-data"); err == nil || !strings.Contains(err.Error(), "outside agent prefix") {
+		t.Fatalf("VolumeDetail() error = %v", err)
+	}
+	if len(runner.calls) != 0 {
+		t.Fatalf("calls = %#v, want none", runner.calls)
+	}
+}
+
+func TestVolumesWithoutContainersSkipInspect(t *testing.T) {
+	runner := &fakeRunner{responses: []response{
+		{stdout: `[{"Name":"owned-data","Driver":"local","Mountpoint":"/volumes/owned-data"}]`},
+		{stdout: `[]`},
+	}}
+	client := NewWithRunner(runner, "owned-")
+	volumes, err := client.Volumes(context.Background())
+	if err != nil || len(volumes) != 1 || len(volumes[0].Mounts) != 0 {
+		t.Fatalf("Volumes() = %#v, %v", volumes, err)
+	}
+	want := [][]string{{"volume", "ls", "--format", "json"}, {"ps", "--all", "--format", "json"}}
+	if !reflect.DeepEqual(runner.calls, want) {
+		t.Fatalf("calls = %#v, want %#v", runner.calls, want)
+	}
+}
+
+// benchmarkHostFixtures writes the command output of a host with the given
+// numbers of containers and volumes, each container mounting one volume.
+func benchmarkHostFixtures(containers, volumes int) (ps, volumeList, inspect string) {
+	var p, v, in strings.Builder
+	p.WriteString("[")
+	v.WriteString("[")
+	for i := 0; i < volumes; i++ {
+		if i > 0 {
+			v.WriteString(",")
+		}
+		fmt.Fprintf(&v, `{"Name":"owned-v%04d","Driver":"local","Mountpoint":"/volumes/owned-v%04d"}`, i, i)
+	}
+	v.WriteString("]")
+	for i := 0; i < containers; i++ {
+		if i > 0 {
+			p.WriteString(",")
+		}
+		fmt.Fprintf(&p, `{"Id":"id%06d","Names":["owned-c%06d"],"Image":"example/web:1","State":"running","Status":"Up"}`, i, i)
+		fmt.Fprintf(&in, "id%06d\t[{\"Type\":\"volume\",\"Name\":\"owned-v%04d\",\"Destination\":\"/data\",\"RW\":true}]\n", i, i%volumes)
+	}
+	p.WriteString("]")
+	return p.String(), v.String(), in.String()
+}
+
+// BenchmarkVolumesWithMounts is the volume list on a busy host: 1000 containers
+// and 200 volumes, with the mounts read in one podman call.
+func BenchmarkVolumesWithMounts(b *testing.B) {
+	ps, volumeList, inspect := benchmarkHostFixtures(1000, 200)
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		runner := &fakeRunner{responses: []response{{stdout: volumeList}, {stdout: ps}, {stdout: inspect}}}
+		client := NewWithRunner(runner, "owned-")
+		volumes, err := client.Volumes(context.Background())
+		if err != nil || len(volumes) != 200 || len(volumes[0].Mounts) == 0 {
+			b.Fatalf("Volumes() = %d volumes, %v", len(volumes), err)
+		}
 	}
 }
 

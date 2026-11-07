@@ -21,6 +21,8 @@ type stackRelay struct {
 	err       error
 	// revisionRequested is the revision number the last read asked for.
 	revisionRequested int
+	// volumeRequested is the volume the last detail read asked for.
+	volumeRequested string
 }
 
 func (r *stackRelay) Hosts() []protocol.HostInfo { return nil }
@@ -28,9 +30,13 @@ func (r *stackRelay) Containers(context.Context, string) ([]protocol.Container, 
 	return nil, nil
 }
 func (r *stackRelay) Volumes(context.Context, string) ([]protocol.Volume, error) { return nil, nil }
-func (r *stackRelay) Images(context.Context, string) ([]protocol.Image, error)   { return nil, nil }
-func (r *stackRelay) Start(context.Context, string, string) error                { return nil }
-func (r *stackRelay) Stop(context.Context, string, string) error                 { return nil }
+func (r *stackRelay) VolumeDetail(_ context.Context, _ string, name string) (protocol.VolumeDetail, error) {
+	r.volumeRequested = name
+	return protocol.VolumeDetail{Volume: protocol.Volume{Name: name}}, nil
+}
+func (r *stackRelay) Images(context.Context, string) ([]protocol.Image, error) { return nil, nil }
+func (r *stackRelay) Start(context.Context, string, string) error              { return nil }
+func (r *stackRelay) Stop(context.Context, string, string) error               { return nil }
 func (r *stackRelay) Info(context.Context, string) (protocol.HostInfo, error) {
 	return protocol.HostInfo{}, nil
 }
@@ -128,6 +134,19 @@ func TestStackHTTPRevision(t *testing.T) {
 		if w.Code != http.StatusBadRequest || relay.revisionRequested != 0 {
 			t.Fatalf("version %q: status %d, relay asked for %d", bad, w.Code, relay.revisionRequested)
 		}
+	}
+}
+
+func TestVolumeDetailHTTP(t *testing.T) {
+	relay := &stackRelay{}
+	s := New(testSessions, relay, nil)
+	w := authenticatedStackRequest(t, s, http.MethodGet, "/api/hosts/host/volumes/app-data", "")
+	if w.Code != http.StatusOK || relay.volumeRequested != "app-data" || !strings.Contains(w.Body.String(), `"name":"app-data"`) {
+		t.Fatalf("volume = %d (requested %q): %s", w.Code, relay.volumeRequested, w.Body.String())
+	}
+	w = authenticatedStackRequest(t, s, http.MethodGet, "/api/hosts/host/volumes/app-data/extra", "")
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("nested path status = %d", w.Code)
 	}
 }
 

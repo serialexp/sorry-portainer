@@ -4,7 +4,10 @@ import type { HostSecretInfo } from "./secrets-ui";
 
 export type Host = { host_id: string; prefix: string; hostname: string; engine_version: string } & HostSecretInfo;
 export type Container = { id: string; name: string; image: string; state: string; status: string };
-export type Volume = { name: string; driver: string; mountpoint: string };
+/** One container's use of a volume; `mode` is "rw" or "ro". */
+export type VolumeMount = { container_id: string; container: string; destination: string; mode: string; state: string };
+export type Volume = { name: string; driver: string; mountpoint: string; mounts?: VolumeMount[] };
+export type VolumeDetail = Volume & { created?: string; labels?: Record<string, string> };
 export type Image = { id: string; tags?: string[]; size: number; created: number };
 export type ContainerOperation = "start" | "stop";
 
@@ -75,6 +78,14 @@ export function listContainers(hostID: string, request: typeof fetch = fetch): P
 
 export function listVolumes(hostID: string, request: typeof fetch = fetch): Promise<Volume[]> {
   return getJSON(hostEndpoint(hostID, "volumes"), "Could not load volumes", request);
+}
+
+export function getVolume(hostID: string, name: string, request: typeof fetch = fetch): Promise<VolumeDetail> {
+  return getJSON(
+    `${hostEndpoint(hostID, "volumes")}/${encodeURIComponent(name)}`,
+    "Could not load the volume",
+    request,
+  );
 }
 
 export function listImages(hostID: string, request: typeof fetch = fetch): Promise<Image[]> {

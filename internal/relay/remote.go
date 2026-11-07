@@ -193,6 +193,13 @@ func (r *Remote) Volumes(ctx context.Context, hostID string) ([]protocol.Volume,
 	return out, nil
 }
 
+// VolumeDetail inspects one volume on the host; the agent refuses names outside its prefix.
+func (r *Remote) VolumeDetail(ctx context.Context, hostID, name string) (protocol.VolumeDetail, error) {
+	var out protocol.VolumeDetail
+	err := r.call(ctx, hostID, "volumes.get", protocol.VolumeRequest{Name: name}, &out, DefaultRequestTimeout)
+	return out, err
+}
+
 func (r *Remote) Images(ctx context.Context, hostID string) ([]protocol.Image, error) {
 	var out []protocol.Image
 	if err := r.call(ctx, hostID, "images.list", nil, &out, DefaultRequestTimeout); err != nil {

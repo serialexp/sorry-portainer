@@ -246,6 +246,28 @@ type Volume struct {
 	Name       string `json:"name"`
 	Driver     string `json:"driver"`
 	Mountpoint string `json:"mountpoint"`
+	// Mounts lists the containers of this agent's prefix that mount the volume.
+	Mounts []VolumeMount `json:"mounts,omitempty"`
+}
+
+// VolumeMount is one container's use of a named volume.
+type VolumeMount struct {
+	ContainerID string `json:"container_id"`
+	Container   string `json:"container"`
+	Destination string `json:"destination"`
+	Mode        string `json:"mode"`
+	State       string `json:"state"`
+}
+
+// VolumeDetail is a volume with what podman inspect adds to the list entry.
+type VolumeDetail struct {
+	Volume
+	Created string            `json:"created,omitempty"`
+	Labels  map[string]string `json:"labels,omitempty"`
+}
+
+type VolumeRequest struct {
+	Name string `json:"name"`
 }
 type Image struct {
 	ID      string   `json:"id"`
