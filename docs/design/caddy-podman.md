@@ -1,6 +1,6 @@
 # Caddy on Podman (jp1 cutover) — Design
 
-Status: partial — decisions made, Podman 6 packages released and tried on jp1, phases 1 (v0.2.3) and 2 done; phase 3 tooling written and checked on jp1; the switch (phase 3) and phase 4 outstanding
+Status: partial — phases 1, 2 and 3 done (jp1 switched to Podman 2026-11-08); the reboot experiment and phase 4 (retire Docker) outstanding
 Owner: Bart
 Last updated: 2026-11-08
 
@@ -29,7 +29,7 @@ they land and move them to Done.
 - [x] **Phase 1 — hosts migrated.** 2026-11-06, release v0.2.3 through the roles: jp1's master runs as `sorry-portainer-master`. hel1's agent runs as `sorry-portainer-agent` in `/home/sorry-portainer-agent` on Podman 6.1.4 with pasta forwarding, and is online. A second run changes nothing. Two role bugs were found and fixed on the way. rsansible's `set_fact` turned `"26.04"` into a number. Its lineinfile wants `${1}`, not `\1`, so hel1's subuid/subgid ranges were briefly a literal `\1`; they were restored by hand to `100000:65536` (backups in `/etc/sub[ug]id.sp-backup`).
 - [x] **Phase 2 — agent on jp1.** 2026-11-06, through the roles with `sorry_portainer_agent_host_loopback: 169.254.1.3` in jp1's inventory entry. jp1 runs `sorry-portainer-agent` (uid 1000, ranges `100000:65536`, lingering) with pasta forwarding and the host-loopback drop-in, enrolled and online next to hel1; Docker and its 21 containers untouched. A rootless container on a bridge network reached the host's 127.0.0.1:3306 at 169.254.1.3, and not at 169.254.1.2. A second run changes nothing. Check mode on a host without the agent failed twice, both fixed in the role: the setup dry run needs the downloaded binary, and enrolling as the not-yet-created account fails even when check mode would skip it.
 - [x] **Experiment — Podman 6 on jp1.** 2026-11-06, `v6.1.4-1` plus the two fixes applied by hand; [results](#podman-6-on-jp1-2026-11-06). Client addresses, caddy-docker-proxy and host loopback (`--map-host-loopback`) all work.
-- [x] **Roles — switch settings.** 2026-11-08: the server role's `sorry_portainer_dashboard_route` (`docker`, the default, or `loopback`: web listener `127.0.0.1:6200`, trusted proxy `127.0.0.1/32`, and no Docker label container or Caddy-network lookup). The agent role's `sorry_portainer_agent_unprivileged_port_start` writes `/etc/sysctl.d/60-sorry-portainer-ports.conf` and loads it. With `loopback` and `80` set for jp1, a check run changes exactly server.json, the server restart and the sysctl file. jp1's inventory still has neither set.
+- [x] **Roles — switch settings.** 2026-11-08: the server role's `sorry_portainer_dashboard_route` (`docker`, the default, or `loopback`: web listener `127.0.0.1:6200`, trusted proxy `127.0.0.1/32`, and no Docker label container or Caddy-network lookup). The agent role's `sorry_portainer_agent_unprivileged_port_start` writes `/etc/sysctl.d/60-sorry-portainer-ports.conf` and loads it. With `loopback` and `80` set for jp1, a check run changes exactly server.json, the server restart and the sysctl file. jp1's inventory sets both since the switch.
 - [x] **Phase 3 tooling, checked on jp1.** 2026-11-08. Scratch scripts in `/root/sp-import` on jp1, not in the repo (Bart's choice), thrown away after phase 4:
   - `convert2.py` converted all ten Portainer stacks to `v2/<stack>/{compose.yaml,env.json}`, with every check against the running containers matching.
   - `v2/caddy/` holds the Caddy stack. It has `caddy` (ports 80, 443, 8080; the agent's Podman socket as `/var/run/docker.sock`; `CADDY_DOCKER_NO_SCOPE=true`) and `dashboard`, a pause container carrying the dashboard labels with `reverse_proxy 169.254.1.3:6200`.
@@ -37,26 +37,34 @@ they land and move them to Done.
   - `move_volumes.py` does `check`, `move` and `rollback`, with a manifest and a journal, and can be resumed. Check mode passes for all nine volumes: 13,460 entries, 18.8 GB, every owner mappable, nothing blocking except the running Docker containers.
   - The agent's primary group is 1001, so the gid map is 0 → 1001 (uid 0 → 1000), as `podman unshare` confirms. Owners are read from passwd and subuid/subgid, never assumed.
   - A non-empty volume gets neither a copy-up nor a chown from Podman on first use (`fixVolumePermissionsUnlocked`), so the shifted owners stay.
+- [x] **Phase 3 — big-bang switch.** 2026-11-08, about 10 minutes of downtime for most sites and 15 for foundry. Before the window:
+  - Docker Hub's `felddy/foundryvtt:release` had become 14.370.0. Bart chose to pin both foundry stacks to their running versions, `:10.291.0` and `:11.311.0`. Those Hub tags have the same digests as the running images, and Docker's images were tagged with them so they could be copied.
+  - Every stack and Caddy was created with `stacks create` (foundryvtt updated).
+  - `copy_images.py --apply` copied 19 images.
+  - Podman 6 loads Docker's short archive names (`aeolun/homes:latest`) as `localhost/...`. The script now tags the expected ID with the full reference, and removes the `localhost/` name.
+
+  In the window:
+  1. The 20 Docker stack containers were stopped (list in `/root/sp-import/docker-stopped.txt`), and the two foundry containers set from `always` to `restart=no`.
+  2. `foundryvtt_foundry_data` was saved to `/root/sp-import/foundryvtt_foundry_data-20261108.tar`.
+  3. `move_volumes.py move --all` moved all nine volumes, each verified against its manifest.
+  4. The `caddy` network was created.
+  5. The roles ran with `loopback` and port start `80`, changing four tasks.
+  6. Caddy started, then every stack.
+
+  Every site matches its pre-switch HTTP status, the dashboard included. Portainer lost its route, as expected. Two fixes were needed:
+  - **homes:** podman-compose 1.0.6 makes a compose file's only declared network the default. With just `caddy` declared, worker, mysql and redis would have joined `caddy`, and `app`'s explicit `default` failed with "missing networks: default". Declaring `default: {}` gives Docker's layout (`jp1-homes_default`). Every other stack's networks were compared with Docker's and match.
+  - **foundry:** with `FOUNDRY_USERNAME`/`FOUNDRY_PASSWORD` set, the entrypoint logs in to foundryvtt.com before using its `container_cache`. That login is rejected, so the new containers crash-looped. Docker never hit it, because Foundry stayed installed in the old containers' layers. Bart chose to drop both variables from the composes (the values stay in env.json, unused). Both instances installed from the cached zip, verified their licenses and are healthy.
+
+  Rollback: stop the Podman stacks, then `move_volumes.py rollback --all`, then set the route back to `docker` and start the Docker containers.
 
 ### Outstanding
 
 - [ ] **Experiment — reboot.** Question 5 (lingering brings Caddy and the stacks back after a reboot) needs a jp1 reboot; do it in the switch window.
 - [ ] **Gothab apt repository.** Replace the pinned `.deb` downloads with a sources entry once Gothab has apt repositories (REQ-55 in serialexp/gothab).
 - [ ] **CLAUDE.md native-packages rule.** The project rule still says agents use Ubuntu's native packages; it should name the podman-ubuntu packages. Waiting on Bart.
-- [ ] **Phase 3 preparation.** Survey done 2026-11-07 ([Phase 3 survey](#phase-3-survey-2026-11-07)). Bart chose (2026-11-07) env.json for credentials, moving every volume in place, and the `sorry-portainer` CLI over SSH (v0.2.4) for importing. On 2026-11-08 he chose to copy the images from Docker and to run foundryvtt's `:release`. The tooling is done (above). Still to do:
-  - import the remaining nine stacks and Caddy with `stacks create` (stacks can't be deleted);
-  - decide whether to copy images ahead of the window;
-  - decide what foundryvtt's `:release` means: Docker's local b224f1ab, or Docker Hub's current one;
-  - back up `foundryvtt_foundry_data` before its world migrates.
-- [ ] **Phase 3 — big-bang switch.** In one window:
-  1. stop the Docker stacks;
-  2. `move_volumes.py move --all`;
-  3. create the `caddy` network as the agent user;
-  4. set `sorry_portainer_dashboard_route: loopback` and `sorry_portainer_agent_unprivileged_port_start: 80` for jp1 and run the roles;
-  5. start Caddy and every stack as sorry-portainer stacks with `jp1-` names.
-
-  Rollback is `move_volumes.py rollback --all` after the Podman stacks stop.
-- [ ] **Phase 4 — retire Docker on jp1.** Portainer, the label container and the role's Docker tasks go; Docker is removed once the switch has held.
+- [ ] **Experiment — Docker's leftovers after a reboot.** Docker still runs on jp1 with its 20 stopped stack containers. They are `unless-stopped`, and the two foundry containers were changed from `always` to `no` in the window, so none should start on boot. Portainer (`always`) will. Confirm this in the reboot experiment.
+- [ ] **Pre-existing health checks.** Both were already unhealthy under Docker, and both apps serve. groovewhale `web` checks `http://localhost:8080/health`; busybox wget tries `::1`, but nginx listens on `0.0.0.0:8080` only. homes `mysql` runs `mysqladmin ping -h localhost`, but `mysql:8` is now 8.4.13 with its socket at `/var/lib/mysql/mysql.sock`, and it logs that `errmsg.sys` is missing. These are fixes to the apps' stack definitions, for Bart.
+- [ ] **Phase 4 — retire Docker on jp1.** Portainer (no longer routed), the stopped label container and stack containers, the leftover Docker volumes (`directus_*`, `captain--onedev`, `portainer_data`, the empty `_data` placeholders), and the role's Docker tasks go. Docker is removed once the switch has held. The scratch files in `/root/sp-import` go too, with Bart's go-ahead: they hold env.json credential copies and the foundry tarball.
 
 ## Why this exists
 

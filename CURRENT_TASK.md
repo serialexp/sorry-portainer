@@ -1,4 +1,4 @@
-# Current task: move jp1 from Docker to Podman 6 — phases 1 and 2 done; next, phase 3 (the big-bang switch)
+# Current task: move jp1 from Docker to Podman 6 — phases 1–3 done (switched 2026-11-08); next, the reboot experiment and phase 4
 
 ## Podman 6 packages and the jp1 move (2026-11-06)
 
@@ -38,12 +38,12 @@
     - `copy_images.py`;
     - `move_volumes.py`. Its tests need root in a user namespace: `unshare --map-auto --map-root-user python3 -m unittest test_move_volumes`.
   - All check modes pass on jp1. `copy_images.py` needs `--allow-tag felddy/foundryvtt:release`, because foundryvtt runs an older image than the tag.
-- Next, Bart's calls:
-  - importing the remaining stacks with `stacks create`, which can't be undone;
-  - copying images ahead of the window;
-  - what foundryvtt's `:release` means: Docker's local tag, or the current one on Docker Hub;
-  - backing up foundry_data;
-  - then the switch window.
+- **Phase 3 switch done (2026-11-08).** Every jp1 site runs on Podman under `sorry-portainer-agent`, behind the Caddy stack, and matches its pre-switch HTTP status. Details are in caddy-podman.md, "Phase 3 — big-bang switch".
+  - Stack versions: foundryvtt v3 and foundryvtt2 v2 (pinned to `:10.291.0`/`:11.311.0`, no login variables); homes v2 (`default` network declared); the rest v1.
+  - jp1's local inventory sets `sorry_portainer_dashboard_route: loopback` and `sorry_portainer_agent_unprivileged_port_start: 80`.
+  - Docker still runs with the 20 stack containers stopped (`/root/sp-import/docker-stopped.txt`), the two foundry containers at `restart=no` (were `always`), and Portainer up but unrouted.
+  - Rollback: Podman stacks down, `move_volumes.py rollback --all`, route back to `docker`, then start the Docker containers.
+- Next: the reboot experiment (ask Bart before rebooting jp1), then phase 4. Pre-existing unhealthy checks (groovewhale web, homes mysql) are in TODO.md.
 
   Still open: the CLAUDE.md native-packages rule, and deleting hel1's `/etc/sub[ug]id.sp-backup` and jp1's `/root/sp-import`.
 - Gothab follow-up noted in its TODO.md: a `namespace:repos:create` scope (creating a repo needed `namespace:settings:write`, which also allows deleting the namespace).
