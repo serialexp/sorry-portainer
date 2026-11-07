@@ -1,16 +1,17 @@
-# The master: binary, state directory, server.json, systemd unit, and the
-# label-only container through which caddy-docker-proxy serves the
-# dashboard. The account is always sorry-portainer-master: rsansible does
+# The master: binary, state directory, server.json, systemd unit, and (with
+# the docker dashboard route) the label-only container through which
+# caddy-docker-proxy serves the dashboard. The account is always sorry-portainer-master: rsansible does
 # not template become_user.
 
 - name: Check the required settings
   assert:
     that:
+      - sorry_portainer_dashboard_route in ['docker', 'loopback']
       - sorry_portainer_admin_password is defined
       - sorry_portainer_admin_password | length >= 12
       - sorry_portainer_server_names | length > 0
       - sorry_portainer_dashboard_host is defined
-    fail_msg: "set sorry_portainer_admin_password (12+ characters), sorry_portainer_server_names and sorry_portainer_dashboard_host"
+    fail_msg: "set sorry_portainer_admin_password (12+ characters), sorry_portainer_server_names and sorry_portainer_dashboard_host; sorry_portainer_dashboard_route is docker or loopback"
   no_log: true
   tags: [sorry-portainer]
 
@@ -61,9 +62,9 @@
     mode: "0755"
   tags: [sorry-portainer]
 
-# The dashboard listens on the gateway address of the network Caddy is on,
-# so only containers on that network reach it, and Caddy's address is the
-# trusted proxy for sign-in rate limiting.
+# With the docker route, the dashboard listens on the gateway address of the
+# network Caddy is on, so only containers on that network reach it, and
+# Caddy's address is the trusted proxy for sign-in rate limiting.
 - name: Read the Caddy network's gateway and subnet
   command:
     argv:
@@ -76,13 +77,23 @@
   register: sorry_portainer_caddy_ipam
   changed_when: false
   check_mode: false
+  when: sorry_portainer_dashboard_route == 'docker'
   tags: [sorry-portainer, caddy]
 
-- name: Derive the dashboard address
+- name: Derive the dashboard address from the Docker Caddy network
   set_fact:
     sorry_portainer_web_listen: "{{ (sorry_portainer_caddy_ipam.stdout | trim).split(' ')[0] }}:{{ sorry_portainer_web_port }}"
     sorry_portainer_web_upstream: "{{ (sorry_portainer_caddy_ipam.stdout | trim).split(' ')[0] }}:{{ sorry_portainer_web_port }}"
     sorry_portainer_trusted_proxy: "{{ (sorry_portainer_caddy_ipam.stdout | trim).split(' ')[1] }}"
+  when: sorry_portainer_dashboard_route == 'docker'
+  tags: [sorry-portainer, caddy]
+
+# Caddy's connections arrive from the host's own loopback address.
+- name: Derive the loopback dashboard address
+  set_fact:
+    sorry_portainer_web_listen: "127.0.0.1:{{ sorry_portainer_web_port }}"
+    sorry_portainer_trusted_proxy: "127.0.0.1/32"
+  when: sorry_portainer_dashboard_route == 'loopback'
   tags: [sorry-portainer, caddy]
 
 - name: Check whether the state is initialized
@@ -157,3 +168,4 @@
   tags: [sorry-portainer]
 
 - import_tasks: caddy.yml
+  when: sorry_portainer_dashboard_route == 'docker'

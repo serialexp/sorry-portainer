@@ -9,6 +9,10 @@ sorry_portainer_host_id: "{{ inventory_hostname }}"
 # user's containers can then reach the host's loopback services. On the
 # master's host it is how Caddy reaches the dashboard.
 sorry_portainer_agent_host_loopback: ""
+# The lowest port unprivileged users may bind (net.ipv4.ip_unprivileged_port_start),
+# for example 80 for a Caddy stack on 80 and 443; empty leaves the kernel's
+# setting alone. It applies to every account on the host.
+sorry_portainer_agent_unprivileged_port_start: ""
 # Agent hosts' Ubuntu releases, by codename, as vars/podman.yml names them.
 sorry_portainer_ubuntu_versions:
   noble: "24.04"

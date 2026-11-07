@@ -4,6 +4,16 @@ sorry_portainer_cli_bin: /usr/local/bin/sorry-portainer
 sorry_portainer_control_listen: ":9443"
 sorry_portainer_web_port: 6200
 sorry_portainer_session_ttl: 12h
+# How Caddy reaches the dashboard:
+#   docker:   Caddy is a Docker container. The dashboard listens on the
+#             Docker Caddy network's gateway, and the role keeps a label
+#             container there for caddy-docker-proxy.
+#   loopback: Caddy is a sorry-portainer stack. The dashboard listens on
+#             127.0.0.1, which the agent user's containers reach through
+#             pasta's host-loopback mapping, and the Caddy stack carries the
+#             dashboard's labels. Every one of that user's containers then
+#             counts as a trusted proxy.
+sorry_portainer_dashboard_route: docker
 sorry_portainer_caddy_network: caddy
 # Carries the Caddy labels only; Caddy proxies to the address in the label.
 sorry_portainer_caddy_container: sorry-portainer-caddy

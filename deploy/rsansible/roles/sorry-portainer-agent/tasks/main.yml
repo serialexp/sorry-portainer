@@ -8,6 +8,23 @@
 
 - import_tasks: podman.yml
 
+- name: Let unprivileged users bind low ports
+  copy:
+    dest: /etc/sysctl.d/60-sorry-portainer-ports.conf
+    content: "net.ipv4.ip_unprivileged_port_start = {{ sorry_portainer_agent_unprivileged_port_start }}\n"
+    owner: root
+    group: root
+    mode: "0644"
+  register: sorry_portainer_ports_sysctl
+  when: sorry_portainer_agent_unprivileged_port_start | string | length > 0
+  tags: [sorry-portainer]
+
+- name: Apply the port setting
+  command:
+    argv: [sysctl, --load, /etc/sysctl.d/60-sorry-portainer-ports.conf]
+  when: sorry_portainer_agent_unprivileged_port_start | string | length > 0 and sorry_portainer_ports_sysctl.changed
+  tags: [sorry-portainer]
+
 - name: Create the download directory
   file:
     path: "{{ sorry_portainer_agent_download_dir }}"
