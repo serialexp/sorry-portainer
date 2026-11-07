@@ -8,15 +8,35 @@ import { hostPath, imagePath, parseHostPath } from "./host-route";
 import { splitImageRef } from "./image-ref";
 import { RemoveButton } from "./remove-button";
 
-/** Why an image cannot be removed while containers of this agent use it, or undefined when it can. */
-function usedBy(image: Image): string | undefined {
+/**
+ * Why an image cannot be removed, or undefined when it can. An image that a container
+ * of this prefix runs names the containers; one that only another prefix runs says so.
+ */
+function blockedBy(image: Image): string | undefined {
   const uses = image.containers ?? [];
-  return uses.length > 0 ? `In use by ${uses.map((use) => use.container).join(", ")}` : undefined;
+  if (uses.length > 0) return `In use by ${uses.map((use) => use.container).join(", ")}`;
+  if (image.used_outside_prefix) return "In use by a container outside this agent's prefix";
+  return undefined;
+}
+
+/** The button's text while the image is blocked only by another prefix; undefined keeps "Remove". */
+function blockedLabel(image: Image): string | undefined {
+  return (image.containers?.length ?? 0) === 0 && image.used_outside_prefix ? "In use elsewhere" : undefined;
 }
 
 /** The image's first tag, or its short ID when it has none. */
 function imageName(image: Image): string {
   return image.tags?.[0] ?? image.id.slice(0, 12);
+}
+
+/** The confirmation for a removal: every tag goes, so a multi-tag image says how many. */
+function removalQuestion(image: Image, hostID: string): string {
+  const tags = (image.tags ?? []).filter((tag) => tag !== "<none>:<none>");
+  const what =
+    tags.length > 1
+      ? `Remove all ${tags.length} tags of image ${imageName(image)}`
+      : `Remove image ${imageName(image)}`;
+  return `${what}? Its layers are deleted from ${hostID} and must be pulled again to use it.`;
 }
 
 /** The images of the selected host and the containers of this agent that run them. */
@@ -84,7 +104,12 @@ function ImageRow(props: { hostID: string; image: Image }) {
       </div>
       <span class="cell-value">{formatBytes(props.image.size)}</span>
       <div class="container-chips">
-        <Show when={(props.image.containers?.length ?? 0) > 0} fallback={<span class="cell-muted">Not used</span>}>
+        <Show
+          when={(props.image.containers?.length ?? 0) > 0}
+          fallback={
+            <span class="cell-muted">{props.image.used_outside_prefix ? "Used outside this prefix" : "Not used"}</span>
+          }
+        >
           <For each={props.image.containers}>
             {(use) => (
               <ContainerChip
@@ -99,8 +124,9 @@ function ImageRow(props: { hostID: string; image: Image }) {
       </div>
       <RemoveButton
         label="Remove"
-        question={`Remove image ${imageName(props.image)}? Its layers are deleted from ${props.hostID} and must be pulled again to use it.`}
-        blocked={usedBy(props.image)}
+        question={removalQuestion(props.image, props.hostID)}
+        blocked={blockedBy(props.image)}
+        blockedLabel={blockedLabel(props.image)}
         onRemove={() => removeImage(props.image.id)}
       />
     </div>
@@ -177,7 +203,11 @@ export function ImageDetailPage() {
                       {(tag) => <span class="chip-code">{splitImageRef(tag).tag}</span>}
                     </For>
                     <span class={(current().containers?.length ?? 0) > 0 ? "state" : "state stopped"}>
-                      {(current().containers?.length ?? 0) > 0 ? "In use" : "Not in use"}
+                      {(current().containers?.length ?? 0) > 0
+                        ? "In use"
+                        : current().used_outside_prefix
+                          ? "In use elsewhere"
+                          : "Not in use"}
                     </span>
                   </div>
                 </>
@@ -189,8 +219,9 @@ export function ImageDetailPage() {
           {(current) => (
             <RemoveButton
               label="Remove"
-              question={`Remove image ${imageName(current())}? Its layers are deleted from ${hostID()} and must be pulled again to use it.`}
-              blocked={usedBy(current())}
+              question={removalQuestion(current(), hostID())}
+              blocked={blockedBy(current())}
+              blockedLabel={blockedLabel(current())}
               onRemove={async () => {
                 await removeImage(current().id);
                 navigate(hostPath(hostID(), "images"));
@@ -265,7 +296,13 @@ export function ImageDetailPage() {
               <h3>Used by</h3>
               <Show
                 when={(current().containers?.length ?? 0) > 0}
-                fallback={<p class="stack-note">No container of this prefix runs the image.</p>}
+                fallback={
+                  <p class="stack-note">
+                    {current().used_outside_prefix
+                      ? "No container of this prefix runs the image. A container outside this prefix does."
+                      : "No container of this prefix runs the image."}
+                  </p>
+                }
               >
                 <div class="container-chips">
                   <For each={current().containers}>

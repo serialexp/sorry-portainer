@@ -20,7 +20,15 @@ export type Volume = {
 export type VolumeDetail = Volume & { created?: string; labels?: Record<string, string> };
 /** One container of this agent that runs an image. */
 export type ImageUse = { container_id: string; container: string; state: string };
-export type Image = { id: string; tags?: string[]; size: number; created: number; containers?: ImageUse[] };
+export type Image = {
+  id: string;
+  tags?: string[];
+  size: number;
+  created: number;
+  containers?: ImageUse[];
+  /** True when a container outside this agent's prefix runs the image. */
+  used_outside_prefix?: boolean;
+};
 export type ImageLayer = { created_by: string; size: number };
 export type ImageDetail = Image & {
   platform: string;

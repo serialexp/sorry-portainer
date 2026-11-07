@@ -397,13 +397,24 @@ func (c *Client) Images(ctx context.Context) ([]protocol.Image, error) {
 		return nil, err
 	}
 	for i := range out {
-		out[i].Containers = users[out[i].ID]
+		usage := users[out[i].ID]
+		out[i].Containers = usage.containers
+		out[i].UsedOutsidePrefix = usage.elsewhere
 	}
 	return out, nil
 }
 
-// imageUsers maps each image ID to the containers of this agent's prefix that run it.
-func (c *Client) imageUsers(ctx context.Context) (map[string][]protocol.ImageUse, error) {
+// imageUsage is how the containers of one image relate to this agent's prefix.
+type imageUsage struct {
+	// containers are the containers of this agent's prefix that run the image.
+	containers []protocol.ImageUse
+	// elsewhere is set when a container outside the prefix runs the image.
+	elsewhere bool
+}
+
+// imageUsers maps each image ID to the containers that run it. Containers
+// outside the prefix are not listed, but they make the image used elsewhere.
+func (c *Client) imageUsers(ctx context.Context) (map[string]imageUsage, error) {
 	data, err := c.run(ctx, "ps", "--all", "--format", "json")
 	if err != nil {
 		return nil, err
@@ -412,21 +423,25 @@ func (c *Client) imageUsers(ctx context.Context) (map[string][]protocol.ImageUse
 	if err != nil {
 		return nil, err
 	}
-	out := make(map[string][]protocol.ImageUse)
+	out := make(map[string]imageUsage)
 	for i := range items {
 		item := &items[i]
 		name := ""
 		if len(item.Names) != 0 {
 			name = strings.TrimPrefix(item.Names[0], "/")
 		}
+		usage := out[item.ImageID]
 		if c.prefix != "" && !strings.HasPrefix(name, c.prefix) {
+			usage.elsewhere = true
+			out[item.ImageID] = usage
 			continue
 		}
-		out[item.ImageID] = append(out[item.ImageID], protocol.ImageUse{ContainerID: item.ID, Container: name, State: item.State})
+		usage.containers = append(usage.containers, protocol.ImageUse{ContainerID: item.ID, Container: name, State: item.State})
+		out[item.ImageID] = usage
 	}
-	for id := range out {
-		uses := out[id]
-		sort.Slice(uses, func(i, j int) bool { return uses[i].Container < uses[j].Container })
+	for id, usage := range out {
+		sort.Slice(usage.containers, func(i, j int) bool { return usage.containers[i].Container < usage.containers[j].Container })
+		out[id] = usage
 	}
 	return out, nil
 }
@@ -495,6 +510,7 @@ func (c *Client) ImageDetail(ctx context.Context, id string) (protocol.ImageDeta
 	if err != nil {
 		return protocol.ImageDetail{}, err
 	}
+	usage := users[item.ID]
 	var ports []string
 	for port := range item.Config.ExposedPorts {
 		ports = append(ports, port)
@@ -502,11 +518,12 @@ func (c *Client) ImageDetail(ctx context.Context, id string) (protocol.ImageDeta
 	sort.Strings(ports)
 	return protocol.ImageDetail{
 		Image: protocol.Image{
-			ID:         item.ID,
-			Tags:       item.RepoTags,
-			Size:       item.Size,
-			Created:    created.Unix(),
-			Containers: users[item.ID],
+			ID:                item.ID,
+			Tags:              item.RepoTags,
+			Size:              item.Size,
+			Created:           created.Unix(),
+			Containers:        usage.containers,
+			UsedOutsidePrefix: usage.elsewhere,
 		},
 		Platform:   item.OS + "/" + item.Architecture,
 		Command:    item.Config.Cmd,

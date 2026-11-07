@@ -10,6 +10,8 @@ export function RemoveButton(props: {
   question: string;
   /** Why the removal is not offered, such as a volume that a container mounts. */
   blocked?: string;
+  /** The button's text while blocked, when it differs from the label, such as "In use elsewhere". */
+  blockedLabel?: string;
   onRemove: () => Promise<void>;
 }) {
   const [busy, setBusy] = createSignal(false);
@@ -37,7 +39,7 @@ export function RemoveButton(props: {
         title={props.blocked}
         onClick={() => void remove()}
       >
-        {busy() ? "Removing…" : props.label}
+        {busy() ? "Removing…" : props.blocked && props.blockedLabel ? props.blockedLabel : props.label}
       </button>
       <Show when={error()}>
         <p class="form-error" role="alert">

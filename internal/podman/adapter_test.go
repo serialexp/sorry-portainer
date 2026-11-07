@@ -382,3 +382,20 @@ func BenchmarkContainers1000(b *testing.B) {
 		}
 	}
 }
+func TestImagesFlagUseOutsidePrefixWithoutListingTheContainer(t *testing.T) {
+	runner := &fakeRunner{responses: []response{
+		{stdout: `[{"Id":"` + testImageID + `","RepoTags":["example/web:1"],"Size":1,"Created":1}]`},
+		{stdout: `[{"Id":"c1","Names":["other-web"],"ImageID":"` + testImageID + `","State":"running"},{"Id":"c2","Names":["owned-web"],"ImageID":"` + testImageID + `","State":"exited"}]`},
+	}}
+	client := NewWithRunner(runner, "owned-")
+	images, err := client.Images(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(images) != 1 || !images[0].UsedOutsidePrefix {
+		t.Fatalf("images = %+v; want one image flagged as used outside the prefix", images)
+	}
+	if got := images[0].Containers; len(got) != 1 || got[0].Container != "owned-web" {
+		t.Fatalf("containers = %+v; want only owned-web, which is in the prefix", got)
+	}
+}

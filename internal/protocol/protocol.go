@@ -283,6 +283,8 @@ type Image struct {
 	Created int64    `json:"created"`
 	// Containers lists the containers of this agent's prefix that run the image.
 	Containers []ImageUse `json:"containers,omitempty"`
+	// UsedOutsidePrefix is set when a container outside this agent's prefix runs the image.
+	UsedOutsidePrefix bool `json:"used_outside_prefix,omitempty"`
 }
 
 // ImageUse is a container of this agent's prefix that runs an image.
