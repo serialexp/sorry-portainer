@@ -240,3 +240,28 @@ Open decisions for Bart:
 - Image removal is not scoped to the prefix (images belong to the whole Podman install). The UI blocks only when this prefix's containers use the image, so other prefixes' use shows up as Podman's refusal.
 - An image with several tags cannot be removed by ID without force. The UI shows Podman's message. Options: remove a single tag, or add a force option.
 - Partial sizes: the UI shows "At least" when some files were unreadable. Alternative: leave the size out.
+
+## Sorry-portainer: image removal, outside-prefix use, and the volume size walker (gentle-badger, 2026-11-08, round 2)
+
+Decisions from Bart:
+
+- Multi-tag images: Remove removes every tag. The confirmation says how many tags go.
+- Images used only by another prefix: the button stays disabled, labelled "In use elsewhere". Use by this prefix's containers still shows "In use by …".
+- Partial volume sizes: shown as "At least …" (already in `sizeText`).
+- Scan interval: 30 minutes (`DefaultVolumeSizeInterval`).
+- Allocations: a custom walker (`internal/podman/dirsize.go`).
+
+Done:
+
+- Change 01a1b701-1520-7fb1-ace8-ece493f1430f, "Images: remove every tag, and show use by containers outside the prefix". `RemoveImage` inspects the image and lists containers first. If any container (in or out of the prefix) runs it, the removal is refused before any tag is touched. Otherwise it runs `rmi --` on the ID for a single tag, or `rmi --` on each tag name for several. The last tag removal deletes the image. A failure part way reports how many tags went. `Image.used_outside_prefix` carries the outside use to the UI.
+- Verified on real Podman with a throwaway two-tag image (imported from a tar, container created on it): in-use removal refused, tags unchanged; after the container was removed, both tags and the image were gone. Test objects deleted, none left.
+- Browser check against the scratch mock: list shows "Used outside this prefix" and a disabled "In use elsewhere" button; the detail page shows "In use elsewhere". NOT checked in the browser: the multi-tag confirmation text on an enabled image.
+- Walker (its own change, captured with this note): `directorySize` reads directories with getdents and sizes files with fstatat relative to the directory descriptor. It makes no path strings and no file-info objects; each directory level holds one descriptor and one reused buffer. Linux only. Behaviour changes: symbolic links are still not followed; a root that is itself a symlink is now an error (it was counted as zero bytes).
+- Benchmark `BenchmarkVolumeSizeScan` (20 volumes, 50,000 one-byte files), Ryzen 9 9900X: now about 40 ms, 1.3 MB, 683 allocations per scan. Before: about 58 ms, 25.9 MB, 307,869 allocations.
+- Verified on a real Podman volume (nested directories, a file symlink, a directory symlink): walk returned 3,001,000 bytes, complete. Temporary test file and volume deleted.
+- Tests: `dirsize_test.go` (nested directories, multi-read directories, symlinked directories, missing root, cancellation, unreadable entries, existing cases moved from `volumesize_test.go`). `remove_test.go` covers single tag, several tags, the placeholder tag, refusal before any removal, and partial failure.
+
+Open:
+
+- Volumes have the same outside-prefix gap: a volume a container outside the prefix mounts is shown as not mounted here, and Podman's refusal is the only block. The volume side has not been changed.
+- The image pre-check adds `ps --all` and `image inspect` calls to each removal. Cheap for this scale; noted.

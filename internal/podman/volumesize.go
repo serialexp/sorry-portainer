@@ -2,16 +2,15 @@ package podman
 
 import (
 	"context"
-	"io/fs"
-	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/serialexp/sorry-portainer/internal/protocol"
 )
 
-// DefaultVolumeSizeInterval is the time between two volume size scans.
-const DefaultVolumeSizeInterval = 15 * time.Minute
+// DefaultVolumeSizeInterval is the time between two volume size scans. Volume
+// sizes change slowly, so a scan every half hour is close enough for a listing.
+const DefaultVolumeSizeInterval = 30 * time.Minute
 
 // volumeSizes holds the latest measured size of each volume. Podman 4.9 cannot
 // report a volume's size, so a background scan measures it and the listings
@@ -125,42 +124,4 @@ func (c *Client) measureVolumeSizes(ctx context.Context, logf func(format string
 		c.sizes.store(volume.Name, volumeSize{bytes: tree.bytes, measuredAt: time.Now(), partial: tree.partial})
 	}
 	c.sizes.keepOnly(listed)
-}
-
-// treeSize is the total size of the regular files under a directory.
-type treeSize struct {
-	bytes int64
-	// partial is set when some entries could not be read and are left out.
-	partial bool
-}
-
-// directorySize totals the regular files under root. Entries it cannot read
-// are left out and make the total partial: a volume's files often belong to
-// container users that the agent cannot read. Symbolic links are not followed,
-// so a link cannot pull another tree into the total.
-func directorySize(ctx context.Context, root string) (treeSize, error) {
-	var out treeSize
-	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if walkErr != nil {
-			if path == root {
-				return walkErr
-			}
-			out.partial = true
-			return nil
-		}
-		if !entry.Type().IsRegular() {
-			return nil
-		}
-		info, err := entry.Info()
-		if err != nil {
-			out.partial = true
-			return nil
-		}
-		out.bytes += info.Size()
-		return nil
-	})
-	return out, err
 }

@@ -21,44 +21,6 @@ func writeSizedFile(t testing.TB, path string, size int) {
 	}
 }
 
-func TestDirectorySizeCountsRegularFilesOnly(t *testing.T) {
-	root := t.TempDir()
-	writeSizedFile(t, filepath.Join(root, "a"), 5)
-	writeSizedFile(t, filepath.Join(root, "sub", "b"), 7)
-	if err := os.Symlink(filepath.Join(root, "a"), filepath.Join(root, "link")); err != nil {
-		t.Fatal(err)
-	}
-	got, err := directorySize(context.Background(), root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// The symbolic link is neither followed nor counted.
-	if got.bytes != 12 || got.partial {
-		t.Fatalf("size = %d bytes, partial %t; want 12 bytes, complete", got.bytes, got.partial)
-	}
-}
-
-func TestDirectorySizeMarksUnreadableEntriesPartial(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root reads every directory, so nothing is unreadable")
-	}
-	root := t.TempDir()
-	writeSizedFile(t, filepath.Join(root, "readable"), 5)
-	locked := filepath.Join(root, "locked")
-	writeSizedFile(t, filepath.Join(locked, "hidden"), 100)
-	if err := os.Chmod(locked, 0); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
-	got, err := directorySize(context.Background(), root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.bytes != 5 || !got.partial {
-		t.Fatalf("size = %d bytes, partial %t; want 5 bytes, partial", got.bytes, got.partial)
-	}
-}
-
 func TestVolumeSizeScanMeasuresPrefixedVolumesAndListsThem(t *testing.T) {
 	owned := t.TempDir()
 	writeSizedFile(t, filepath.Join(owned, "data"), 30)
@@ -130,7 +92,7 @@ func (r staticRunner) Run(_ context.Context, stdout, _ io.Writer, _ ...string) e
 
 // BenchmarkVolumeSizeScan measures one full scan of a host with 20 volumes of
 // 2,500 one-byte files each: 50,000 files. The budget is that such a scan
-// finishes well inside DefaultVolumeSizeInterval (15 minutes), so the agent is
+// finishes well inside DefaultVolumeSizeInterval (30 minutes), so the agent is
 // never still walking when the next scan is due. Run it on one machine and
 // compare runs over time:
 //
