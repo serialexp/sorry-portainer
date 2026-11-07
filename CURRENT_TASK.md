@@ -31,12 +31,21 @@
   - a Show button and passphrase prompt in the secrets panel.
 
   The design follow-up is in `stack-secrets.md`. Go and frontend tests pass, and the dev dashboard was checked by hand. For that check the dev secret store was parked under `.dev/state/secrets.parked-20261107`, because its passphrase isn't recorded. It was restored afterwards, and the temporary store was removed. Not released (ask first).
-- Next: phase 3 prep:
-  - a converter on jp1 (env extraction without printing, fully qualified images, no `container_name`);
-  - the Caddy stack;
-  - a volume move-with-uid-shift script;
-  - a dry run;
-  - then the switch window with Bart. Still open: the CLAUDE.md native-packages rule, and deleting hel1's `/etc/sub[ug]id.sp-backup`.
+- **Phase 3 tooling (2026-11-08), checked on jp1 with Docker up.** Details are in caddy-podman.md under "Phase 3 tooling".
+  - Wheat change "Roles: loopback dashboard route and unprivileged port start for a Podman Caddy stack". jp1's inventory doesn't set either yet; they are set in the switch window.
+  - Scratch scripts on jp1 in `/root/sp-import`, kept out of the repo by Bart's choice. Local copies, with their tests, are in this session's scratchpad `jp1/`:
+    - `convert2.py`, which produced `v2/<stack>/`, plus `v2/caddy/`;
+    - `copy_images.py`;
+    - `move_volumes.py`. Its tests need root in a user namespace: `unshare --map-auto --map-root-user python3 -m unittest test_move_volumes`.
+  - All check modes pass on jp1. `copy_images.py` needs `--allow-tag felddy/foundryvtt:release`, because foundryvtt runs an older image than the tag.
+- Next, Bart's calls:
+  - importing the remaining stacks with `stacks create`, which can't be undone;
+  - copying images ahead of the window;
+  - what foundryvtt's `:release` means: Docker's local tag, or the current one on Docker Hub;
+  - backing up foundry_data;
+  - then the switch window.
+
+  Still open: the CLAUDE.md native-packages rule, and deleting hel1's `/etc/sub[ug]id.sp-backup` and jp1's `/root/sp-import`.
 - Gothab follow-up noted in its TODO.md: a `namespace:repos:create` scope (creating a repo needed `namespace:settings:write`, which also allows deleting the namespace).
 
 ## Deployment (2026-11-05)
