@@ -138,6 +138,9 @@ type Manager struct {
 	secrets *SecretSupport
 	// runtime is nil unless EnableRuntimeStatus was called.
 	runtime ContainerLister
+	// images and checker are nil unless EnableImageChecks was called.
+	images  ImageSource
+	checker RemoteChecker
 	// bootID (see SetBootID) and waiting are guarded by mu. waiting holds why
 	// a stack that should be up has not come up since boot.
 	bootID  string

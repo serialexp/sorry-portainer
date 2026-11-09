@@ -192,6 +192,14 @@ func (m *Memory) StackOperation(context.Context, string, string, string) (protoc
 	return protocol.StackOperation{}, errStacksUnsupported
 }
 
+func (m *Memory) StackImages(context.Context, string, string, bool) (protocol.StackImages, error) {
+	return protocol.StackImages{}, errStacksUnsupported
+}
+
+func (m *Memory) UpdateStackService(context.Context, string, string, string) (protocol.StackOperation, error) {
+	return protocol.StackOperation{}, errStacksUnsupported
+}
+
 func (m *Memory) SyncSecrets(context.Context, string, protocol.SecretSync) (protocol.SecretSyncResult, error) {
 	return protocol.SecretSyncResult{}, errStacksUnsupported
 }

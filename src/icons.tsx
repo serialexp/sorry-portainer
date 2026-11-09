@@ -7,6 +7,7 @@ import {
   PhArrowClockwiseIcon,
   PhArrowLeftIcon,
   PhArrowRightIcon,
+  PhArrowUpIcon,
   PhCaretRightIcon,
   PhClockIcon,
   PhCubeIcon,
@@ -92,6 +93,7 @@ export const InfoIcon = (props: Props) => <PhInfoIcon class="icon" size={props.s
 export const RefreshIcon = (props: Props) => (
   <PhArrowClockwiseIcon class="icon" size={props.size ?? 16} aria-hidden="true" />
 );
+export const ArrowUpIcon = (props: Props) => <PhArrowUpIcon class="icon" size={props.size ?? 13} aria-hidden="true" />;
 export const PencilIcon = (props: Props) => (
   <PhPencilSimpleIcon class="icon" size={props.size ?? 15} aria-hidden="true" />
 );

@@ -264,6 +264,70 @@ type StackOperation struct {
 	Output    string `json:"output,omitempty"`
 	Success   bool   `json:"success"`
 }
+
+// StackImagesRequest asks whether a stack's images are still what their
+// tags point to. Force skips the agent's cached registry answers.
+type StackImagesRequest struct {
+	Name  string `json:"name"`
+	Force bool   `json:"force,omitempty"`
+}
+
+// StackImages answers a StackImagesRequest: one entry per declared service,
+// in Compose file order.
+type StackImages struct {
+	Name     string         `json:"name"`
+	Services []ServiceImage `json:"services"`
+}
+
+// Image statuses of a ServiceImage.
+const (
+	// ImageCurrent: the service runs what its tag points to now.
+	ImageCurrent = "current"
+	// ImageBehind: the tag points to another image, or the image is not on
+	// the host yet.
+	ImageBehind = "behind"
+	// ImageUnknown: the registry could not be asked or did not answer.
+	ImageUnknown = "unknown"
+	// ImagePinned: the reference names a digest, which cannot move.
+	ImagePinned = "pinned"
+	// ImageLocal: a localhost/ image or a service without image, built on the host.
+	ImageLocal = "local"
+	// ImageUnchecked: the reference cannot be known yet, for example an
+	// image name with variables in a stack without containers.
+	ImageUnchecked = "unchecked"
+)
+
+// ServiceImage is the image state of one service.
+type ServiceImage struct {
+	Service string `json:"service"`
+	// Image is the reference checked: the container's image as Podman
+	// names it, or the Compose file's for a service without a container.
+	Image  string `json:"image,omitempty"`
+	Status string `json:"status"`
+	// Registry is the registry the image lives in, as people write it ("docker.io").
+	Registry string `json:"registry,omitempty"`
+	// RunningDigest is the digest of the image the service runs (or, without
+	// a container, the local image the reference names); empty when unknown.
+	RunningDigest string `json:"running_digest,omitempty"`
+	// LatestDigest is what the tag points to, from the last good check.
+	LatestDigest string `json:"latest_digest,omitempty"`
+	// LatestCreated is when the image LatestDigest names was built (unix
+	// seconds), set only when the service is behind and the registry said.
+	LatestCreated int64 `json:"latest_created,omitempty"`
+	// CheckedAt is when the registry last answered (unix seconds), 0 if never.
+	CheckedAt int64 `json:"checked_at,omitempty"`
+	// Error says why the status is unknown or unchecked, and stays set with
+	// the last good answer when the latest check failed.
+	Error string `json:"error,omitempty"`
+}
+
+// StackUpdateRequest pulls the image of one service and, when the stack
+// runs, recreates the service.
+type StackUpdateRequest struct {
+	Name    string `json:"name"`
+	Service string `json:"service"`
+}
+
 type StackSave struct {
 	Name        string `json:"name"`
 	ComposeYAML string `json:"compose_yaml"`

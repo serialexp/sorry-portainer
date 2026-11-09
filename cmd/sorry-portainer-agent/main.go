@@ -17,6 +17,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/serialexp/sorry-portainer/internal/agentcred"
 	"github.com/serialexp/sorry-portainer/internal/config"
+	"github.com/serialexp/sorry-portainer/internal/imagecheck"
 	"github.com/serialexp/sorry-portainer/internal/podman"
 	"github.com/serialexp/sorry-portainer/internal/protocol"
 	"github.com/serialexp/sorry-portainer/internal/relay"
@@ -98,6 +99,7 @@ func main() {
 	manager := stacks.New(cfg.StateDir+"/stacks", cfg.Prefix, stacks.NewComposeExecutor(cfg.ComposeProvider))
 	manager.EnableSecrets(stacks.SecretSupport{HostID: cfg.HostID, Vault: vault, Containers: client})
 	manager.EnableRuntimeStatus(client)
+	manager.EnableImageChecks(client, imagecheck.New(imagecheck.NewRemoteRegistry(), imagecheck.Options{}))
 	manager.Logf = log.Printf
 	manager.SetBootID(bootID)
 	// After a reboot, bring back the stacks that were up. Stacks with secrets

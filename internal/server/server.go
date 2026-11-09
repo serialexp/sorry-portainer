@@ -55,6 +55,8 @@ type Relay interface {
 	StackRevision(context.Context, string, string, int) (protocol.Stack, error)
 	SaveStack(context.Context, string, protocol.StackSave) (protocol.StackSaved, error)
 	StackOperation(context.Context, string, string, string) (protocol.StackOperation, error)
+	StackImages(context.Context, string, string, bool) (protocol.StackImages, error)
+	UpdateStackService(context.Context, string, string, string) (protocol.StackOperation, error)
 	SyncSecrets(context.Context, string, protocol.SecretSync) (protocol.SecretSyncResult, error)
 	RetainSecrets(context.Context, string, []string) error
 }
@@ -208,6 +210,21 @@ func (s *Server) hostOperation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(parts) == 4 && parts[1] == "stacks" {
+		if r.Method == http.MethodGet && parts[3] == "images" {
+			images, err := s.relay.StackImages(ctx, parts[0], parts[2], r.URL.Query().Get("force") == "1")
+			respond(w, images, err, http.StatusBadGateway)
+			return
+		}
+		if r.Method == http.MethodPost && parts[3] == "update" {
+			var request protocol.StackUpdateRequest
+			if jsonDecode(w, r, &request) != nil || request.Service == "" {
+				http.Error(w, "service is required", http.StatusBadRequest)
+				return
+			}
+			operation, err := s.relay.UpdateStackService(ctx, parts[0], parts[2], request.Service)
+			respond(w, operation, err, http.StatusBadGateway)
+			return
+		}
 		if r.Method == http.MethodPost && (parts[3] == "up" || parts[3] == "down" || parts[3] == "restart") {
 			operation, err := s.relay.StackOperation(ctx, parts[0], parts[2], parts[3])
 			respond(w, operation, err, http.StatusBadGateway)

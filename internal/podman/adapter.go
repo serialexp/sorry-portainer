@@ -719,6 +719,8 @@ type ProjectContainer struct {
 	// Project is the compose project the container belongs to.
 	Project string
 	Image   string
+	// ImageID is the ID of the image the container was created from.
+	ImageID string
 	State   string
 	// Status is Podman's human-readable status, for example "Up 2 hours",
 	// without the health check's result, which is Health.
@@ -739,6 +741,7 @@ type projectContainerJSON struct {
 	ID       string            `json:"Id"`
 	Names    []string          `json:"Names"`
 	Image    string            `json:"Image"`
+	ImageID  string            `json:"ImageID"`
 	State    string            `json:"State"`
 	Status   string            `json:"Status"`
 	Restarts int               `json:"Restarts"`
@@ -797,6 +800,7 @@ func (c *Client) composeContainers(ctx context.Context, filter string, withRecen
 			Service:  item.Labels["com.docker.compose.service"],
 			Project:  project,
 			Image:    item.Image,
+			ImageID:  item.ImageID,
 			State:    item.State,
 			Status:   status,
 			Health:   health,

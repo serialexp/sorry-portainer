@@ -1,9 +1,38 @@
 import { A, useLocation, useNavigate } from "@solidjs/router";
-import { createEffect, createSignal, For, Match, Show, Switch } from "solid-js";
+import { createEffect, createSignal, For, Match, on, onCleanup, onMount, Show, Switch, untrack } from "solid-js";
 import { filteredStacks, fleet, loadStacks, searchTerm, sessionEnded } from "./fleet-store";
 import { editStackPath, hostPath, newStackPath, parseHostPath, stackPath } from "./host-route";
 import { HealthNote } from "./health-note";
-import { ChevronRightIcon, InfoIcon, PencilIcon, PlayIcon, PlusIcon, StackIcon, StopIcon } from "./icons";
+import {
+  ArrowUpIcon,
+  ChevronRightIcon,
+  InfoIcon,
+  PencilIcon,
+  PlayIcon,
+  PlusIcon,
+  RefreshIcon,
+  StackIcon,
+  StopIcon,
+} from "./icons";
+import {
+  askUpdate,
+  cancelUpdate,
+  checkImages,
+  confirmUpdate,
+  hideUpdateResult,
+  imageUpdates,
+  serviceImage,
+  showImagesOf,
+  tick,
+} from "./image-update-store";
+import {
+  checkedText,
+  imageStatusLine,
+  registryChecked,
+  updateDetail,
+  updatePrompt,
+  updatesLabel,
+} from "./image-updates";
 import { hostCrumbs, PageHeader } from "./page-header";
 import { NoSecretStore, StackSecretsPanel, StackStoreNotice } from "./secrets-ui";
 import {
@@ -34,8 +63,53 @@ import {
   type StackOperation,
 } from "./stack-api";
 
-/** A stack's services, one row per container. */
+/**
+ * A stack's services with whether their images are still what their tags
+ * point to: the updates count, when the images were checked, and Check now.
+ */
+function ServicesSection(props: { name: string; services: StackService[] }) {
+  const count = () => new Set(props.services.map((s) => s.service)).size;
+  const checkLine = () => {
+    if (imageUpdates.checking) return "Checking images…";
+    if (imageUpdates.error) return `Couldn’t check images: ${imageUpdates.error}`;
+    return checkedText(imageUpdates.services, imageUpdates.now);
+  };
+  return (
+    <section class="stack-services-section" aria-labelledby="stack-services-heading">
+      <div class="stack-services-head">
+        <div class="stack-services-title">
+          <h3 id="stack-services-heading">Services</h3>
+          <span class="resource-count">{count()}</span>
+        </div>
+        <div class="stack-services-tools">
+          <Show when={updatesLabel(imageUpdates.services)}>
+            {(label) => <span class="warn-chip dotted">{label()}</span>}
+          </Show>
+          <span class="stack-services-checked" role="status">
+            {checkLine()}
+          </span>
+          <button
+            class="small-button"
+            classList={{ checking: imageUpdates.checking }}
+            type="button"
+            disabled={imageUpdates.checking || imageUpdates.loading || !!imageUpdates.updating}
+            onClick={() => checkImages(true)}
+          >
+            <RefreshIcon size={13} />
+            Check now
+          </button>
+        </div>
+      </div>
+      <ServiceTable name={props.name} services={props.services} />
+    </section>
+  );
+}
+
+/** A stack's services, one row per container; a service's image state and Update show on its first row. */
 function ServiceTable(props: { name: string; services: StackService[] }) {
+  const stackRuns = () => props.services.some((s) => s.state === "running");
+  const firstOfService = (index: number) =>
+    props.services.findIndex((s) => s.service === props.services[index].service) === index;
   return (
     <div class="stack-services" role="table" aria-label={`Services of ${props.name}`}>
       <div class="stack-service-row stack-service-head" role="row">
@@ -43,8 +117,60 @@ function ServiceTable(props: { name: string; services: StackService[] }) {
         <span role="columnheader">Container</span>
         <span role="columnheader">Image</span>
         <span role="columnheader">State</span>
+        <span role="columnheader" class="stack-service-update">
+          Image
+        </span>
       </div>
-      <For each={props.services}>{(svc) => <ServiceRow service={svc} />}</For>
+      <For each={props.services}>
+        {(svc, index) => <ServiceRow service={svc} first={firstOfService(index())} stackRuns={stackRuns()} />}
+      </For>
+    </div>
+  );
+}
+
+/** Under a service's image: whether it runs what its tag points to now. */
+function ImageStatus(props: { service: string }) {
+  const line = () => {
+    const img = serviceImage(props.service);
+    if (imageUpdates.updating === props.service) return { text: "Updating…", tone: "warn busy", title: "" };
+    if (imageUpdates.checking && img && registryChecked(img.status))
+      return { text: "Checking…", tone: "muted busy", title: "" };
+    if (!img) return imageUpdates.loading ? { text: "Checking…", tone: "muted busy", title: "" } : undefined;
+    return imageStatusLine(img, imageUpdates.now);
+  };
+  return (
+    <Show when={line()}>
+      {(l) => (
+        <span class={`image-status ${l().tone}`} title={l().title || undefined}>
+          {l().text}
+        </span>
+      )}
+    </Show>
+  );
+}
+
+/** The row under a service that confirms its update. */
+function UpdateConfirm(props: { service: string; stackRuns: boolean }) {
+  const img = () => serviceImage(props.service);
+  const prompt = () => updatePrompt(props.service, img()?.image ?? "", props.stackRuns);
+  return (
+    <div class="stack-service-confirm" role="row">
+      <div role="cell" class="update-confirm" aria-label={`Update ${props.service}`}>
+        <div class="update-confirm-text">
+          <span>{prompt().text}</span>
+          <Show when={img()}>
+            {(i) => <span class="update-confirm-detail">{updateDetail(i(), imageUpdates.now)}</span>}
+          </Show>
+        </div>
+        <div class="update-confirm-actions">
+          <button class="add-button" type="button" onClick={() => cancelUpdate()}>
+            Cancel
+          </button>
+          <button class="add-button solid" type="button" onClick={() => confirmUpdate(props.service, props.stackRuns)}>
+            {prompt().label}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -64,31 +190,62 @@ function titleChipClass(tone: StackRunState["tone"]): string {
   }
 }
 
-/** One service row of a stack card: its container, image and state. */
-function ServiceRow(props: { service: StackService }) {
+/** One service row of a stack card: its container, image and state; on a service's first row, its image state and Update. */
+function ServiceRow(props: { service: StackService; first: boolean; stackRuns: boolean }) {
+  const canUpdate = () =>
+    props.first &&
+    serviceImage(props.service.service)?.status === "behind" &&
+    imageUpdates.confirm !== props.service.service &&
+    !imageUpdates.updating &&
+    !imageUpdates.checking;
+  const updateLabel = () =>
+    `Update ${props.service.service} to the newest ${serviceImage(props.service.service)?.image ?? "image"}`;
   return (
-    <div class="stack-service-row" role="row">
-      <span class="stack-service-name" role="cell">
-        {props.service.service}
-      </span>
-      <span class="cell-muted" role="cell">
-        {props.service.container || "—"}
-      </span>
-      <span class="chip-code" role="cell">
-        {props.service.image || "—"}
-      </span>
-      <span role="cell">
-        <span class="state-line">
-          <span class={props.service.state === "running" ? "state" : "state stopped"}>
-            {serviceStateLabel(props.service.state)}
-          </span>
-          <HealthNote facts={props.service} />
+    <>
+      <div class="stack-service-row" role="row">
+        <span class="stack-service-name" role="cell">
+          {props.service.service}
         </span>
-        <Show when={props.service.status}>
-          <small class="stack-service-status">{props.service.status}</small>
-        </Show>
-      </span>
-    </div>
+        <span class="cell-muted" role="cell">
+          {props.service.container || "—"}
+        </span>
+        <span class="stack-service-image" role="cell">
+          <span class="chip-code" title={props.service.image || undefined}>
+            {props.service.image || "—"}
+          </span>
+          <Show when={props.first}>
+            <ImageStatus service={props.service.service} />
+          </Show>
+        </span>
+        <span role="cell" class="stack-service-state">
+          <span class="state-line">
+            <span class={props.service.state === "running" ? "state" : "state stopped"}>
+              {serviceStateLabel(props.service.state)}
+            </span>
+            <HealthNote facts={props.service} />
+          </span>
+          <Show when={props.service.status}>
+            <small class="stack-service-status">{props.service.status}</small>
+          </Show>
+        </span>
+        <span role="cell" class="stack-service-update">
+          <Show when={canUpdate()}>
+            <button
+              class="add-button solid"
+              type="button"
+              aria-label={updateLabel()}
+              onClick={() => askUpdate(props.service.service)}
+            >
+              <ArrowUpIcon />
+              Update
+            </button>
+          </Show>
+        </span>
+      </div>
+      <Show when={props.first && imageUpdates.confirm === props.service.service}>
+        <UpdateConfirm service={props.service.service} stackRuns={props.stackRuns} />
+      </Show>
+    </>
   );
 }
 
@@ -337,6 +494,26 @@ export function StackDetail() {
     setActionError("");
     setActionOutput("");
     void load();
+    const host = hostID();
+    const stackName = name();
+    // The check reads the image store; this effect follows only the stack shown.
+    untrack(() => {
+      showImagesOf(host, stackName);
+      void checkImages();
+    });
+  });
+  // After an update, show the recreated containers.
+  createEffect(
+    on(
+      () => imageUpdates.completed,
+      () => void load(),
+      { defer: true },
+    ),
+  );
+  // Keeps "checked X ago" current while the page is open.
+  onMount(() => {
+    const timer = setInterval(tick, 30_000);
+    onCleanup(() => clearInterval(timer));
   });
 
   const runState = () => {
@@ -456,6 +633,9 @@ export function StackDetail() {
             </p>
           </Show>
           <Show when={runner.result()}>{(result) => <RunResult result={result()} onHide={runner.hideResult} />}</Show>
+          <Show when={imageUpdates.result}>
+            {(result) => <RunResult result={{ name: name(), ...result() }} onHide={hideUpdateResult} />}
+          </Show>
           <Show when={actionError()}>
             <p class="form-error" role="alert">
               {actionError()}
@@ -484,7 +664,7 @@ export function StackDetail() {
           </Show>
         </div>
         <Show when={stack()?.services?.length}>
-          <ServiceTable name={name()} services={stack()?.services ?? []} />
+          <ServicesSection name={name()} services={stack()?.services ?? []} />
         </Show>
         <div class="stack-detail-grid">
           <section class="stack-detail-block" aria-labelledby="stack-secrets-heading">

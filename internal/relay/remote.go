@@ -17,7 +17,10 @@ const (
 	DefaultRequestTimeout = 10 * time.Second
 	// Stack operations run podman-compose and may legitimately take several minutes.
 	StackOperationTimeout = 6 * time.Minute
-	helloTimeout          = 10 * time.Second
+	// StackImagesTimeout covers an image check: registry requests of 15
+	// seconds each, four at a time, and build-time lookups for moved tags.
+	StackImagesTimeout = 45 * time.Second
+	helloTimeout       = 10 * time.Second
 )
 
 // Secret operations. Their payloads carry secret values, which must never be
@@ -281,6 +284,21 @@ func (r *Remote) SyncSecrets(ctx context.Context, hostID string, sync protocol.S
 // RetainSecrets makes the agent forget the secrets of stacks not listed.
 func (r *Remote) RetainSecrets(ctx context.Context, hostID string, stacks []string) error {
 	return r.call(ctx, hostID, opSecretsRetain, protocol.SecretRetain{Stacks: stacks}, nil, DefaultRequestTimeout)
+}
+
+// StackImages asks whether a stack's images are still what their tags point to.
+func (r *Remote) StackImages(ctx context.Context, hostID, name string, force bool) (protocol.StackImages, error) {
+	var out protocol.StackImages
+	err := r.call(ctx, hostID, "stacks.images", protocol.StackImagesRequest{Name: name, Force: force}, &out, StackImagesTimeout)
+	return out, err
+}
+
+// UpdateStackService pulls one service's image and recreates the service
+// when the stack runs.
+func (r *Remote) UpdateStackService(ctx context.Context, hostID, name, service string) (protocol.StackOperation, error) {
+	var out protocol.StackOperation
+	err := r.call(ctx, hostID, "stacks.update", protocol.StackUpdateRequest{Name: name, Service: service}, &out, StackOperationTimeout)
+	return out, err
 }
 
 func (r *Remote) StackOperation(ctx context.Context, hostID, name, operation string) (protocol.StackOperation, error) {

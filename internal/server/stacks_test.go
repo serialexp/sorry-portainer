@@ -27,6 +27,10 @@ type stackRelay struct {
 	imageRequested string
 	// removed names the volume or image the last removal asked for.
 	removed string
+	// imagesForced is the force flag of the last image check; updated is
+	// "stack/service" of the last update.
+	imagesForced bool
+	updated      string
 }
 
 func (r *stackRelay) Hosts() []protocol.HostInfo { return nil }
@@ -75,6 +79,14 @@ func (r *stackRelay) SaveStack(_ context.Context, _ string, save protocol.StackS
 }
 func (r *stackRelay) StackOperation(context.Context, string, string, string) (protocol.StackOperation, error) {
 	return protocol.StackOperation{}, r.err
+}
+func (r *stackRelay) StackImages(_ context.Context, _ string, name string, force bool) (protocol.StackImages, error) {
+	r.imagesForced = force
+	return protocol.StackImages{Name: name, Services: []protocol.ServiceImage{{Service: "app", Status: protocol.ImageBehind}}}, r.err
+}
+func (r *stackRelay) UpdateStackService(_ context.Context, _ string, name, service string) (protocol.StackOperation, error) {
+	r.updated = name + "/" + service
+	return protocol.StackOperation{Name: name, Operation: "update", Success: true}, r.err
 }
 func (r *stackRelay) SyncSecrets(context.Context, string, protocol.SecretSync) (protocol.SecretSyncResult, error) {
 	return protocol.SecretSyncResult{}, r.err
@@ -152,6 +164,36 @@ func TestStackHTTPRevision(t *testing.T) {
 		if w.Code != http.StatusBadRequest || relay.revisionRequested != 0 {
 			t.Fatalf("version %q: status %d, relay asked for %d", bad, w.Code, relay.revisionRequested)
 		}
+	}
+}
+
+// TestStackImagesHTTP: Check now forces a registry check, a page open does
+// not, and an update needs a service.
+func TestStackImagesHTTP(t *testing.T) {
+	relay := &stackRelay{}
+	s := New(testSessions, relay, nil)
+	w := authenticatedStackRequest(t, s, http.MethodGet, "/api/hosts/host/stacks/web/images", "")
+	if w.Code != http.StatusOK || relay.imagesForced || !strings.Contains(w.Body.String(), `"status":"behind"`) {
+		t.Fatalf("images = %d (forced %v): %s", w.Code, relay.imagesForced, w.Body.String())
+	}
+	w = authenticatedStackRequest(t, s, http.MethodGet, "/api/hosts/host/stacks/web/images?force=1", "")
+	if w.Code != http.StatusOK || !relay.imagesForced {
+		t.Fatalf("forced images = %d (forced %v)", w.Code, relay.imagesForced)
+	}
+	w = authenticatedStackRequest(t, s, http.MethodPost, "/api/hosts/host/stacks/web/update", `{"service":"app"}`)
+	if w.Code != http.StatusOK || relay.updated != "web/app" || !strings.Contains(w.Body.String(), `"operation":"update"`) {
+		t.Fatalf("update = %d (updated %q): %s", w.Code, relay.updated, w.Body.String())
+	}
+	relay.updated = ""
+	for _, body := range []string{`{}`, `not json`} {
+		w = authenticatedStackRequest(t, s, http.MethodPost, "/api/hosts/host/stacks/web/update", body)
+		if w.Code != http.StatusBadRequest || relay.updated != "" {
+			t.Fatalf("update with %s = %d (updated %q)", body, w.Code, relay.updated)
+		}
+	}
+	w = authenticatedStackRequest(t, s, http.MethodPost, "/api/hosts/host/stacks/web/images", "")
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("POST images = %d, want 404", w.Code)
 	}
 }
 

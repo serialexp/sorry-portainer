@@ -385,8 +385,21 @@ func (a *Agent) handle(ctx context.Context, operation string, payload json.RawMe
 	if a.Stacks == nil {
 		return nil, errStacksUnavailable
 	}
-	if operation == "stacks.list" {
+	switch operation {
+	case "stacks.list":
 		return a.Stacks.List(ctx)
+	case "stacks.images":
+		request, err := decodePayload[protocol.StackImagesRequest](payload)
+		if err != nil {
+			return nil, err
+		}
+		return a.Stacks.Images(ctx, request.Name, request.Force)
+	case "stacks.update":
+		request, err := decodePayload[protocol.StackUpdateRequest](payload)
+		if err != nil {
+			return nil, err
+		}
+		return operationResult(a.Stacks.Update(ctx, request.Name, request.Service))
 	}
 	request, err := decodePayload[protocol.StackSave](payload)
 	if err != nil {
