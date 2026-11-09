@@ -266,8 +266,12 @@ func compareImage(s serviceImage, index localIndex, latest string) (status, runn
 // stack runs, recreates the service with `up -d --force-recreate`, which in
 // podman-compose 1.0.6 also recreates the services it depends on. A stopped
 // stack only pulls; the service uses the image when the stack next starts.
-// The desired state does not change.
-func (m *Manager) Update(ctx context.Context, n, service string) (protocol.StackOperation, error) {
+// The desired state does not change. progress, when not nil, is told each
+// step as it starts: protocol.UpdatePulling, then UpdateRecreating.
+func (m *Manager) Update(ctx context.Context, n, service string, progress func(step string)) (protocol.StackOperation, error) {
+	if progress == nil {
+		progress = func(string) {}
+	}
 	if !ValidName(n) {
 		return protocol.StackOperation{}, errors.New("invalid stack name")
 	}
@@ -299,6 +303,7 @@ func (m *Manager) Update(ctx context.Context, n, service string) (protocol.Stack
 	}
 	result := protocol.StackOperation{Name: n, Operation: "update"}
 	var output strings.Builder
+	progress(protocol.UpdatePulling)
 	fmt.Fprintf(&output, "$ podman pull %s\n", target.ref)
 	pullCtx, cancel := context.WithTimeout(ctx, pullTimeout)
 	id, err := m.images.Pull(pullCtx, target.ref)
@@ -323,6 +328,7 @@ func (m *Manager) Update(ctx context.Context, n, service string) (protocol.Stack
 		return result, err
 	}
 	args := []string{"-p", m.project(n), "-f", runtimeComposeFile, "up", "-d", "--force-recreate", service}
+	progress(protocol.UpdateRecreating)
 	fmt.Fprintf(&output, "$ podman-compose %s\n", strings.Join(args, " "))
 	runCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()

@@ -1,6 +1,6 @@
 import { createStore } from "solid-js/store";
 import { fleet, sessionEnded } from "./fleet-store";
-import { getStackImages, type ServiceImage, updateService } from "./image-updates";
+import { getStackImages, type ServiceImage, type UpdateStep, updateService } from "./image-updates";
 import { StackOperationError } from "./stack-api";
 
 // Image checks and updates for the stack page being shown. The stack page's
@@ -19,6 +19,8 @@ type ImageUpdateState = {
   confirm: string;
   /** The service being updated. */
   updating: string;
+  /** The step the update reported last; empty until the first. */
+  step: UpdateStep | "";
   /** The last update's result, shown with the stack's other operation results. */
   result: { failed: boolean; title: string; output: string } | null;
   /** Counts finished updates, so the stack page reloads after each. */
@@ -36,6 +38,7 @@ const [state, setState] = createStore<ImageUpdateState>({
   error: "",
   confirm: "",
   updating: "",
+  step: "",
   result: null,
   completed: 0,
   now: Math.floor(Date.now() / 1000),
@@ -59,6 +62,7 @@ export function showImagesOf(host: string, stack: string) {
     error: "",
     confirm: "",
     updating: "",
+    step: "",
     result: null,
   });
 }
@@ -109,9 +113,11 @@ export function tick() {
 /** Pulls the service's image and, when the stack runs, recreates it; then checks again. */
 export async function confirmUpdate(service: string, stackRuns: boolean) {
   const { host, stack } = state;
-  setState({ confirm: "", updating: service, result: null });
+  setState({ confirm: "", updating: service, step: "", result: null });
   try {
-    const done = await updateService(host, stack, service);
+    const done = await updateService(host, stack, service, (step) => {
+      if (current(host, stack) && state.updating === service) setState({ step });
+    });
     if (!current(host, stack)) return;
     const title = stackRuns ? `Updated ${service}` : `Pulled the newest image for ${service}`;
     setState({ result: { failed: false, title, output: done.output ?? "" } });
@@ -126,7 +132,7 @@ export async function confirmUpdate(service: string, stackRuns: boolean) {
       });
   } finally {
     if (current(host, stack)) {
-      setState((s) => ({ updating: "", completed: s.completed + 1 }));
+      setState((s) => ({ updating: "", step: "", completed: s.completed + 1 }));
       // The agent forgot its cached answer for the image, so this asks the
       // registry for that image only; until it answers, the old answer is stale.
       void checkImages(false, true);

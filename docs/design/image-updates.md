@@ -1,6 +1,6 @@
 # Stack image updates — Design
 
-Status: implemented, not released; open: two-step progress, wording for states the design does not cover
+Status: implemented, not released; open: wording for states the design does not cover
 Owner: Bart
 Last updated: 2026-11-10
 
@@ -71,17 +71,24 @@ Tick items as they land and move them to Done.
   "{registry} refused access", "Tag {tag} not found on {registry}" or
   "Couldn’t reach {registry}". The wording is ours, not the design's.
 
+- [x] **Extended — progress while updating.** Bart (2026-11-10) chose
+  "Agent progress events" over two separate requests. The relay has a
+  `progress` message: the agent sends `{"step":"pulling"}` and
+  `{"step":"recreating"}` with the update's request ID; the server's
+  reader hands each to the waiting caller without blocking (only the
+  latest is kept), and `POST …/update` answers with server-sent events
+  (`step`, then `result` or `error`) once the first step arrives. Caddy
+  passes `text/event-stream` through unbuffered. The row shows the
+  design's "Pulling new image…" and "Recreating container…" ("Updating…"
+  before the first step). Seen in the dev dashboard on 2026-11-10.
+
 ### Outstanding
 
-- [ ] **Open — progress while updating.** The design shows "Pulling new
-  image…" then "Recreating container…"; the update is one request with no
-  progress, so the row says "Updating…" throughout. Bart (2026-11-10)
-  wants two steps; how the dashboard learns the step is undecided.
 - [ ] **Open — states the design does not cover.** Images pinned by digest,
   local images (`localhost/…` or `build:`), and image names with variables
   in a stopped stack. They show a grey line for now ("Pinned by digest",
   "Local image", "Not checked"); Bart to confirm with the design agent,
-  together with the failure wording below.
+  together with the failure wording under "failure kinds" in Done.
 - [ ] **Defer — CLI.** `sorry-portainer stacks images` / `stacks update`.
   Bart (2026-11-10): "Fine" to leave out of v1.
 

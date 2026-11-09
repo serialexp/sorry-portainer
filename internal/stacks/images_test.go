@@ -172,7 +172,7 @@ func TestImagesWithoutChecksOrRuntime(t *testing.T) {
 	if _, err := m.Images(context.Background(), "homes", false); !errors.Is(err, errImageChecksUnavailable) {
 		t.Fatalf("without image checks: %v", err)
 	}
-	if _, err := m.Update(context.Background(), "homes", "app"); !errors.Is(err, errImageChecksUnavailable) {
+	if _, err := m.Update(context.Background(), "homes", "app", nil); !errors.Is(err, errImageChecksUnavailable) {
 		t.Fatalf("update without image checks: %v", err)
 	}
 	m.EnableImageChecks(&fakeImages{}, &fakeChecker{})
@@ -234,9 +234,13 @@ func TestUpdateRunningStackPullsAndRecreatesTheService(t *testing.T) {
 		{Name: "agent-homes_app_1", Service: "app", Image: "docker.io/aeolun/homes:latest", ImageID: "old", State: "running"},
 	})
 	executor := recreating(m, "0123456789ab", "running")
-	result, err := m.Update(context.Background(), "homes", "app")
+	var steps []string
+	result, err := m.Update(context.Background(), "homes", "app", func(step string) { steps = append(steps, step) })
 	if err != nil || !result.Success || result.Operation != "update" || result.Name != "homes" {
 		t.Fatalf("update = %+v, %v", result, err)
+	}
+	if want := []string{protocol.UpdatePulling, protocol.UpdateRecreating}; !reflect.DeepEqual(steps, want) {
+		t.Fatalf("steps = %v, want %v", steps, want)
 	}
 	if !reflect.DeepEqual(images.pulled, []string{"docker.io/aeolun/homes:latest"}) {
 		t.Fatalf("pulled %v", images.pulled)
@@ -279,7 +283,7 @@ func TestUpdateFailsWhenTheServiceDoesNotRunTheNewImage(t *testing.T) {
 			})
 			e := recreating(m, tc.image, tc.state)
 			e.remove = tc.remove
-			result, err := m.Update(context.Background(), "homes", "app")
+			result, err := m.Update(context.Background(), "homes", "app", nil)
 			if err == nil || result.Success || !strings.Contains(result.Output, tc.want) {
 				t.Fatalf("update = %+v, %v; want %q", result, err, tc.want)
 			}
@@ -291,9 +295,13 @@ func TestUpdateStoppedStackOnlyPulls(t *testing.T) {
 	m, images, _, executor := imageManager(t, []podman.ProjectContainer{
 		{Name: "agent-homes_app_1", Service: "app", Image: "docker.io/aeolun/homes:latest", ImageID: "old", State: "exited"},
 	})
-	result, err := m.Update(context.Background(), "homes", "db")
+	var steps []string
+	result, err := m.Update(context.Background(), "homes", "db", func(step string) { steps = append(steps, step) })
 	if err != nil || !result.Success {
 		t.Fatalf("update = %+v, %v", result, err)
+	}
+	if want := []string{protocol.UpdatePulling}; !reflect.DeepEqual(steps, want) {
+		t.Fatalf("steps = %v, want %v: a stopped stack is not recreated", steps, want)
 	}
 	if !reflect.DeepEqual(images.pulled, []string{"mysql:8"}) || len(executor.callsSnapshot()) != 0 {
 		t.Fatalf("pulled %v, compose calls %d", images.pulled, len(executor.callsSnapshot()))
@@ -308,7 +316,7 @@ func TestUpdatePullFailureIsAFailedOperation(t *testing.T) {
 		{Name: "agent-homes_app_1", Service: "app", Image: "docker.io/aeolun/homes:latest", ImageID: "old", State: "running"},
 	})
 	images.pullErr = errors.New("podman pull: exit status 125: unauthorized")
-	result, err := m.Update(context.Background(), "homes", "app")
+	result, err := m.Update(context.Background(), "homes", "app", nil)
 	if err == nil || result.Success || result.Operation != "update" || !strings.Contains(result.Output, "unauthorized") {
 		t.Fatalf("update = %+v, %v", result, err)
 	}
@@ -328,7 +336,7 @@ func TestUpdateRefusesWhatCannotBePulled(t *testing.T) {
 		"built":     "Compose builds it on the host",
 		"templated": "uses variables",
 	} {
-		if _, err := m.Update(context.Background(), "homes", service); err == nil || !strings.Contains(err.Error(), want) {
+		if _, err := m.Update(context.Background(), "homes", service, nil); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("update %s: %v, want %q", service, err, want)
 		}
 	}

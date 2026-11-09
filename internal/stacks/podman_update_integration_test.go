@@ -91,7 +91,7 @@ func TestRealPodmanUpdateRecreatesOnlyTheService(t *testing.T) {
 	podmanOut("build", "--pull=never", "--quiet", "--tag", tag, dir)
 	newImage := podmanOut("image", "inspect", "--format", "{{.Id}}", tag)
 
-	result, err := manager.Update(ctx, "upd", "app")
+	result, err := manager.Update(ctx, "upd", "app", nil)
 	if err != nil || !result.Success {
 		t.Fatalf("update: %v: %s", err, result.Output)
 	}

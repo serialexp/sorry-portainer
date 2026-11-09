@@ -36,10 +36,34 @@ type session struct {
 	writeMu sync.Mutex
 
 	mu      sync.Mutex
-	pending map[string]chan protocol.Message
+	pending map[string]waiter
 	closed  bool
 	err     error
 	done    chan struct{}
+}
+
+// waiter is one pending request: where its response goes and, for a
+// request that reads progress, its latest progress step.
+type waiter struct {
+	answer chan protocol.Message
+	// progress holds at most the latest step; nil when the caller does not
+	// read progress.
+	progress chan string
+}
+
+// offer hands step to the waiter, replacing an unread older one, so the
+// session's reader never waits for a slow caller. The reader is the only
+// sender, so the second send cannot block.
+func (w waiter) offer(step string) {
+	select {
+	case w.progress <- step:
+	default:
+		select {
+		case <-w.progress:
+		default:
+		}
+		w.progress <- step
+	}
 }
 
 func newSession(conn *websocket.Conn, info protocol.HostInfo, heartbeat time.Duration) *session {
@@ -47,7 +71,7 @@ func newSession(conn *websocket.Conn, info protocol.HostInfo, heartbeat time.Dur
 		conn:      conn,
 		info:      info,
 		heartbeat: heartbeat,
-		pending:   map[string]chan protocol.Message{},
+		pending:   map[string]waiter{},
 		done:      make(chan struct{}),
 	}
 }
@@ -75,17 +99,32 @@ func (s *session) run() error {
 		if err != nil {
 			return s.close(err)
 		}
-		if message.Type != protocol.TypeResponse {
+		switch message.Type {
+		case protocol.TypeResponse:
+			s.mu.Lock()
+			w, ok := s.pending[message.ID]
+			delete(s.pending, message.ID)
+			s.mu.Unlock()
+			// A response without a waiter belongs to a request that already timed out
+			// or was cancelled; its caller has been answered.
+			if ok {
+				w.answer <- message
+			}
+		case protocol.TypeProgress:
+			var progress protocol.Progress
+			if err := json.Unmarshal(message.Payload, &progress); err != nil {
+				return s.close(fmt.Errorf("decode agent progress: %w", err))
+			}
+			s.mu.Lock()
+			w, ok := s.pending[message.ID]
+			s.mu.Unlock()
+			// Progress for a request that is no longer pending, or whose caller
+			// does not read progress, is dropped.
+			if ok && w.progress != nil {
+				w.offer(progress.Step)
+			}
+		default:
 			return s.close(fmt.Errorf("unexpected agent message type %q", message.Type))
-		}
-		s.mu.Lock()
-		waiter := s.pending[message.ID]
-		delete(s.pending, message.ID)
-		s.mu.Unlock()
-		// A response without a waiter belongs to a request that already timed out
-		// or was cancelled; its caller has been answered.
-		if waiter != nil {
-			waiter <- message
 		}
 	}
 }
@@ -144,6 +183,13 @@ func newRequestID() (string, error) {
 // call sends one request and waits for its response, the session's end, or the
 // context. On timeout or cancellation it asks the agent to stop the operation.
 func (s *session) call(ctx context.Context, operation string, payload, result any, timeout time.Duration) error {
+	return s.callWithProgress(ctx, operation, payload, result, timeout, nil)
+}
+
+// callWithProgress is call for an operation that reports progress: onStep,
+// when not nil, runs in the caller's goroutine with each step the agent
+// reports, before the response. A slow onStep sees only the latest step.
+func (s *session) callWithProgress(ctx context.Context, operation string, payload, result any, timeout time.Duration, onStep func(string)) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -171,7 +217,10 @@ func (s *session) call(ctx context.Context, operation string, payload, result an
 		return fmt.Errorf("encode %s request: %w", operation, err)
 	}
 
-	answer := make(chan protocol.Message, 1)
+	w := waiter{answer: make(chan protocol.Message, 1)}
+	if onStep != nil {
+		w.progress = make(chan string, 1)
+	}
 	s.mu.Lock()
 	switch {
 	case s.closed:
@@ -181,7 +230,7 @@ func (s *session) call(ctx context.Context, operation string, payload, result an
 		s.mu.Unlock()
 		return ErrHostBusy
 	}
-	s.pending[id] = answer
+	s.pending[id] = w
 	s.mu.Unlock()
 	defer s.forget(id)
 
@@ -190,29 +239,34 @@ func (s *session) call(ctx context.Context, operation string, payload, result an
 		return fmt.Errorf("%w: %v", ErrDisconnected, err)
 	}
 
-	select {
-	case response := <-answer:
-		if response.Error != nil {
-			return remoteError(response.Error)
-		}
-		if result == nil {
-			return nil
-		}
-		return json.Unmarshal(response.Payload, result)
-	case <-s.done:
-		return fmt.Errorf("%w: %v", ErrDisconnected, s.cause())
-	case <-ctx.Done():
-		// Best effort: the agent may already be finishing. Its late response is
-		// dropped because this request is no longer pending.
-		if cancel, err := protocol.Encode(protocol.Message{Version: protocol.Version, ID: id, Type: protocol.TypeCancel}); err == nil {
-			if err := s.writeFrame(cancel); err != nil {
-				s.close(err)
+	// w.progress is nil, and so never ready, when the caller reads no progress.
+	for {
+		select {
+		case step := <-w.progress:
+			onStep(step)
+		case response := <-w.answer:
+			if response.Error != nil {
+				return remoteError(response.Error)
 			}
+			if result == nil {
+				return nil
+			}
+			return json.Unmarshal(response.Payload, result)
+		case <-s.done:
+			return fmt.Errorf("%w: %v", ErrDisconnected, s.cause())
+		case <-ctx.Done():
+			// Best effort: the agent may already be finishing. Its late response is
+			// dropped because this request is no longer pending.
+			if cancel, err := protocol.Encode(protocol.Message{Version: protocol.Version, ID: id, Type: protocol.TypeCancel}); err == nil {
+				if err := s.writeFrame(cancel); err != nil {
+					s.close(err)
+				}
+			}
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return fmt.Errorf("%w: %s after %s", ErrTimeout, operation, timeout)
+			}
+			return ctx.Err()
 		}
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return fmt.Errorf("%w: %s after %s", ErrTimeout, operation, timeout)
-		}
-		return ctx.Err()
 	}
 }
 

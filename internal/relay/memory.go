@@ -196,7 +196,7 @@ func (m *Memory) StackImages(context.Context, string, string, bool) (protocol.St
 	return protocol.StackImages{}, errStacksUnsupported
 }
 
-func (m *Memory) UpdateStackService(context.Context, string, string, string) (protocol.StackOperation, error) {
+func (m *Memory) UpdateStackService(context.Context, string, string, string, func(string)) (protocol.StackOperation, error) {
 	return protocol.StackOperation{}, errStacksUnsupported
 }
 

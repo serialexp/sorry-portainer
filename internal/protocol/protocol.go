@@ -60,7 +60,18 @@ const (
 	// TypeCancel asks the agent to cancel the in-flight request with the same ID.
 	// Cancellation is best effort; the server has already stopped waiting.
 	TypeCancel = "cancel"
+	// TypeProgress tells the server how far the in-flight request with the
+	// same ID got; its payload is a Progress. The agent sends any number
+	// before the request's response, and only for operations that report
+	// progress, which only servers that read it ask for. Progress is
+	// advisory: the server may drop all but the latest.
+	TypeProgress = "progress"
 )
+
+// Progress is the payload of a TypeProgress message.
+type Progress struct {
+	Step string `json:"step"`
+}
 
 // Error codes carried in Error.Code.
 const (
@@ -335,8 +346,15 @@ const (
 	ImageFailureUnreachable = "unreachable"
 )
 
+// Steps a stacks.update reports as progress.
+const (
+	UpdatePulling    = "pulling"
+	UpdateRecreating = "recreating"
+)
+
 // StackUpdateRequest pulls the image of one service and, when the stack
-// runs, recreates the service.
+// runs, recreates the service. The agent reports UpdatePulling, then
+// UpdateRecreating when it recreates.
 type StackUpdateRequest struct {
 	Name    string `json:"name"`
 	Service string `json:"service"`

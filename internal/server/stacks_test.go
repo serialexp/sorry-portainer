@@ -31,6 +31,8 @@ type stackRelay struct {
 	// "stack/service" of the last update.
 	imagesForced bool
 	updated      string
+	// steps are reported, in order, by each update.
+	steps []string
 }
 
 func (r *stackRelay) Hosts() []protocol.HostInfo { return nil }
@@ -84,8 +86,11 @@ func (r *stackRelay) StackImages(_ context.Context, _ string, name string, force
 	r.imagesForced = force
 	return protocol.StackImages{Name: name, Services: []protocol.ServiceImage{{Service: "app", Status: protocol.ImageBehind}}}, r.err
 }
-func (r *stackRelay) UpdateStackService(_ context.Context, _ string, name, service string) (protocol.StackOperation, error) {
+func (r *stackRelay) UpdateStackService(_ context.Context, _ string, name, service string, onStep func(string)) (protocol.StackOperation, error) {
 	r.updated = name + "/" + service
+	for _, step := range r.steps {
+		onStep(step)
+	}
 	return protocol.StackOperation{Name: name, Operation: "update", Success: true}, r.err
 }
 func (r *stackRelay) SyncSecrets(context.Context, string, protocol.SecretSync) (protocol.SecretSyncResult, error) {
@@ -197,6 +202,37 @@ func TestStackImagesHTTP(t *testing.T) {
 	}
 }
 
+// An update that reports steps answers with server-sent events: each step,
+// then the result, or the failure with the status it would have had.
+func TestStackUpdateStreamsItsSteps(t *testing.T) {
+	relay := &stackRelay{steps: []string{protocol.UpdatePulling, protocol.UpdateRecreating}}
+	s := New(testSessions, relay, nil)
+	w := authenticatedStackRequest(t, s, http.MethodPost, "/api/hosts/host/stacks/web/update", `{"service":"app"}`)
+	want := "event: step\ndata: {\"step\":\"pulling\"}\n\n" +
+		"event: step\ndata: {\"step\":\"recreating\"}\n\n" +
+		"event: result\ndata: {\"name\":\"web\",\"operation\":\"update\",\"success\":true"
+	if w.Code != http.StatusOK || w.Header().Get("Content-Type") != "text/event-stream" || !strings.HasPrefix(w.Body.String(), want) {
+		t.Fatalf("update = %d %q:\n%s", w.Code, w.Header().Get("Content-Type"), w.Body.String())
+	}
+	if !w.Flushed {
+		t.Fatal("events were not flushed")
+	}
+
+	relay.err = fmt.Errorf("%w: lost", relayDisconnected())
+	w = authenticatedStackRequest(t, s, http.MethodPost, "/api/hosts/host/stacks/web/update", `{"service":"app"}`)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "event: error\ndata: {\"message\":") ||
+		!strings.Contains(w.Body.String(), `"status":503}`) || strings.Contains(w.Body.String(), "event: result") {
+		t.Fatalf("failed update = %d:\n%s", w.Code, w.Body.String())
+	}
+
+	// Before any step the failure is an ordinary HTTP error.
+	relay.steps = nil
+	w = authenticatedStackRequest(t, s, http.MethodPost, "/api/hosts/host/stacks/web/update", `{"service":"app"}`)
+	if w.Code != http.StatusServiceUnavailable || w.Header().Get("Content-Type") == "text/event-stream" {
+		t.Fatalf("update failing at once = %d %q", w.Code, w.Header().Get("Content-Type"))
+	}
+}
+
 func TestVolumeDetailHTTP(t *testing.T) {
 	relay := &stackRelay{}
 	s := New(testSessions, relay, nil)
@@ -276,3 +312,7 @@ func TestRelayFailureStatuses(t *testing.T) {
 		})
 	}
 }
+
+// relayDisconnected is relay.ErrDisconnected, for tests whose fake shadows
+// the package name.
+func relayDisconnected() error { return relay.ErrDisconnected }

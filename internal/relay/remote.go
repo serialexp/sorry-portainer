@@ -294,10 +294,15 @@ func (r *Remote) StackImages(ctx context.Context, hostID, name string, force boo
 }
 
 // UpdateStackService pulls one service's image and recreates the service
-// when the stack runs.
-func (r *Remote) UpdateStackService(ctx context.Context, hostID, name, service string) (protocol.StackOperation, error) {
+// when the stack runs. onStep, when not nil, is told each step as the agent
+// starts it (protocol.UpdatePulling, protocol.UpdateRecreating).
+func (r *Remote) UpdateStackService(ctx context.Context, hostID, name, service string, onStep func(string)) (protocol.StackOperation, error) {
+	s, err := r.session(hostID)
+	if err != nil {
+		return protocol.StackOperation{}, err
+	}
 	var out protocol.StackOperation
-	err := r.call(ctx, hostID, "stacks.update", protocol.StackUpdateRequest{Name: name, Service: service}, &out, StackOperationTimeout)
+	err = s.callWithProgress(ctx, "stacks.update", protocol.StackUpdateRequest{Name: name, Service: service}, &out, StackOperationTimeout, onStep)
 	return out, err
 }
 

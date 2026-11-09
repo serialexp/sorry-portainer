@@ -28,6 +28,7 @@ import {
 import {
   checkedText,
   imageStatusLine,
+  updateStepText,
   registryChecked,
   updateDetail,
   updatePrompt,
@@ -132,7 +133,8 @@ function ServiceTable(props: { name: string; services: StackService[] }) {
 function ImageStatus(props: { service: string }) {
   const line = () => {
     const img = serviceImage(props.service);
-    if (imageUpdates.updating === props.service) return { text: "Updating…", tone: "warn busy", title: "" };
+    if (imageUpdates.updating === props.service)
+      return { text: updateStepText(imageUpdates.step), tone: "warn busy", title: "" };
     if (imageUpdates.checking && img && registryChecked(img.status))
       return { text: "Checking…", tone: "muted busy", title: "" };
     if (!img) return imageUpdates.loading ? { text: "Checking…", tone: "muted busy", title: "" } : undefined;

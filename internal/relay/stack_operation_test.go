@@ -31,7 +31,7 @@ func TestFailedStackOperationKeepsItsOutput(t *testing.T) {
 	agent := &Agent{HostID: "jp1", Stacks: manager}
 	payload, _ := json.Marshal(protocol.StackSave{Name: "web"})
 	for _, operation := range []string{"stacks.up", "stacks.down", "stacks.restart"} {
-		value, err := agent.handle(ctx, operation, payload)
+		value, err := agent.handle(ctx, operation, payload, nil)
 		if err != nil {
 			t.Fatalf("%s = %v, want a result", operation, err)
 		}
@@ -47,7 +47,7 @@ func TestFailedStackOperationKeepsItsOutput(t *testing.T) {
 func TestUnknownStackOperationIsAnError(t *testing.T) {
 	agent := &Agent{HostID: "jp1", Stacks: stacks.New(t.TempDir(), "jp1-", failingCompose{})}
 	payload, _ := json.Marshal(protocol.StackSave{Name: "ghost"})
-	if value, err := agent.handle(context.Background(), "stacks.up", payload); err == nil {
+	if value, err := agent.handle(context.Background(), "stacks.up", payload, nil); err == nil {
 		t.Fatalf("up of a missing stack = %+v", value)
 	}
 }
@@ -60,7 +60,7 @@ func TestSaveKeepsOrClearsTheEnvironment(t *testing.T) {
 	ctx := context.Background()
 	save := func(body string) protocol.StackSaved {
 		t.Helper()
-		value, err := agent.handle(ctx, "stacks.save", json.RawMessage(body))
+		value, err := agent.handle(ctx, "stacks.save", json.RawMessage(body), nil)
 		if err != nil {
 			t.Fatalf("save %s: %v", body, err)
 		}

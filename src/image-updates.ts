@@ -56,11 +56,55 @@ export async function getStackImages(
   return (await response.json()) as StackImages;
 }
 
-/** Pulls a service's image and, when the stack runs, recreates the service. */
+/** The steps an update reports as it starts them (see protocol.UpdatePulling). */
+export type UpdateStep = "pulling" | "recreating";
+
+/**
+ * Reads the update's server-sent events: each step for onStep, then the
+ * result, or the failure the server reports after the stream started.
+ */
+async function readUpdateEvents(
+  body: ReadableStream<Uint8Array>,
+  onStep: (step: UpdateStep) => void,
+): Promise<StackOperation> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    for (let end = buffer.indexOf("\n\n"); end >= 0; end = buffer.indexOf("\n\n")) {
+      const block = buffer.slice(0, end);
+      buffer = buffer.slice(end + 2);
+      let event = "message";
+      let data = "";
+      for (const line of block.split("\n")) {
+        if (line.startsWith("event:")) event = line.slice(6).trim();
+        else if (line.startsWith("data:")) data += line.slice(5).trim();
+      }
+      if (event === "step") onStep((JSON.parse(data) as { step: UpdateStep }).step);
+      else if (event === "result") {
+        await reader.cancel();
+        return JSON.parse(data) as StackOperation;
+      } else if (event === "error") {
+        await reader.cancel();
+        throw new Error((JSON.parse(data) as { message: string }).message);
+      }
+    }
+  }
+  throw new Error("The connection ended before the update finished; check the stack before trying again.");
+}
+
+/**
+ * Pulls a service's image and, when the stack runs, recreates the service.
+ * onStep is told each step as the agent starts it.
+ */
 export async function updateService(
   hostID: string,
   name: string,
   service: string,
+  onStep: (step: UpdateStep) => void = () => {},
   request: typeof fetch = fetch,
 ): Promise<StackOperation> {
   const response = await request(`${endpoint(hostID, name)}/update`, {
@@ -70,10 +114,18 @@ export async function updateService(
   });
   const failed = `Updating ${service} failed`;
   if (!response.ok) throw await failure(response, failed);
-  const result = (await response.json()) as StackOperation;
+  const streamed = response.headers?.get("Content-Type")?.startsWith("text/event-stream") && response.body;
+  const result = streamed ? await readUpdateEvents(streamed, onStep) : ((await response.json()) as StackOperation);
   const output = terminalText(result.output ?? "");
   if (!result.success) throw new StackOperationError(`${failed}.`, output);
   return { ...result, output };
+}
+
+/** The row's text while an update runs: the design's two steps. */
+export function updateStepText(step: UpdateStep | ""): string {
+  if (step === "pulling") return "Pulling new image…";
+  if (step === "recreating") return "Recreating container…";
+  return "Updating…";
 }
 
 /** "just now", "4 min ago", "1 hour ago", "3 days ago", "2 weeks ago", "5 months ago", "2 years ago". */

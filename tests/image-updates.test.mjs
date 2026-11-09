@@ -11,6 +11,7 @@ import {
   updateDetail,
   updatePrompt,
   updateService,
+  updateStepText,
   updatesLabel,
 } from "../src/image-updates.ts";
 import { StackOperationError } from "../src/stack-api.ts";
@@ -36,18 +37,87 @@ test("a page open asks the agent's cache, Check now forces a registry check", as
 
 test("an update posts the service and reports a failed run with its output", async () => {
   let sent;
-  const result = await updateService("h", "homes", "app", async (url, init) => {
+  const result = await updateService("h", "homes", "app", undefined, async (url, init) => {
     sent = { url, method: init.method, body: JSON.parse(init.body) };
     return ok({ name: "homes", operation: "update", success: true, output: "\x1b[32mpulled\x1b[0m" });
   });
   assert.deepEqual(sent, { url: "/api/hosts/h/stacks/homes/update", method: "POST", body: { service: "app" } });
   assert.equal(result.output, "pulled");
   await assert.rejects(
-    updateService("h", "homes", "app", async () => ok({ success: false, output: "unauthorized" })),
+    updateService("h", "homes", "app", undefined, async () => ok({ success: false, output: "unauthorized" })),
     (error) => error instanceof StackOperationError && error.message === "Updating app failed." && error.output === "unauthorized",
   );
-  await assert.rejects(updateService("h", "homes", "app", async () => failed(401)), UnauthorizedError);
-  await assert.rejects(updateService("h", "homes", "nope", async () => failed(502, `stack homes has no service "nope"`)), /no service/);
+  await assert.rejects(updateService("h", "homes", "app", undefined, async () => failed(401)), UnauthorizedError);
+  await assert.rejects(updateService("h", "homes", "nope", undefined, async () => failed(502, `stack homes has no service "nope"`)), /no service/);
+});
+
+const events = (...blocks) =>
+  new Response(blocks.map(([event, data]) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`).join(""), {
+    headers: { "Content-Type": "text/event-stream" },
+  });
+
+test("an update streams its steps, then its result", async () => {
+  const steps = [];
+  const result = await updateService(
+    "h",
+    "homes",
+    "app",
+    (step) => steps.push(step),
+    async () =>
+      events(
+        ["step", { step: "pulling" }],
+        ["step", { step: "recreating" }],
+        ["result", { name: "homes", operation: "update", success: true, output: "done" }],
+      ),
+  );
+  assert.deepEqual(steps, ["pulling", "recreating"]);
+  assert.equal(result.output, "done");
+
+  // An operation that ran and failed keeps its output.
+  await assert.rejects(
+    updateService("h", "homes", "app", undefined, async () =>
+      events(["step", { step: "pulling" }], ["result", { success: false, output: "pull denied" }]),
+    ),
+    (error) => error instanceof StackOperationError && error.output === "pull denied",
+  );
+  // A failure after the stream started, and a stream cut off before the end.
+  await assert.rejects(
+    updateService("h", "homes", "app", undefined, async () =>
+      events(["step", { step: "pulling" }], ["error", { message: "host disconnected", status: 503 }]),
+    ),
+    /host disconnected/,
+  );
+  await assert.rejects(
+    updateService("h", "homes", "app", undefined, async () => events(["step", { step: "pulling" }])),
+    /connection ended before the update finished/,
+  );
+});
+
+test("an event split across reads still parses", async () => {
+  const body = 'event: step\ndata: {"step":"pulling"}\n\nevent: result\ndata: {"success":true,"output":"ok"}\n\n';
+  const chunks = [body.slice(0, 7), body.slice(7, 40), body.slice(40)];
+  const stream = new ReadableStream({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(new TextEncoder().encode(chunk));
+      controller.close();
+    },
+  });
+  const steps = [];
+  const result = await updateService(
+    "h",
+    "s",
+    "app",
+    (step) => steps.push(step),
+    async () => new Response(stream, { headers: { "Content-Type": "text/event-stream" } }),
+  );
+  assert.deepEqual(steps, ["pulling"]);
+  assert.equal(result.output, "ok");
+});
+
+test("the updating row names the step", () => {
+  assert.equal(updateStepText(""), "Updating…");
+  assert.equal(updateStepText("pulling"), "Pulling new image…");
+  assert.equal(updateStepText("recreating"), "Recreating container…");
 });
 
 test("time ago reads in the largest whole unit", () => {

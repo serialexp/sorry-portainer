@@ -222,7 +222,8 @@ func (s *agentSession) start(ctx context.Context, request protocol.Message) {
 	go func() {
 		defer s.workers.Done()
 		defer s.cancel(request.ID)
-		value, err := s.agent.handle(opCtx, request.Operation, request.Payload)
+		report := func(step string) { s.progress(request.ID, step) }
+		value, err := s.agent.handle(opCtx, request.Operation, request.Payload, report)
 		if err != nil {
 			// The session is ending, which is what stopped the operation. Its
 			// cancellation error says nothing about the operation, and a reply
@@ -291,6 +292,16 @@ func (s *agentSession) writeFrame(data []byte) error {
 	return nil
 }
 
+// progress tells the server how far request id got. A failed write ends the
+// session, as for any other frame.
+func (s *agentSession) progress(id, step string) {
+	body, err := json.Marshal(protocol.Progress{Step: step})
+	if err != nil {
+		return
+	}
+	_ = s.write(protocol.Message{Version: protocol.Version, ID: id, Type: protocol.TypeProgress, Payload: body})
+}
+
 func (s *agentSession) respondError(id string, failure *protocol.Error) {
 	_ = s.write(protocol.Message{Version: protocol.Version, ID: id, Type: protocol.TypeResponse, Error: failure})
 }
@@ -309,8 +320,9 @@ func decodePayload[T any](payload json.RawMessage) (T, error) {
 	return value, nil
 }
 
-// handle runs one operation and returns its response value.
-func (a *Agent) handle(ctx context.Context, operation string, payload json.RawMessage) (any, error) {
+// handle runs one operation and returns its response value. Operations that
+// report progress call report with each step.
+func (a *Agent) handle(ctx context.Context, operation string, payload json.RawMessage, report func(step string)) (any, error) {
 	switch operation {
 	case "containers.list":
 		return a.Handler.Containers(ctx)
@@ -399,7 +411,7 @@ func (a *Agent) handle(ctx context.Context, operation string, payload json.RawMe
 		if err != nil {
 			return nil, err
 		}
-		return operationResult(a.Stacks.Update(ctx, request.Name, request.Service))
+		return operationResult(a.Stacks.Update(ctx, request.Name, request.Service, report))
 	}
 	request, err := decodePayload[protocol.StackSave](payload)
 	if err != nil {
