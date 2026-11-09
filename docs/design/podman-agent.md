@@ -2,7 +2,7 @@
 
 Status: partial — rootless development Compose smoke verified on Ubuntu-compatible 24.04; stack secrets, agent-restart container survival and reboot bring-up implemented; dedicated-user deployment outstanding
 Owner: Bart
-Last updated: 2026-09-25
+Last updated: 2026-11-09
 
 ## Implementation status
 
@@ -22,13 +22,14 @@ items as they land and move them to Done.
 - [x] **Stack secrets — setup integration.** `setup` runs `setup-containers-conf` (named `setup-hooks-conf` until 2026-11-06) as the agent user, writing `~/.config/containers/containers.conf.d/50-sorry-portainer.conf` with `hooks_dir`; the agent writes its hook JSON (default `~/.local/share/sorry-portainer/oci-hooks`, config `oci_hooks_dir`) and opens its secret socket at startup, and exits if either fails. Development agents get the drop-in through `CONTAINERS_CONF_OVERRIDE`. Details in `docs/design/stack-secrets.md`.
 - [x] **Agent stop kills stack containers.** Podman keeps `conmon` in the calling systemd unit's cgroup when `INVOCATION_ID` is set, so stopping or restarting the agent service killed every container the agent started (seen on the development agents 2026-09-24). Bart (2026-09-25): the agent unsets `INVOCATION_ID` at startup (`cmd/sorry-portainer-agent/main.go`), as Podman's API service does. Verified with a throwaway systemd unit and by restarting the development agent with a stack running.
 - [x] **Stacks come back after a host reboot (extended beyond the original plan).** Bart (2026-09-25): the agent records each stack's desired state and the boot it last came up in, and brings `up` stacks back after a reboot (secret stacks once the master pushes their secrets). Details in `docs/design/stack-secrets.md`, "Follow-up (2026-09-25)". This replaces enabling Podman's `podman-restart` service.
+- [x] **Container health and restart counts (extended beyond the original plan).** Bart (2026-11-08) chose to have the agent report them. `Container` and `StackService` carry `health` (the health check's result; Podman ≥4.7 appends it to `Status` as ` (word)`, which the agent splits off) and `restarts` (restart-policy restarts). Both fields are optional, so the protocol version is unchanged. The dashboard shows an Unhealthy chip, a Healthy/Starting note and "Restarted N×", and a stack with an unhealthy running service shows "Running, N unhealthy" in the warning tone.
+- [x] **Phase 1 — authenticated development API stack smoke.** Save and up (with stack secrets) were exercised through the running development agents, master and UI on 2026-09-24; `down` through the API ran live on 2026-11-09 (`health-demo` on local-a: containers removed, desired state recorded as `down`).
 
 ### Outstanding
 
 - [ ] **Phase 1 — deployment verification.** Test lifecycle under the dedicated service user and on Ubuntu 26.04; the development services currently run as Bart, not the newly provisioned service user.
-- [ ] **Phase 1 — authenticated development API stack smoke.** Save and up (with stack secrets) were exercised through the running development agents, master and UI on 2026-09-24; `down` through the API is still untested live (the UI now has a Stop button; its API call is covered by `tests/stack-api.test.mjs`).
 - [ ] **Decision needed — one-off services after a reboot.** Bringing a stack back also starts containers that had exited on purpose; Docker only restarts containers with a restart policy. Options in `docs/design/stack-secrets.md`.
-- [ ] **`down` leaves the project network.** podman-compose 1.0.6 does not remove `<project>_default`; stacks leak one network per `down`.
+- [ ] **`down` leaves the project network.** podman-compose 1.0.6 does not remove `<project>_default`; stacks leak one network per `down` (seen again 2026-11-09: `sorry-local-a-health-demo_default` stayed after `down`).
 
 ## Why this exists
 

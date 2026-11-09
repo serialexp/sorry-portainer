@@ -178,12 +178,44 @@ func supportedVersion(version string) bool {
 }
 
 type containerJSON struct {
-	ID      string   `json:"Id"`
-	Names   []string `json:"Names"`
-	Image   string   `json:"Image"`
-	ImageID string   `json:"ImageID"`
-	State   string   `json:"State"`
-	Status  string   `json:"Status"`
+	ID       string   `json:"Id"`
+	Names    []string `json:"Names"`
+	Image    string   `json:"Image"`
+	ImageID  string   `json:"ImageID"`
+	State    string   `json:"State"`
+	Status   string   `json:"Status"`
+	Restarts int      `json:"Restarts"`
+}
+
+// container is item as the protocol reports it, under name.
+func (item *containerJSON) container(name string) protocol.Container {
+	status, health := splitHealth(item.Status)
+	return protocol.Container{ID: item.ID, Name: name, Image: item.Image, State: item.State,
+		Status: status, Health: health, Restarts: item.Restarts}
+}
+
+// splitHealth separates the health check's result from a status in
+// `podman ps --format json`, which since Podman 4.7 is the human-readable
+// status with the result appended in parentheses: "Up 2 hours (unhealthy)".
+// The result is one lowercase word; anything else stays part of the status.
+func splitHealth(status string) (rest, health string) {
+	if !strings.HasSuffix(status, ")") {
+		return status, ""
+	}
+	i := strings.LastIndex(status, " (")
+	if i < 0 {
+		return status, ""
+	}
+	word := status[i+2 : len(status)-1]
+	if word == "" {
+		return status, ""
+	}
+	for _, r := range word {
+		if r < 'a' || r > 'z' {
+			return status, ""
+		}
+	}
+	return status[:i], word
 }
 
 func (c *Client) Containers(ctx context.Context) ([]protocol.Container, error) {
@@ -205,7 +237,7 @@ func (c *Client) Containers(ctx context.Context) ([]protocol.Container, error) {
 		if c.prefix != "" && !strings.HasPrefix(name, c.prefix) {
 			continue
 		}
-		out = append(out, protocol.Container{ID: item.ID, Name: name, Image: item.Image, State: item.State, Status: item.Status})
+		out = append(out, item.container(name))
 	}
 	return out, nil
 }
@@ -304,7 +336,7 @@ func (c *Client) volumeMounts(ctx context.Context) (map[string]volumeUsage, erro
 		item := &items[i]
 		name := containerName(item)
 		byID[item.ID] = owner{
-			Container: protocol.Container{ID: item.ID, Name: name, Image: item.Image, State: item.State, Status: item.Status},
+			Container: item.container(name),
 			inPrefix:  c.prefix == "" || strings.HasPrefix(name, c.prefix),
 		}
 		args = append(args, item.ID)
@@ -640,20 +672,26 @@ type ProjectContainer struct {
 	Project string
 	Image   string
 	State   string
-	// Status is Podman's human-readable status, for example "Up 2 hours".
+	// Status is Podman's human-readable status, for example "Up 2 hours",
+	// without the health check's result, which is Health.
 	Status string
+	// Health is the health check's result, empty without a health check.
+	Health string
+	// Restarts counts restarts by the container's restart policy.
+	Restarts int
 	// Pid is the container's main process on the host, 0 when not running.
 	Pid int
 }
 
 type projectContainerJSON struct {
-	ID     string            `json:"Id"`
-	Names  []string          `json:"Names"`
-	Image  string            `json:"Image"`
-	State  string            `json:"State"`
-	Status string            `json:"Status"`
-	Pid    int               `json:"Pid"`
-	Labels map[string]string `json:"Labels"`
+	ID       string            `json:"Id"`
+	Names    []string          `json:"Names"`
+	Image    string            `json:"Image"`
+	State    string            `json:"State"`
+	Status   string            `json:"Status"`
+	Restarts int               `json:"Restarts"`
+	Pid      int               `json:"Pid"`
+	Labels   map[string]string `json:"Labels"`
 }
 
 const composeProjectLabel = "com.docker.compose.project"
@@ -698,15 +736,18 @@ func (c *Client) composeContainers(ctx context.Context, filter string) (map[stri
 		if c.prefix != "" && !strings.HasPrefix(name, c.prefix) {
 			continue
 		}
+		status, health := splitHealth(item.Status)
 		out[project] = append(out[project], ProjectContainer{
-			ID:      item.ID,
-			Name:    name,
-			Service: item.Labels["com.docker.compose.service"],
-			Project: project,
-			Image:   item.Image,
-			State:   item.State,
-			Status:  item.Status,
-			Pid:     item.Pid,
+			ID:       item.ID,
+			Name:     name,
+			Service:  item.Labels["com.docker.compose.service"],
+			Project:  project,
+			Image:    item.Image,
+			State:    item.State,
+			Status:   status,
+			Health:   health,
+			Restarts: item.Restarts,
+			Pid:      item.Pid,
 		})
 	}
 	return out, nil

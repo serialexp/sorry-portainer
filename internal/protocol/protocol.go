@@ -157,12 +157,20 @@ type SecretSyncResult struct {
 type SecretRetain struct {
 	Stacks []string `json:"stacks"`
 }
+
+// Container is one container as Podman lists it. Status is Podman's
+// human-readable status without the health result ("Up 2 hours"). Health is
+// the health check's result ("healthy", "unhealthy", "starting", ...), empty
+// for a container without a health check. Restarts counts restarts by the
+// container's restart policy.
 type Container struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Image  string `json:"image"`
-	State  string `json:"state"`
-	Status string `json:"status"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Image    string `json:"image"`
+	State    string `json:"state"`
+	Status   string `json:"status"`
+	Health   string `json:"health,omitempty"`
+	Restarts int    `json:"restarts,omitempty"`
 }
 type StartRequest struct {
 	ContainerID string `json:"container_id"`
@@ -199,13 +207,15 @@ type Stack struct {
 // StackService is one container of a stack's service, or the service itself
 // when it has none. State is Podman's container state ("running", "exited",
 // ...), "absent" for a service with no container, or "unknown" when the agent
-// cannot read Podman.
+// cannot read Podman. Status, Health and Restarts are as in Container.
 type StackService struct {
 	Service   string `json:"service"`
 	Container string `json:"container,omitempty"`
 	Image     string `json:"image,omitempty"`
 	State     string `json:"state"`
 	Status    string `json:"status,omitempty"`
+	Health    string `json:"health,omitempty"`
+	Restarts  int    `json:"restarts,omitempty"`
 }
 
 // StackSaved answers a save: the saved stack and, when the save changed the

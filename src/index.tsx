@@ -14,6 +14,7 @@ import {
   toggleContainer,
 } from "./fleet-store";
 import { EnrollmentPage } from "./enrollment-ui";
+import { HealthNote } from "./health-note";
 import { enrollmentPath, hostPath, parseHostPath } from "./host-route";
 import { HostSecretWarnings, SecretStoreBanner } from "./secrets-ui";
 import { StackDetail, StackEditor, StackList } from "./stacks-ui";
@@ -328,9 +329,12 @@ function HostPage() {
                       </div>
                     </div>
                     <span class="chip-code">{container.image}</span>
-                    <span class={`state ${running() ? "running" : "stopped"}`}>
-                      <i class={`dot ${running() ? "green" : "grey"}`}></i>
-                      {running() ? "Running" : "Stopped"}
+                    <span class="state-line">
+                      <span class={`state ${running() ? "running" : "stopped"}`}>
+                        <i class={`dot ${running() ? "green" : "grey"}`}></i>
+                        {running() ? "Running" : "Stopped"}
+                      </span>
+                      <HealthNote state={container.state} health={container.health} restarts={container.restarts} />
                     </span>
                     <span class="cell-value">{running() ? container.status : "—"}</span>
                     <div class="cell-actions">

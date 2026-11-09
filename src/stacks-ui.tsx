@@ -2,8 +2,9 @@ import { A, useLocation, useNavigate } from "@solidjs/router";
 import { createEffect, createSignal, For, Show } from "solid-js";
 import { filteredStacks, fleet, loadStacks, searchTerm, sessionEnded } from "./fleet-store";
 import { editStackPath, hostPath, newStackPath, parseHostPath, stackPath } from "./host-route";
+import { HealthNote } from "./health-note";
 import { StackSecretsPanel } from "./secrets-ui";
-import { type StackRunState, type StackService, stackRunState } from "./stack-state";
+import { type StackRunState, type StackService, serviceStateLabel, stackRunState } from "./stack-state";
 import { setReferencedSecrets } from "./secrets-store";
 import {
   createStack,
@@ -36,12 +37,13 @@ function ServiceTable(props: { name: string; services: StackService[] }) {
   );
 }
 
-/** The chip style for a stack's run state; partial and invalid need attention. */
+/** The chip style for a stack's run state; partial, degraded and invalid need attention. */
 function runChipClass(tone: StackRunState["tone"]): string {
   switch (tone) {
     case "running":
       return "state";
     case "partial":
+    case "degraded":
     case "invalid":
       return "warn-chip";
     default:
@@ -51,18 +53,6 @@ function runChipClass(tone: StackRunState["tone"]): string {
 
 /** One service row of a stack card: its container, image and state. */
 function ServiceRow(props: { service: StackService }) {
-  const label = () => {
-    switch (props.service.state) {
-      case "running":
-        return "Running";
-      case "absent":
-        return "Not created";
-      case "unknown":
-        return "Unknown";
-      default:
-        return props.service.state;
-    }
-  };
   return (
     <div class="stack-service-row" role="row">
       <span class="stack-service-name" role="cell">
@@ -75,7 +65,12 @@ function ServiceRow(props: { service: StackService }) {
         {props.service.image || "—"}
       </span>
       <span role="cell">
-        <span class={props.service.state === "running" ? "state" : "state stopped"}>{label()}</span>
+        <span class="state-line">
+          <span class={props.service.state === "running" ? "state" : "state stopped"}>
+            {serviceStateLabel(props.service.state)}
+          </span>
+          <HealthNote state={props.service.state} health={props.service.health} restarts={props.service.restarts} />
+        </span>
         <Show when={props.service.status}>
           <small class="stack-service-status">{props.service.status}</small>
         </Show>

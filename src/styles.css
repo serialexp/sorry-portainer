@@ -624,6 +624,25 @@ h2 {
 .state.exited .dot {
   background: var(--stopped-dot);
 }
+.state-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.health-note {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.health-note.healthy {
+  color: var(--green-ink);
+}
+.restart-note {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--warn-ink);
+}
 .warn-chip {
   padding: 4px 10px;
   border-radius: 999px;

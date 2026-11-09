@@ -56,6 +56,27 @@ func TestServicesReportContainerStates(t *testing.T) {
 	}
 }
 
+func TestServicesReportHealthAndRestarts(t *testing.T) {
+	m := New(t.TempDir(), "agent", &recordingExecutor{})
+	if _, err := m.Save(context.Background(), "web", twoServices, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	m.EnableRuntimeStatus(&fakeLister{containers: map[string][]podman.ProjectContainer{
+		m.project("web"): {
+			{Name: "agent-web-web-1", Service: "web", Image: "caddy:latest", State: "running", Status: "Up 2 hours", Health: "unhealthy", Restarts: 3},
+			{Name: "agent-web-db-1", Service: "db", Image: "postgres:16", State: "running", Status: "Up 2 hours", Health: "healthy"},
+		},
+	}})
+	want := []protocol.StackService{
+		{Service: "web", Container: "agent-web-web-1", Image: "caddy:latest", State: "running", Status: "Up 2 hours", Health: "unhealthy", Restarts: 3},
+		{Service: "db", Container: "agent-web-db-1", Image: "postgres:16", State: "running", Status: "Up 2 hours", Health: "healthy"},
+	}
+	stacks, err := m.List(context.Background())
+	if err != nil || len(stacks) != 1 || !reflect.DeepEqual(stacks[0].Services, want) {
+		t.Fatalf("services = %#v, %v", stacks, err)
+	}
+}
+
 func TestServicesWithSeveralContainersListEachOne(t *testing.T) {
 	m := New(t.TempDir(), "agent", &recordingExecutor{})
 	if _, err := m.Save(context.Background(), "web", "services: {app: {image: example}}", nil, nil); err != nil {

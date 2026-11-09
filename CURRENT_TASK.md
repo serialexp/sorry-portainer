@@ -1,4 +1,4 @@
-# Current task: move jp1 from Docker to Podman 6 — phases 1–3 done (switched 2026-11-08); next, the reboot experiment and phase 4
+# Current task: move jp1 from Docker to Podman 6 — phases 1–3 done (switched 2026-11-08); next, the reboot experiment and phase 4. Container health in the dashboard is done, not released.
 
 ## Podman 6 packages and the jp1 move (2026-11-06)
 
@@ -43,6 +43,12 @@
   - jp1's local inventory sets `sorry_portainer_dashboard_route: loopback` and `sorry_portainer_agent_unprivileged_port_start: 80`.
   - Docker still runs with the 20 stack containers stopped (`/root/sp-import/docker-stopped.txt`), the two foundry containers at `restart=no` (were `always`), and Portainer up but unrouted.
   - Rollback: Podman stacks down, `move_volumes.py rollback --all`, route back to `docker`, then start the Docker containers.
+- **Container health and restart counts (2026-11-09), not released.** Bart chose "option 2": the agent parses Podman's health result into its own field. Wheat change "Agent and dashboard: container health and restart counts":
+  - Protocol: `Container` and `StackService` gain `health` (healthy, unhealthy, starting, ...; empty without a health check) and `restarts` (restart-policy restarts). Both are `omitempty`, so older agents and masters interoperate (no protocol version bump). `Status` no longer carries the ` (unhealthy)` suffix.
+  - Agent: `splitHealth` in `internal/podman/adapter.go` takes the trailing ` (word)` off Podman's status (≥4.7 appends it); `Restarts` comes from `podman ps` and the compose listing.
+  - Dashboard: `HealthNote` (`src/health-note.tsx`) shows an Unhealthy warning chip, a muted Healthy/Starting note and "Restarted N×" on the host containers table and stack service rows. A stack whose running services include an unhealthy one is "Running, N unhealthy" in the warning tone (`degraded`). Restart counts don't change the stack's tone.
+  - Also fixed: stack service rows showed Podman's raw lowercase state ("exited"); `serviceStateLabel` capitalizes it.
+  - Go tests (race), 62 frontend tests, tsc and the build pass. Dev check on local-a with a throwaway `health-demo` stack (failing check, passing check, crash-looping service), now down and left saved. This workstation's user systemd refuses Podman's healthcheck timers (`/run/user/1000/systemd/private: connection refused`), so the checks were run by hand with `podman healthcheck run`; jp1's timers do run.
 - Next: the reboot experiment (ask Bart before rebooting jp1), then phase 4. Pre-existing unhealthy checks (groovewhale web, homes mysql) are in TODO.md.
 
   Still open: the CLAUDE.md native-packages rule, and deleting hel1's `/etc/sub[ug]id.sp-backup` and jp1's `/root/sp-import`.
