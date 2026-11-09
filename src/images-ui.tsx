@@ -1,4 +1,5 @@
 import { A, useLocation, useNavigate } from "@solidjs/router";
+import { BackIcon } from "./icons";
 import { createEffect, createSignal, For, Show } from "solid-js";
 import { ContainerChip } from "./container-chip";
 import { formatBytes } from "./format";
@@ -189,7 +190,7 @@ export function ImageDetailPage() {
       <div class="stack-detail-head">
         <div class="stack-detail-title">
           <A class="stack-detail-back" href={hostPath(hostID(), "images")}>
-            ← All images
+            <BackIcon /> All images
           </A>
           <Show when={image()}>
             {(current) => {

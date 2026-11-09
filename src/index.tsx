@@ -10,13 +10,23 @@ import {
   setQuery,
   showHost,
   signIn,
-  signOut,
   toggleContainer,
 } from "./fleet-store";
 import { EnrollmentPage } from "./enrollment-ui";
 import { HealthNote } from "./health-note";
-import { enrollmentPath, hostPath, parseHostPath } from "./host-route";
-import { CreateStoreCard, HostSecretWarnings, SecretStoreSidebar } from "./secrets-ui";
+import { enrollmentPath, hostPath, newStackPath, parseHostPath } from "./host-route";
+import {
+  ArrowRightIcon,
+  BrandMark,
+  ContainerIcon,
+  EyeIcon,
+  EyeSlashIcon,
+  PlusIcon,
+  SearchIcon,
+  ServerIcon,
+} from "./icons";
+import { CreateStoreCard, HostSecretWarnings } from "./secrets-ui";
+import { Sidebar } from "./sidebar";
 import { StackDetail, StackEditor, StackList } from "./stacks-ui";
 import { VolumeDetailPage, VolumeList } from "./volumes-ui";
 import { ImageDetailPage, ImageList } from "./images-ui";
@@ -52,76 +62,63 @@ function Dashboard() {
   const heading = () => pageHeading(location.pathname);
   return (
     <div class="app-shell">
-      <aside class="sidebar">
-        <div class="brand">
-          <span class="brand-mark">✦</span>
-          <span>
-            sorry,<strong>portainer</strong>
-          </span>
-        </div>
-        <A class="fleet-link" href="/">
-          ← All hosts
-        </A>
-        <A class="fleet-link fleet-link-next" href={enrollmentPath} activeClass="active">
-          Enrollment
-        </A>
-        <Show when={route()} fallback={<p class="sidebar-hint">Select a host to browse its resources.</p>}>
-          <div class="selected-host">
-            <p class="eyebrow">SELECTED HOST</p>
-            <strong>{selected()?.host_id ?? route()?.hostID}</strong>
-            <small>{selected()?.hostname ?? "Host not found"}</small>
-          </div>
-          <Show when={selected()}>
-            <nav aria-label="Host resources">
-              <A href={hostPath(fleet.selectedHost, "containers")} activeClass="active" end>
-                Containers <span>{fleet.containers.length}</span>
-              </A>
-              <A href={hostPath(fleet.selectedHost, "images")} activeClass="active" end>
-                Images <span>{fleet.images.length}</span>
-              </A>
-              <A href={hostPath(fleet.selectedHost, "volumes")} activeClass="active" end>
-                Volumes <span>{fleet.volumes.length}</span>
-              </A>
-              <A href={hostPath(fleet.selectedHost, "stacks")} classList={{ active: section() === "stacks" }}>
-                Stacks <span>{fleet.stacks.length}</span>
-              </A>
-            </nav>
-          </Show>
-        </Show>
-        <div class="sidebar-bottom">
-          <SecretStoreSidebar />
-          <div class="sidebar-footer">
-            <div class="pulse"></div>All systems nominal
-            <button class="text-button" onClick={() => void signOut()}>
-              Sign out
-            </button>
-          </div>
-        </div>
-      </aside>
+      <Sidebar />
       <main>
         <header>
           <div>
-            <p class="eyebrow">{heading().eyebrow}</p>
+            <Show when={heading().hostList && route()} fallback={<p class="eyebrow">{heading().eyebrow}</p>}>
+              {(current) => (
+                <nav class="breadcrumb" aria-label="Breadcrumb">
+                  <A href="/">Hosts</A>
+                  <span aria-hidden="true">/</span>
+                  <span>{current().hostID}</span>
+                </nav>
+              )}
+            </Show>
             <h1>{heading().title}</h1>
-            <p class="subtitle">{heading().subtitle}</p>
+            <Show when={heading().hostList && selected()} fallback={<p class="subtitle">{heading().subtitle}</p>}>
+              {(host) => (
+                <dl class="host-chips">
+                  <div>
+                    <dt>Hostname</dt>
+                    <dd>{host().hostname}</dd>
+                  </div>
+                  <div>
+                    <dt>Podman</dt>
+                    <dd>{host().engine_version}</dd>
+                  </div>
+                  <div>
+                    <dt>Prefix</dt>
+                    <dd class="mono">{host().prefix}</dd>
+                  </div>
+                </dl>
+              )}
+            </Show>
           </div>
           <div class="header-actions">
             <Show when={!route() && !enrolling()}>
               <A class="add-button solid" href={enrollmentPath}>
+                <PlusIcon />
                 Enroll host
               </A>
             </Show>
+            <Show when={section() === "stacks" && !route()?.action && selected()}>
+              <A class="add-button solid" href={newStackPath(fleet.selectedHost)}>
+                <PlusIcon />
+                New stack
+              </A>
+            </Show>
             <label class="search-box">
-              <span>⌕</span>
+              <SearchIcon />
               <input
+                type="search"
                 value={fleet.query}
                 onInput={(event) => setQuery(event.currentTarget.value)}
                 placeholder={heading().search}
-                aria-label="Search"
+                aria-label={heading().search}
               />
-              <kbd>⌘ K</kbd>
+              <kbd>⌘K</kbd>
             </label>
-            <div class="avatar">B</div>
           </div>
         </header>
         <Show when={fleet.notice}>
@@ -175,8 +172,18 @@ function Dashboard() {
     </div>
   );
 }
-/** The header text for the page at pathname. */
-function pageHeading(pathname: string): { eyebrow: string; title: string; subtitle: string; search: string } {
+/**
+ * The header text for the page at pathname. A host's list pages (hostList)
+ * show a breadcrumb back to the hosts and the host's chips instead of the
+ * eyebrow and subtitle.
+ */
+function pageHeading(pathname: string): {
+  eyebrow: string;
+  title: string;
+  subtitle: string;
+  search: string;
+  hostList?: boolean;
+} {
   if (pathname === enrollmentPath)
     return {
       eyebrow: "FLEET / ENROLLMENT",
@@ -194,21 +201,29 @@ function pageHeading(pathname: string): { eyebrow: string; title: string; subtit
     };
   const eyebrow = `${route.hostID} / PODMAN`;
   const search = `Search ${route.section}`;
+  const hostList = !route.action;
   switch (route.section) {
     case "images":
       return route.action === "view"
         ? { eyebrow, search, title: "Image", subtitle: `Image on ${route.hostID}'s Podman installation.` }
-        : { eyebrow, search, title: "Images", subtitle: "Images available on this host's Podman installation." };
+        : {
+            eyebrow,
+            search,
+            hostList,
+            title: "Images",
+            subtitle: "Images available on this host's Podman installation.",
+          };
     case "volumes":
       return route.action === "view"
         ? { eyebrow, search, title: "Volume", subtitle: `Persistent storage on ${route.hostID}.` }
-        : { eyebrow, search, title: "Volumes", subtitle: `Persistent storage owned by ${route.hostID}.` };
+        : { eyebrow, search, hostList, title: "Volumes", subtitle: `Persistent storage owned by ${route.hostID}.` };
     case "containers":
-      return { eyebrow, search, title: "Containers", subtitle: `Containers on ${route.hostID}.` };
+      return { eyebrow, search, hostList, title: "Containers", subtitle: `Containers on ${route.hostID}.` };
     case "stacks":
       return {
         eyebrow,
         search,
+        hostList,
         title:
           route.action === "new"
             ? "Create stack"
@@ -240,7 +255,7 @@ function Overview() {
                 <div class="host-card-top">
                   <div class="host-name">
                     <span class="host-icon" aria-hidden="true">
-                      ⌂
+                      <ServerIcon size={22} />
                     </span>
                     <div>
                       <strong>{host.host_id}</strong>
@@ -263,14 +278,14 @@ function Overview() {
                 </dl>
                 <div class="host-foot">
                   <span>Browse resources</span>
-                  {host.swap_active ? <span class="warn-chip">Swap active</span> : <span aria-hidden="true">→</span>}
+                  {host.swap_active ? <span class="warn-chip">Swap active</span> : <ArrowRightIcon />}
                 </div>
               </button>
             )}
           </For>
           <A class="enroll-tile" href={enrollmentPath}>
             <span class="host-icon" aria-hidden="true">
-              +
+              <PlusIcon size={20} />
             </span>
             <strong>Enroll a host</strong>
             <small>Create a one-time token, then run the agent's enroll command on the new machine.</small>
@@ -283,27 +298,7 @@ function Overview() {
 function HostPage() {
   return (
     <>
-      <Show when={selectedHost()}>
-        {(host) => (
-          <>
-            <section class="host-info-grid host-info-card">
-              <div>
-                <span>HOSTNAME</span>
-                <strong>{host().hostname}</strong>
-              </div>
-              <div>
-                <span>PODMAN</span>
-                <strong>{host().engine_version}</strong>
-              </div>
-              <div>
-                <span>CONTAINER PREFIX</span>
-                <strong>{host().prefix}</strong>
-              </div>
-            </section>
-            <HostSecretWarnings host={host()} />
-          </>
-        )}
-      </Show>
+      <Show when={selectedHost()}>{(host) => <HostSecretWarnings host={host()} />}</Show>
       <section class="panel resource-preview" aria-labelledby="containers-heading">
         <div class="panel-heading">
           <div>
@@ -331,7 +326,7 @@ function HostPage() {
                   <div class="data-row">
                     <div class="cell-name">
                       <span class="resource-icon" aria-hidden="true">
-                        ▣
+                        <ContainerIcon size={17} />
                       </span>
                       <div>
                         <strong>{container.name}</strong>
@@ -380,10 +375,8 @@ function Login() {
     <div class="login-page">
       <section class="login-hero" aria-hidden="true">
         <div class="brand">
-          <span class="brand-mark">✦</span>
-          <span>
-            sorry,<strong>portainer</strong>
-          </span>
+          <BrandMark />
+          <span>sorry,portainer</span>
         </div>
         <div class="login-copy">
           <span class="eyebrow">Welcome back</span>
@@ -425,20 +418,9 @@ function Login() {
                   onClick={() => setShowPassword(!showPassword())}
                   aria-label={showPassword() ? "Hide password" : "Show password"}
                 >
-                  <svg
-                    width="18"
-                    height="18"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    aria-hidden="true"
-                  >
-                    <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"></path>
-                    <circle cx="12" cy="12" r="3"></circle>
-                  </svg>
+                  <Show when={showPassword()} fallback={<EyeIcon />}>
+                    <EyeSlashIcon />
+                  </Show>
                 </button>
               </span>
             </label>
@@ -448,7 +430,7 @@ function Login() {
               </p>
             </Show>
             <button class="primary" type="submit" disabled={fleet.signingIn}>
-              {fleet.signingIn ? "Signing in…" : "Open dashboard"} <span>→</span>
+              {fleet.signingIn ? "Signing in…" : "Open dashboard"} <ArrowRightIcon size={16} />
             </button>
           </form>
           <small class="login-note">Demo mode opens if the master cannot be reached.</small>

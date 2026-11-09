@@ -11,7 +11,8 @@
   },
   "dependencies": {
     "@solidjs/router": "^0.15.4",
-    "solid-js": "^1.9.9"
+    "solid-js": "^1.9.9",
+    "solidjs-phosphor": "^2.1.7"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",

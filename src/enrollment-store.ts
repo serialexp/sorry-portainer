@@ -1,3 +1,4 @@
+import { createSignal } from "solid-js";
 import { createStore } from "solid-js/store";
 import {
   createToken,
@@ -43,6 +44,38 @@ const [enrollment, setEnrollment] = createStore<EnrollmentState>(initial());
 
 export { enrollment };
 
+// The sidebar's count of unused tokens. It lives apart from the page state,
+// which resets when the page closes. Each token drops out when it expires;
+// one an agent used drops out at the next load.
+const [tokenExpiries, setTokenExpiries] = createSignal<number[]>([]);
+let expiryTimer: ReturnType<typeof setTimeout> | undefined;
+
+/** How many tokens are issued and not yet used or expired. */
+export const outstandingTokenCount = () => tokenExpiries().length;
+
+function trackTokens(expiries: number[]) {
+  clearTimeout(expiryTimer);
+  const now = Date.now();
+  const left = expiries.filter((at) => at > now);
+  setTokenExpiries(left);
+  if (left.length) expiryTimer = setTimeout(() => trackTokens(tokenExpiries()), Math.min(...left) - now);
+}
+
+function countTokens(tokens: OutstandingToken[]) {
+  trackTokens(tokens.map((token) => Date.parse(token.expires_at)).filter((at) => !Number.isNaN(at)));
+}
+
+/** Loads the token count for the sidebar. A failure leaves the last count; the page shows its own errors. */
+export async function loadTokenCount() {
+  try {
+    countTokens(await listTokens());
+  } catch (cause) {
+    sessionEnded(cause);
+  }
+}
+
+onSessionEnd(() => trackTokens([]));
+
 // Bumped by resetEnrollment, so answers to requests made before it, above
 // all a token being issued, are dropped. Loads also drop older loads.
 let generation = 0;
@@ -72,7 +105,10 @@ export async function loadEnrollment() {
   setEnrollment({ loading: true, error: "" });
   try {
     const [hosts, tokens] = await Promise.all([listEnrolledHosts(), listTokens()]);
-    if (request === loadRequest) setEnrollment({ hosts, tokens, availability: "available" });
+    if (request === loadRequest) {
+      setEnrollment({ hosts, tokens, availability: "available" });
+      countTokens(tokens);
+    }
   } catch (cause) {
     if (request === loadRequest) failed(cause, "Could not load enrollment.");
   } finally {

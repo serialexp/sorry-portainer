@@ -1,4 +1,5 @@
 import { A, useLocation, useNavigate } from "@solidjs/router";
+import { BackIcon } from "./icons";
 import { createEffect, createSignal, For, Show } from "solid-js";
 import { ContainerChip } from "./container-chip";
 import { getVolume, type Volume, type VolumeDetail } from "./fleet-api";
@@ -169,7 +170,7 @@ export function VolumeDetailPage() {
       <div class="stack-detail-head">
         <div class="stack-detail-title">
           <A class="stack-detail-back" href={hostPath(hostID(), "volumes")}>
-            ← All volumes
+            <BackIcon /> All volumes
           </A>
           <h2 class="volume-title">{volume()?.name ?? name()}</h2>
           <Show when={volume()}>

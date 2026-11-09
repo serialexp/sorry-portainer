@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { canStart, serviceStateLabel, stackRunState } from "../src/stack-state.ts";
+import { canStart, serviceStateLabel, serviceSummary, stackPill, stackRunState } from "../src/stack-state.ts";
 
 const web = { service: "web", container: "app-web-1", state: "running" };
 const db = { service: "db", container: "app-db-1", state: "running" };
@@ -154,4 +154,39 @@ test("Start is offered unless every service already runs", () => {
   assert.equal(start([{ service: "web", state: "unknown" }]), true);
   assert.equal(start([]), true);
   assert.equal(start(undefined, "invalid"), true);
+});
+
+const pill = (services, status = "saved") => stackPill(stackRunState({ status, services }));
+
+test("the pill is green when every service is up", () => {
+  assert.deepEqual(pill([web, db]), { text: "2/2 up", tone: "up" });
+});
+
+test("the pill is grey when no service is up", () => {
+  assert.deepEqual(pill([{ ...web, state: "exited" }, { ...db, state: "absent" }]), { text: "0/2 up", tone: "down" });
+});
+
+test("the pill is amber when some services are up", () => {
+  assert.deepEqual(pill([web, { ...db, state: "exited" }]), { text: "1/2 up", tone: "partial" });
+});
+
+test("the pill keeps health notes and turns amber for them", () => {
+  assert.deepEqual(pill([{ ...web, health: "unhealthy" }, db]), { text: "2/2 up, 1 unhealthy", tone: "partial" });
+});
+
+test("a stack with no services shows 0/0 up in grey", () => {
+  assert.deepEqual(pill([]), { text: "0/0 up", tone: "down" });
+});
+
+test("a file that does not parse shows its label in amber", () => {
+  assert.deepEqual(pill([], "invalid"), { text: "Compose file does not parse", tone: "partial" });
+});
+
+test("an unknown state shows Unknown in grey", () => {
+  assert.deepEqual(pill([{ ...web, state: "unknown" }]), { text: "Unknown", tone: "down" });
+});
+
+test("the summary lists each service once, up when any container runs", () => {
+  const second = { service: "web", container: "app-web-2", state: "exited" };
+  assert.equal(serviceSummary([web, second, { ...db, state: "exited" }]), "web: up, db: down");
 });

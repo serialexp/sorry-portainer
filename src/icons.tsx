@@ -1,79 +1,86 @@
-// Stroke icons from the design, drawn in currentColor. All are decorative:
-// the text next to each says what it means.
+// Icons, from Phosphor (solidjs-phosphor). Every page imports them from
+// here, so the choice of glyph for each meaning lives in one place. All are
+// decorative: the text next to each says what it means. They draw in
+// currentColor; the class "icon" lets CSS place and colour them.
 
-import type { JSX } from "solid-js";
+import {
+  PhArrowLeftIcon,
+  PhArrowRightIcon,
+  PhCaretRightIcon,
+  PhClockIcon,
+  PhCubeIcon,
+  PhDatabaseIcon,
+  PhEyeIcon,
+  PhEyeSlashIcon,
+  PhHardDrivesIcon,
+  PhKeyIcon,
+  PhLockSimpleIcon,
+  PhLockSimpleOpenIcon,
+  PhMagnifyingGlassIcon,
+  PhPackageIcon,
+  PhPlayIcon,
+  PhPlusIcon,
+  PhProhibitIcon,
+  PhSquaresFourIcon,
+  PhStackSimpleIcon,
+  PhStopIcon,
+  PhWarningIcon,
+} from "solidjs-phosphor";
 
-function Icon(props: { size: number; children: JSX.Element; width?: number }) {
+type Props = { size?: number };
+
+export const LockIcon = (props: Props) => <PhLockSimpleIcon class="icon" size={props.size ?? 15} aria-hidden="true" />;
+export const UnlockedIcon = (props: Props) => (
+  <PhLockSimpleOpenIcon class="icon" size={props.size ?? 15} aria-hidden="true" />
+);
+/** No secret store at all. */
+export const NoLockIcon = (props: Props) => <PhProhibitIcon class="icon" size={props.size ?? 18} aria-hidden="true" />;
+export const KeyIcon = (props: Props) => <PhKeyIcon class="icon" size={props.size ?? 15} aria-hidden="true" />;
+export const ClockIcon = (props: Props) => <PhClockIcon class="icon" size={props.size ?? 13} aria-hidden="true" />;
+export const WarningIcon = (props: Props) => <PhWarningIcon class="icon" size={props.size ?? 16} aria-hidden="true" />;
+export const GridIcon = (props: Props) => <PhSquaresFourIcon class="icon" size={props.size ?? 16} aria-hidden="true" />;
+export const BackIcon = (props: Props) => <PhArrowLeftIcon class="icon" size={props.size ?? 15} aria-hidden="true" />;
+/** A host. */
+export const ServerIcon = (props: Props) => (
+  <PhHardDrivesIcon class="icon" size={props.size ?? 19} aria-hidden="true" />
+);
+export const ContainerIcon = (props: Props) => <PhCubeIcon class="icon" size={props.size ?? 16} aria-hidden="true" />;
+export const ImageIcon = (props: Props) => (
+  <PhStackSimpleIcon class="icon" size={props.size ?? 16} aria-hidden="true" />
+);
+export const VolumeIcon = (props: Props) => <PhDatabaseIcon class="icon" size={props.size ?? 16} aria-hidden="true" />;
+/** A Compose stack. */
+export const StackIcon = (props: Props) => <PhPackageIcon class="icon" size={props.size ?? 16} aria-hidden="true" />;
+/** The plus of a create button; the button's CSS colours it. */
+export const PlusIcon = (props: Props) => (
+  <PhPlusIcon class="icon" size={props.size ?? 14} weight="bold" aria-hidden="true" />
+);
+export const SearchIcon = (props: Props) => (
+  <PhMagnifyingGlassIcon class="icon" size={props.size ?? 16} aria-hidden="true" />
+);
+export const ChevronRightIcon = (props: Props) => (
+  <PhCaretRightIcon class="icon" size={props.size ?? 18} aria-hidden="true" />
+);
+export const ArrowRightIcon = (props: Props) => (
+  <PhArrowRightIcon class="icon" size={props.size ?? 18} aria-hidden="true" />
+);
+/** Filled; the button's CSS colours it. */
+export const PlayIcon = (props: Props) => (
+  <PhPlayIcon class="icon icon-fill" size={props.size ?? 12} weight="fill" aria-hidden="true" />
+);
+export const StopIcon = (props: Props) => (
+  <PhStopIcon class="icon icon-fill" size={props.size ?? 12} weight="fill" aria-hidden="true" />
+);
+export const EyeIcon = (props: Props) => <PhEyeIcon class="icon" size={props.size ?? 18} aria-hidden="true" />;
+export const EyeSlashIcon = (props: Props) => (
+  <PhEyeSlashIcon class="icon" size={props.size ?? 18} aria-hidden="true" />
+);
+
+/** The brand's four-point star. A logo, not an icon, so it stays the design's own shape. */
+export function BrandMark() {
   return (
-    <svg
-      class="icon"
-      width={props.size}
-      height={props.size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      stroke-width={props.width ?? 2}
-      stroke-linecap="round"
-      stroke-linejoin="round"
-      aria-hidden="true"
-    >
-      {props.children}
+    <svg class="brand-mark" width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 2C12.6 7.4 16.6 11.4 22 12C16.6 12.6 12.6 16.6 12 22C11.4 16.6 7.4 12.6 2 12C7.4 11.4 11.4 7.4 12 2Z" />
     </svg>
-  );
-}
-
-export function LockIcon(props: { size?: number }) {
-  return (
-    <Icon size={props.size ?? 15}>
-      <rect x="5" y="11" width="14" height="9" rx="2" />
-      <path d="M8 11V8a4 4 0 0 1 8 0v3" />
-    </Icon>
-  );
-}
-
-export function UnlockedIcon(props: { size?: number }) {
-  return (
-    <Icon size={props.size ?? 15}>
-      <rect x="5" y="11" width="14" height="9" rx="2" />
-      <path d="M8 11V8a4 4 0 0 1 7.5-2" />
-    </Icon>
-  );
-}
-
-/** A lock struck through: no secret store at all. */
-export function NoLockIcon(props: { size?: number }) {
-  return (
-    <Icon size={props.size ?? 18}>
-      <rect x="5" y="11" width="14" height="9" rx="2" />
-      <path d="M8 11V8a4 4 0 0 1 8 0v3" />
-      <path d="M3 3l18 18" />
-    </Icon>
-  );
-}
-
-export function KeyIcon(props: { size?: number }) {
-  return (
-    <Icon size={props.size ?? 15}>
-      <circle cx="8" cy="15" r="4" />
-      <path d="M11 12l9-9M17 6l3 3M15 8l2 2" />
-    </Icon>
-  );
-}
-
-export function ClockIcon(props: { size?: number }) {
-  return (
-    <Icon size={props.size ?? 13} width={2.2}>
-      <circle cx="12" cy="12" r="9" />
-      <path d="M12 7v5l3 2" />
-    </Icon>
-  );
-}
-
-export function WarningIcon(props: { size?: number }) {
-  return (
-    <Icon size={props.size ?? 16}>
-      <path d="M12 3l9.5 17h-19z" />
-      <path d="M12 10v4M12 17h.01" />
-    </Icon>
   );
 }

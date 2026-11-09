@@ -1,10 +1,19 @@
 import { A, useLocation, useNavigate } from "@solidjs/router";
-import { createEffect, createSignal, For, Show } from "solid-js";
+import { createEffect, createSignal, For, Match, Show, Switch } from "solid-js";
 import { filteredStacks, fleet, loadStacks, searchTerm, sessionEnded } from "./fleet-store";
 import { editStackPath, hostPath, newStackPath, parseHostPath, stackPath } from "./host-route";
 import { HealthNote } from "./health-note";
+import { BackIcon, ChevronRightIcon, PlayIcon, StackIcon, StopIcon } from "./icons";
 import { NoSecretStore, StackSecretsPanel, StackStoreNotice } from "./secrets-ui";
-import { type StackRunState, type StackService, canStart, serviceStateLabel, stackRunState } from "./stack-state";
+import {
+  type StackRunState,
+  type StackService,
+  canStart,
+  serviceStateLabel,
+  serviceSummary,
+  stackPill,
+  stackRunState,
+} from "./stack-state";
 import { secrets, setReferencedSecrets } from "./secrets-store";
 import {
   createStack,
@@ -112,25 +121,11 @@ export function createStackRunner() {
   return { busy, operationError, operationOutput, run, busyLabel };
 }
 
-/** The selected host's stacks. */
+/** The selected host's stacks, one row each. */
 export function StackList() {
   const { busy, operationError, operationOutput, run, busyLabel } = createStackRunner();
   return (
-    <section class="panel resource-page">
-      <div class="panel-heading">
-        <div>
-          <p class="eyebrow">{fleet.selectedHost} / STACKS</p>
-          <h2>Compose stacks</h2>
-        </div>
-        <div class="stack-actions">
-          <button class="add-button" type="button" onClick={() => loadStacks()} disabled={fleet.stacksLoading}>
-            Refresh
-          </button>
-          <A class="add-button" href={newStackPath(fleet.selectedHost)}>
-            Create stack
-          </A>
-        </div>
-      </div>
+    <>
       <Show when={fleet.stacksError || operationError()}>
         <p class="form-error" role="alert">
           {fleet.stacksError || operationError()}
@@ -139,102 +134,96 @@ export function StackList() {
       <Show when={operationOutput()}>
         <pre class="stack-output">{operationOutput()}</pre>
       </Show>
-      <Show
-        when={fleet.stacksLoading}
-        fallback={
-          <Show
-            when={filteredStacks().length}
-            fallback={
-              <div class="resource-empty">
-                {searchTerm() ? "No stacks match this search." : "No saved stacks on this host."}
-              </div>
-            }
-          >
-            <div class="stack-list">
+      <Show when={!fleet.stacksLoading} fallback={<div class="resource-empty">Loading stacks…</div>}>
+        <Switch
+          fallback={
+            <div class="empty-card">
+              <span class="empty-icon" aria-hidden="true">
+                <StackIcon size={24} />
+              </span>
+              <h3>No stacks on {fleet.selectedHost}</h3>
+              <p>Compose projects running on this host will show up here.</p>
+            </div>
+          }
+        >
+          <Match when={filteredStacks().length}>
+            <section class="stack-rows" aria-label={`Stacks on ${fleet.selectedHost}`}>
               <For each={filteredStacks()}>
                 {(stack) => {
-                  const runState = stackRunState(stack);
+                  const runState = () => stackRunState(stack);
+                  const pill = () => stackPill(runState());
                   return (
-                    <article class="stack-card" aria-label={`Stack ${stack.name}`}>
-                      <div class="stack-card-head">
-                        <span class="stack-card-icon" aria-hidden="true">
-                          <svg
-                            width="22"
-                            height="22"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="1.8"
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                          >
-                            <rect x="4" y="10" width="16" height="10" rx="2" />
-                            <path d="M6 6.5h12M8.5 3h7" />
-                          </svg>
+                    <div class="stack-row">
+                      <span class="stack-row-icon" aria-hidden="true">
+                        <StackIcon size={20} />
+                      </span>
+                      <div class="stack-row-title">
+                        <h2>
+                          <A href={stackPath(fleet.selectedHost, stack.name)}>{stack.name}</A>
+                        </h2>
+                        <span>
+                          {stack.project} · v{stack.version || 1}
                         </span>
-                        <div class="stack-card-title">
-                          <h3>
-                            <A href={stackPath(fleet.selectedHost, stack.name)}>{stack.name}</A>
-                          </h3>
-                          <span class="stack-card-meta">
-                            compose · {stack.project} · v{stack.version || 1}
-                          </span>
-                        </div>{" "}
-                        <span class={runChipClass(runState.tone)}>{runState.label}</span>
-                        <span class="stack-card-reboot">{rebootLabel(stack)}</span>
-                        <div class="stack-card-actions">
-                          <A class="add-button" href={editStackPath(fleet.selectedHost, stack.name)}>
-                            Edit
-                          </A>
-                          <Show when={canStart(runState)}>
-                            <button
-                              class="start"
-                              type="button"
-                              disabled={!!busy()}
-                              onClick={() => run(stack.name, "up")}
-                            >
-                              {busyLabel(stack.name, "up", "Start stack", "Starting…")}
-                            </button>
-                          </Show>
+                      </div>
+                      <span class={`stack-pill ${pill().tone}`} title={serviceSummary(stack.services ?? [])}>
+                        <span class="pill-dot" aria-hidden="true"></span>
+                        {pill().text}
+                      </span>
+                      <div class="stack-row-actions">
+                        <Show when={runState().running === 0}>
+                          <button
+                            class="start"
+                            type="button"
+                            disabled={!!busy()}
+                            aria-label={`Start ${stack.name}`}
+                            onClick={() => run(stack.name, "up")}
+                          >
+                            <PlayIcon />
+                            {busyLabel(stack.name, "up", "Start", "Starting…")}
+                          </button>
+                        </Show>
+                        <Show when={runState().running > 0}>
                           <button
                             class="stop"
                             type="button"
                             disabled={!!busy()}
+                            aria-label={`Stop ${stack.name}`}
                             onClick={() => run(stack.name, "down")}
                           >
-                            {busyLabel(stack.name, "down", "Stop stack", "Stopping…")}
+                            <StopIcon />
+                            {busyLabel(stack.name, "down", "Stop", "Stopping…")}
                           </button>
-                        </div>{" "}
+                        </Show>
+                        <A
+                          class="stack-row-open"
+                          href={stackPath(fleet.selectedHost, stack.name)}
+                          aria-label={`Open ${stack.name}`}
+                        >
+                          <ChevronRightIcon />
+                        </A>
                       </div>
-                      <Show when={stack.services?.length}>
-                        <ServiceTable name={stack.name} services={stack.services ?? []} />
-                      </Show>
-                      <Show when={runState.tone === "invalid"}>
-                        <p class="stack-card-waiting" role="status">
+                      <Show when={runState().tone === "invalid"}>
+                        <p class="stack-row-note" role="status">
                           The Compose file does not parse. Open Edit to fix it; the stack cannot start until it does.
                         </p>
                       </Show>
                       <Show when={stack.waiting}>
-                        <p class="stack-card-waiting" role="status">
+                        <p class="stack-row-note" role="status">
                           {stack.waiting}
                         </p>
                       </Show>
-                    </article>
+                    </div>
                   );
                 }}
               </For>
-            </div>
-          </Show>
-        }
-      >
-        <div class="resource-empty">Loading stacks…</div>
+            </section>
+          </Match>
+          <Match when={searchTerm()}>
+            <div class="no-matches">No stacks match that search.</div>
+          </Match>
+        </Switch>
       </Show>
-      <p class="stack-note">
-        {" "}
-        Start runs Podman Compose on this host, and the agent starts the stack again after the host reboots until you
-        stop it.
-      </p>
-    </section>
+    </>
   );
 }
 
@@ -354,7 +343,7 @@ export function StackDetail() {
       <div class="stack-detail-head">
         <div class="stack-detail-title">
           <A class="stack-detail-back" href={hostPath(hostID(), "stacks")}>
-            ← All stacks
+            <BackIcon /> All stacks
           </A>
           <Show when={stack()} fallback={<h2>{name()}</h2>}>
             {(current) => {
@@ -668,7 +657,9 @@ export function StackEditor() {
 
   return (
     <section class="panel resource-page stack-create">
-      <A href={hostPath(currentHost(), "stacks")}>← Back to stacks</A>
+      <A class="stack-detail-back" href={hostPath(currentHost(), "stacks")}>
+        <BackIcon /> Back to stacks
+      </A>
       <h2>{editedStack() ? `Edit ${editedStack()}` : `Create stack on ${currentHost()}`}</h2>
       <p class="subtitle">
         {editedStack()

@@ -94,3 +94,28 @@ export function serviceStateLabel(state: string): string {
 export function canStart(state: StackRunState): boolean {
   return !(state.total > 0 && state.running === state.total);
 }
+
+/**
+ * The stack list's pill: how many services are up, coloured green when all
+ * are, grey when none are and amber in between. Health notes ("1 unhealthy")
+ * follow the count, and a file that does not parse or an unknown state
+ * shows its label instead.
+ */
+export function stackPill(state: StackRunState): { text: string; tone: "up" | "down" | "partial" } {
+  if (state.tone === "invalid") return { text: state.label, tone: "partial" };
+  if (state.tone === "unknown") return { text: state.label, tone: "down" };
+  const notes = urgency
+    .filter((reason) => state[reason] > 0)
+    .map((reason) => `, ${state[reason]} ${reason}`)
+    .join("");
+  const text = `${state.running}/${state.total} up${notes}`;
+  if (notes || (state.running > 0 && state.running < state.total)) return { text, tone: "partial" };
+  return { text, tone: state.total > 0 && state.running === state.total ? "up" : "down" };
+}
+
+/** "web: up, db: down" for the pill's tooltip; a service is up when any of its containers runs. */
+export function serviceSummary(services: StackService[]): string {
+  const up = new Map<string, boolean>();
+  for (const s of services) up.set(s.service, (up.get(s.service) ?? false) || s.state === "running");
+  return [...up].map(([service, running]) => `${service}: ${running ? "up" : "down"}`).join(", ");
+}

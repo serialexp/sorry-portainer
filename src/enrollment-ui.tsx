@@ -1,4 +1,5 @@
 import { createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { ServerIcon } from "./icons";
 import {
   certificateState,
   type EnrolledHost,
@@ -248,7 +249,9 @@ function EnrolledHosts() {
               const state = () => certificateState(host, new Date());
               return (
                 <div class="resource-row">
-                  <span class="resource-icon">⌂</span>
+                  <span class="resource-icon" aria-hidden="true">
+                    <ServerIcon size={17} />
+                  </span>
                   <span class="resource-copy">
                     <strong>{host.host_id}</strong>
                     <small>
