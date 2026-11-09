@@ -4,7 +4,7 @@ import { filteredStacks, fleet, loadStacks, searchTerm, sessionEnded } from "./f
 import { editStackPath, hostPath, newStackPath, parseHostPath, stackPath } from "./host-route";
 import { HealthNote } from "./health-note";
 import { StackSecretsPanel } from "./secrets-ui";
-import { type StackRunState, type StackService, serviceStateLabel, stackRunState } from "./stack-state";
+import { type StackRunState, type StackService, canStart, serviceStateLabel, stackRunState } from "./stack-state";
 import { setReferencedSecrets } from "./secrets-store";
 import {
   createStack,
@@ -186,9 +186,16 @@ export function StackList() {
                           <A class="add-button" href={editStackPath(fleet.selectedHost, stack.name)}>
                             Edit
                           </A>
-                          <button class="start" type="button" disabled={!!busy()} onClick={() => run(stack.name, "up")}>
-                            {busyLabel(stack.name, "up", "Start stack", "Starting…")}
-                          </button>
+                          <Show when={canStart(runState)}>
+                            <button
+                              class="start"
+                              type="button"
+                              disabled={!!busy()}
+                              onClick={() => run(stack.name, "up")}
+                            >
+                              {busyLabel(stack.name, "up", "Start stack", "Starting…")}
+                            </button>
+                          </Show>
                           <button
                             class="stop"
                             type="button"
@@ -286,6 +293,12 @@ export function StackDetail() {
     void load();
   });
 
+  // Start stays available until the stack has loaded and while any service is not running.
+  const startOffered = () => {
+    const current = stack();
+    return !current || canStart(stackRunState(current));
+  };
+
   // Start or stop, then reload so the page shows what the stack is now.
   async function operate(operation: "up" | "down") {
     await runner.run(name(), operation);
@@ -365,9 +378,11 @@ export function StackDetail() {
           <A class="add-button" href={editStackPath(hostID(), name())}>
             Edit
           </A>
-          <button class="start" type="button" disabled={!!runner.busy() || !stack()} onClick={() => operate("up")}>
-            {runner.busyLabel(name(), "up", "Start stack", "Starting…")}
-          </button>
+          <Show when={startOffered()}>
+            <button class="start" type="button" disabled={!!runner.busy() || !stack()} onClick={() => operate("up")}>
+              {runner.busyLabel(name(), "up", "Start stack", "Starting…")}
+            </button>
+          </Show>
           <button class="stop" type="button" disabled={!!runner.busy() || !stack()} onClick={() => operate("down")}>
             {runner.busyLabel(name(), "down", "Stop stack", "Stopping…")}
           </button>

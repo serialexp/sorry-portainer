@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { serviceStateLabel, stackRunState } from "../src/stack-state.ts";
+import { canStart, serviceStateLabel, stackRunState } from "../src/stack-state.ts";
 
 const web = { service: "web", container: "app-web-1", state: "running" };
 const db = { service: "db", container: "app-db-1", state: "running" };
@@ -142,4 +142,16 @@ test("a crash loop caught between runs still warns", () => {
     restarted: 1,
     recovered: 0,
   });
+});
+
+test("Start is offered unless every service already runs", () => {
+  const start = (services, status = "saved") => canStart(stackRunState({ status, services }));
+  assert.equal(start([web, db]), false);
+  assert.equal(start([web, { ...db, health: "unhealthy" }]), false);
+  assert.equal(start([web, { service: "db", state: "absent" }]), true);
+  assert.equal(start([{ service: "web", state: "exited", recent_restarts: 3 }]), true);
+  assert.equal(start([{ service: "web", state: "absent" }]), true);
+  assert.equal(start([{ service: "web", state: "unknown" }]), true);
+  assert.equal(start([]), true);
+  assert.equal(start(undefined, "invalid"), true);
 });
