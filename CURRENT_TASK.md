@@ -1,4 +1,4 @@
-# Current task: move jp1 from Docker to Podman 6 — phases 1–3 done (switched 2026-11-08); next, the reboot experiment and phase 4. Container health in the dashboard is done, not released.
+# Current task: move jp1 from Docker to Podman 6 — phases 1–3 done (switched 2026-11-08); next, the reboot experiment and phase 4. v0.2.6 (container health, recent restarts, secret reveal) is released and deployed.
 
 ## Podman 6 packages and the jp1 move (2026-11-06)
 
@@ -55,6 +55,7 @@
   - Dashboard (`src/container-health.ts`): warning chips "Restarted 4 min ago", "N restarts in 15 min" and "Was unhealthy 6 min ago" (details in the tooltip). A stack counts each service once under its most urgent reason (unhealthy, restarted, recovered): "Running, 1 unhealthy, 1 restarted, 1 recovered" is degraded; a crash loop caught between runs reads "Stopped, 1 restarted" in the warning tone. The service table's State column widened to 220px.
   - Cost: the events query took 0.14 s on jp1 (about 650 events in 15 minutes) and is paid on each container or stack list.
   - Tests: unit tests for both event formats, split writes, the line cap, malformed events and the restart cap (mutation-checked); a real-Podman test (`SORRY_PORTAINER_TEST_PODMAN=1`, `TestRealPodmanRecentActivity`) passes on 4.9.3. Podman 6's format is covered by unit tests modelled on jp1's real output. Found on the way: the sink's `Write` returned the unconsumed length, which exec treats as a short write; fixed and tested. Dev dashboard checked with `health-demo` v2 (now down).
+- **v0.2.6 released and deployed (2026-11-09).** Bart: "release 2.6". Contains the secret reveal, container health, and recent restarts/recovered checks. Release run `9792af6d…` passed; release `9a04ca6b-a6d2-49cb-a49c-d32caeb8c451` on Gothab, assets checked against SHA256SUMS and pinned in `vars/release.yml`. Deployed to jp1 and hel1 with rsansible (rebuilt from source first): check run, real run, then a second run with changed=0. Both hosts online. On jp1, `stacks list --json` shows health from Podman 6.1.4: groovewhale `web` and homes `mysql` unhealthy (the known pre-existing checks), the rest healthy, homes `worker` with one older restart. GitHub not pushed.
 - Next: the reboot experiment (ask Bart before rebooting jp1), then phase 4. Pre-existing unhealthy checks (groovewhale web, homes mysql) are in TODO.md.
 
   Still open: the CLAUDE.md native-packages rule, and deleting hel1's `/etc/sub[ug]id.sp-backup` and jp1's `/root/sp-import`.
