@@ -66,8 +66,6 @@ const demoContainers: Record<string, Container[]> = {
   "local-c": [],
 };
 
-const connected = "Connected to the Podman fleet";
-
 const [fleet, setFleet] = createStore<FleetState>({
   phase: "booting",
   demo: false,
@@ -135,7 +133,7 @@ function clearHost() {
 /** Opens the dashboard if the browser already has a session. */
 export async function boot() {
   try {
-    setFleet({ hosts: await listHosts(), phase: "ready", notice: connected });
+    setFleet({ hosts: await listHosts(), phase: "ready", notice: "" });
   } catch {
     setFleet("phase", "login");
   }
@@ -146,7 +144,7 @@ export async function signIn(password: string) {
   setFleet({ signingIn: true, loginError: "" });
   try {
     await login(password);
-    setFleet({ hosts: await listHosts(), demo: false, phase: "ready", notice: connected });
+    setFleet({ hosts: await listHosts(), demo: false, phase: "ready", notice: "" });
   } catch (cause) {
     if (cause instanceof MasterUnreachableError)
       setFleet({

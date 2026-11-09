@@ -121,7 +121,11 @@ function Dashboard() {
             <div class="avatar">B</div>
           </div>
         </header>
-        <div class="notice">{fleet.notice}</div>
+        <Show when={fleet.notice}>
+          <div class="notice" role="status">
+            {fleet.notice}
+          </div>
+        </Show>
         <SecretStoreBanner />
         <Show when={enrolling()}>
           <EnrollmentPage />
