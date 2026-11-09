@@ -334,7 +334,7 @@ function HostPage() {
                         <i class={`dot ${running() ? "green" : "grey"}`}></i>
                         {running() ? "Running" : "Stopped"}
                       </span>
-                      <HealthNote state={container.state} health={container.health} restarts={container.restarts} />
+                      <HealthNote facts={container} />
                     </span>
                     <span class="cell-value">{running() ? container.status : "—"}</span>
                     <div class="cell-actions">

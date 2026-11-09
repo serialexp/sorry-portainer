@@ -92,7 +92,7 @@ func serviceStates(declared []declaredService, containers []podman.ProjectContai
 				image = d.image
 			}
 			out = append(out, protocol.StackService{Service: d.name, Container: c.Name, Image: image, State: c.State,
-				Status: c.Status, Health: c.Health, Restarts: c.Restarts})
+				Status: c.Status, Health: c.Health, Restarts: c.Restarts, Recent: c.Recent})
 		}
 	}
 	return out

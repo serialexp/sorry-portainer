@@ -6,7 +6,6 @@
 
 - Found while adding container health (2026-11-09):
   - `biome check src` fails across most frontend files (organizeImports, useSelfClosingElements, useButtonType, a11y role rules); only `biome format` is clean. Either fix the lint findings or configure the rules the project doesn't want, then make `biome check` the gate.
-  - **For Bart:** a crash-looping service that happens to be up when the list is read counts as running, so its stack shows "Running" with "Restarted N×" only on the service row. The stack tone could also warn on restarts, for example on a count that grew since the last read.
 
 - Found during relay hardening (2026-09-24), narrowed 2026-11-05 (listener timeouts and SIGTERM handling now exist):
   - Server shutdown gives in-flight web requests 10 seconds; a stack operation that runs longer is cut off when the process exits and the agent sessions close with it.

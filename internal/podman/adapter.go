@@ -45,6 +45,15 @@ type Client struct {
 	prefix string
 	// sizes holds the volume sizes that the background scan measured.
 	sizes volumeSizes
+	// now is the clock for event windows; nil means time.Now.
+	now func() time.Time
+}
+
+func (c *Client) clock() time.Time {
+	if c.now != nil {
+		return c.now()
+	}
+	return time.Now()
 }
 
 func New() (*Client, error) {
@@ -65,12 +74,21 @@ func NewWithRunner(runner Runner, prefix ...string) *Client {
 	return client
 }
 
+// outputSink receives a Podman command's output. A sink that cannot accept
+// more cancels the command and reports why through failure.
+type outputSink interface {
+	io.Writer
+	failure() error
+}
+
 type limitedOutput struct {
 	mu       sync.Mutex
 	buf      bytes.Buffer
 	limit    int
 	exceeded bool
 	cancel   context.CancelFunc
+	// stream names the output in errors, for example "podman ps: stdout".
+	stream string
 }
 
 func (w *limitedOutput) Write(p []byte) (int, error) {
@@ -98,41 +116,60 @@ func (w *limitedOutput) bytes() []byte {
 	return w.buf.Bytes()
 }
 
-func (w *limitedOutput) tooLarge() bool {
+func (w *limitedOutput) failure() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	return w.exceeded
+	if w.exceeded {
+		return fmt.Errorf("%s exceeds %d bytes", w.stream, w.limit)
+	}
+	return nil
 }
 
+// run runs Podman and returns its stdout, at most maxCommandOutput bytes.
 func (c *Client) run(ctx context.Context, args ...string) ([]byte, error) {
-	if err := ctx.Err(); err != nil {
+	var stdout *limitedOutput
+	err := c.runWith(ctx, func(cancel context.CancelFunc) outputSink {
+		stdout = &limitedOutput{limit: maxCommandOutput, cancel: cancel, stream: "podman " + args[0] + ": stdout"}
+		return stdout
+	}, args...)
+	if err != nil {
 		return nil, err
 	}
+	return stdout.bytes(), nil
+}
+
+// runWith runs Podman with stdout going to the sink newStdout builds; the
+// sink gets the function that cancels the command. Stderr is kept, at most
+// maxCommandOutput bytes, for the error message.
+func (c *Client) runWith(ctx context.Context, newStdout func(cancel context.CancelFunc) outputSink, args ...string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if c.runner == nil {
-		return nil, errors.New("podman runner is nil")
+		return errors.New("podman runner is nil")
 	}
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	stdout := &limitedOutput{limit: maxCommandOutput, cancel: cancel}
-	stderr := &limitedOutput{limit: maxCommandOutput, cancel: cancel}
+	stdout := newStdout(cancel)
+	stderr := &limitedOutput{limit: maxCommandOutput, cancel: cancel, stream: "podman " + args[0] + ": stderr"}
 	err := c.runner.Run(runCtx, stdout, stderr, args...)
-	if stdout.tooLarge() {
-		return nil, fmt.Errorf("podman %s: stdout exceeds %d bytes", args[0], maxCommandOutput)
+	if failure := stdout.failure(); failure != nil {
+		return failure
 	}
-	if stderr.tooLarge() {
-		return nil, fmt.Errorf("podman %s: stderr exceeds %d bytes", args[0], maxCommandOutput)
+	if failure := stderr.failure(); failure != nil {
+		return failure
 	}
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, ctxErr
+			return ctxErr
 		}
 		message := strings.TrimSpace(string(stderr.bytes()))
 		if message == "" {
-			return nil, fmt.Errorf("podman %s: %w", args[0], err)
+			return fmt.Errorf("podman %s: %w", args[0], err)
 		}
-		return nil, fmt.Errorf("podman %s: %w: %s", args[0], err, message)
+		return fmt.Errorf("podman %s: %w: %s", args[0], err, message)
 	}
-	return stdout.bytes(), nil
+	return nil
 }
 
 func decodeJSON[T any](operation string, data []byte) (T, error) {
@@ -238,6 +275,17 @@ func (c *Client) Containers(ctx context.Context) ([]protocol.Container, error) {
 			continue
 		}
 		out = append(out, item.container(name))
+	}
+	if len(out) == 0 {
+		return out, nil
+	}
+	now := c.clock()
+	recent, err := c.recentActivity(ctx, now)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].Recent = recent[out[i].ID].recent(now, out[i].Restarts)
 	}
 	return out, nil
 }
@@ -679,6 +727,10 @@ type ProjectContainer struct {
 	Health string
 	// Restarts counts restarts by the container's restart policy.
 	Restarts int
+	// Recent is the container's restarts and health failures of the last
+	// protocol.RecentWindow; ComposeContainers fills it, ProjectContainers
+	// does not.
+	Recent protocol.Recent
 	// Pid is the container's main process on the host, 0 when not running.
 	Pid int
 }
@@ -698,7 +750,7 @@ const composeProjectLabel = "com.docker.compose.project"
 
 // ProjectContainers lists the containers podman-compose created for project.
 func (c *Client) ProjectContainers(ctx context.Context, project string) ([]ProjectContainer, error) {
-	all, err := c.composeContainers(ctx, "label="+composeProjectLabel+"="+project)
+	all, err := c.composeContainers(ctx, "label="+composeProjectLabel+"="+project, false)
 	if err != nil {
 		return nil, err
 	}
@@ -706,14 +758,16 @@ func (c *Client) ProjectContainers(ctx context.Context, project string) ([]Proje
 }
 
 // ComposeContainers lists the containers of every compose project on this
-// agent, grouped by project, in one Podman call.
+// agent, grouped by project, with their recent restarts and health failures:
+// one `podman ps` and, when there are containers, one `podman events`.
 func (c *Client) ComposeContainers(ctx context.Context) (map[string][]ProjectContainer, error) {
-	return c.composeContainers(ctx, "label="+composeProjectLabel)
+	return c.composeContainers(ctx, "label="+composeProjectLabel, true)
 }
 
 // composeContainers runs one `podman ps` with filter and groups the containers
 // by compose project. Containers outside the agent's name prefix are skipped.
-func (c *Client) composeContainers(ctx context.Context, filter string) (map[string][]ProjectContainer, error) {
+// With withRecent it also reads the window's events.
+func (c *Client) composeContainers(ctx context.Context, filter string, withRecent bool) (map[string][]ProjectContainer, error) {
 	data, err := c.run(ctx, "ps", "--all", "--format", "json", "--filter", filter)
 	if err != nil {
 		return nil, err
@@ -749,6 +803,19 @@ func (c *Client) composeContainers(ctx context.Context, filter string) (map[stri
 			Restarts: item.Restarts,
 			Pid:      item.Pid,
 		})
+	}
+	if !withRecent || len(out) == 0 {
+		return out, nil
+	}
+	now := c.clock()
+	recent, err := c.recentActivity(ctx, now)
+	if err != nil {
+		return nil, err
+	}
+	for _, containers := range out {
+		for i := range containers {
+			containers[i].Recent = recent[containers[i].ID].recent(now, containers[i].Restarts)
+		}
 	}
 	return out, nil
 }

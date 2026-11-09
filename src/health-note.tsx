@@ -1,27 +1,19 @@
-import { Show } from "solid-js";
+import { For } from "solid-js";
+import { type HealthFacts, healthNotes } from "./container-health";
 
 /**
- * A running container's health check result and its restarts by the restart
- * policy, beside its state. Nothing shows for a container without a health
- * check that never restarted.
+ * A container's health check result and its restarts by the restart policy,
+ * beside its state. Nothing shows for a container without a health check that
+ * never restarted.
  */
-export function HealthNote(props: { state: string; health?: string; restarts?: number }) {
-  const health = () => (props.state === "running" ? props.health : undefined);
-  const restarts = () => props.restarts ?? 0;
+export function HealthNote(props: { facts: HealthFacts }) {
   return (
-    <>
-      <Show when={health()}>
-        {(h) => (
-          <span class={h() === "unhealthy" ? "warn-chip" : `health-note ${h()}`}>
-            {h() === "unhealthy" ? "Unhealthy" : h().charAt(0).toUpperCase() + h().slice(1)}
-          </span>
-        )}
-      </Show>
-      <Show when={restarts() > 0}>
-        <span class="restart-note" title="Restarts by the container's restart policy">
-          Restarted {restarts()}×
+    <For each={healthNotes(props.facts)}>
+      {(note) => (
+        <span class={note.warn ? "warn-chip" : note.className} title={note.title}>
+          {note.text}
         </span>
-      </Show>
-    </>
+      )}
+    </For>
   );
 }

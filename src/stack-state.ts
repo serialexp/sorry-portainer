@@ -1,15 +1,13 @@
+import { type Attention, type HealthFacts, attention } from "./container-health.ts";
+
 /** One container of a stack's service, as the agent reports it. */
-export type StackService = {
+export type StackService = HealthFacts & {
   service: string;
   container?: string;
   image?: string;
   /** Podman's container state, or "absent", "unknown" from the agent. */
   state: string;
   status?: string;
-  /** The health check's result ("healthy", "unhealthy", "starting", ...); absent without a health check. */
-  health?: string;
-  /** Restarts by the container's restart policy. */
-  restarts?: number;
 };
 
 export type StackRunState = {
@@ -19,37 +17,57 @@ export type StackRunState = {
   /** Distinct services and how many have a running container. */
   total: number;
   running: number;
-  /** Distinct services with a running container whose health check fails. */
+  /** Distinct services needing attention, each counted under its most urgent reason. */
   unhealthy: number;
+  restarted: number;
+  recovered: number;
 };
+
+const urgency: Attention[] = ["unhealthy", "restarted", "recovered"];
 
 /**
  * The stack's run state from its services. A service counts as running when
- * any of its containers runs, and as unhealthy when one of its running
- * containers fails its health check; a Compose file that does not parse is
- * "invalid". A stack whose services all run but some are unhealthy is
- * "degraded".
+ * any of its containers runs, and needs attention under the most urgent
+ * reason any of its containers has (see attention); a Compose file that does
+ * not parse is "invalid". A stack whose services all run but some need
+ * attention is "degraded".
  */
 export function stackRunState(stack: { status: string; services?: StackService[] }): StackRunState {
-  if (stack.status === "invalid")
-    return { label: "Compose file does not parse", tone: "invalid", total: 0, running: 0, unhealthy: 0 };
+  const none = { total: 0, running: 0, unhealthy: 0, restarted: 0, recovered: 0 };
+  if (stack.status === "invalid") return { label: "Compose file does not parse", tone: "invalid", ...none };
   const services = stack.services ?? [];
-  if (services.some((s) => s.state === "unknown"))
-    return { label: "Unknown", tone: "unknown", total: 0, running: 0, unhealthy: 0 };
+  if (services.some((s) => s.state === "unknown")) return { label: "Unknown", tone: "unknown", ...none };
   const declared = new Set(services.map((s) => s.service));
-  const up = services.filter((s) => s.state === "running");
-  const running = new Set(up.map((s) => s.service)).size;
-  const unhealthy = new Set(up.filter((s) => s.health === "unhealthy").map((s) => s.service)).size;
+  const running = new Set(services.filter((s) => s.state === "running").map((s) => s.service)).size;
+  const worst = new Map<string, number>();
+  for (const s of services) {
+    const reason = attention(s);
+    if (reason === undefined) continue;
+    const rank = urgency.indexOf(reason);
+    const current = worst.get(s.service);
+    if (current === undefined || rank < current) worst.set(s.service, rank);
+  }
+  const count = (reason: Attention) => [...worst.values()].filter((rank) => rank === urgency.indexOf(reason)).length;
   const total = declared.size;
-  const counts = { total, running, unhealthy };
-  const sick = unhealthy > 0 ? `, ${unhealthy} unhealthy` : "";
+  const counts = {
+    total,
+    running,
+    unhealthy: count("unhealthy"),
+    restarted: count("restarted"),
+    recovered: count("recovered"),
+  };
+  const notes = urgency
+    .filter((reason) => counts[reason] > 0)
+    .map((reason) => `, ${counts[reason]} ${reason}`)
+    .join("");
   if (total === 0) return { label: "No services", tone: "stopped", ...counts };
   if (running === total)
-    return unhealthy > 0
-      ? { label: `Running${sick}`, tone: "degraded", ...counts }
+    return worst.size > 0
+      ? { label: `Running${notes}`, tone: "degraded", ...counts }
       : { label: "Running", tone: "running", ...counts };
-  if (running === 0) return { label: "Stopped", tone: "stopped", ...counts };
-  return { label: `${running} of ${total} running${sick}`, tone: "partial", ...counts };
+  if (running === 0 && worst.size === 0) return { label: "Stopped", tone: "stopped", ...counts };
+  if (running === 0) return { label: `Stopped${notes}`, tone: "partial", ...counts };
+  return { label: `${running} of ${total} running${notes}`, tone: "partial", ...counts };
 }
 
 /**

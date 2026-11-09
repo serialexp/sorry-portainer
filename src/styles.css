@@ -1116,7 +1116,7 @@ h2 {
 }
 .stack-service-row {
   display: grid;
-  grid-template-columns: minmax(110px, 1fr) minmax(160px, 1.4fr) minmax(160px, 1.4fr) minmax(130px, 170px);
+  grid-template-columns: minmax(110px, 1fr) minmax(160px, 1.4fr) minmax(160px, 1.4fr) minmax(130px, 220px);
   gap: 16px;
   align-items: center;
   padding: 12px 20px;

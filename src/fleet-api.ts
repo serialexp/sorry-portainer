@@ -1,17 +1,16 @@
 // Client for the master's session, host and container routes.
 
+import type { HealthFacts } from "./container-health.ts";
 import type { HostSecretInfo } from "./secrets-ui";
 
 export type Host = { host_id: string; prefix: string; hostname: string; engine_version: string } & HostSecretInfo;
-/** health is the health check's result, absent without one; restarts counts restarts by the restart policy. */
-export type Container = {
+/** A container on a host, with its health and restart facts (see container-health.ts). */
+export type Container = HealthFacts & {
   id: string;
   name: string;
   image: string;
   state: string;
   status: string;
-  health?: string;
-  restarts?: number;
 };
 /** One container's use of a volume; `mode` is "rw" or "ro". */
 export type VolumeMount = { container_id: string; container: string; destination: string; mode: string; state: string };

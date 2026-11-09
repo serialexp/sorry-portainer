@@ -48,6 +48,7 @@ func TestProtocolMappingsAndPrefixFiltering(t *testing.T) {
 	runner := &fakeRunner{responses: []response{
 		{stdout: `{"host":{"hostname":"host-a"},"version":{"Version":"5.4.2"}}`},
 		{stdout: `[{"Id":"abc","Names":["owned-web"],"Image":"example/web:1","State":"running","Status":"Up 2 minutes"},{"Id":"def","Names":["other-web"],"Image":"example/web:2","State":"exited","Status":"Exited (0)"}]`},
+		{stdout: ""},
 		{stdout: `[{"Name":"owned-data","Driver":"local","Mountpoint":"/volumes/owned-data"},{"Name":"other-data","Driver":"local","Mountpoint":"/volumes/other-data"}]`},
 		{stdout: `[{"Id":"abc","Names":["owned-web"],"Image":"example/web:1","State":"running","Status":"Up 2 minutes"},{"Id":"def","Names":["other-web"],"Image":"example/web:2","State":"exited","Status":"Exited (0)"}]`},
 		{stdout: "abc\t[{\"Type\":\"volume\",\"Name\":\"owned-data\",\"Destination\":\"/data\",\"RW\":true}]\n"},
@@ -55,6 +56,7 @@ func TestProtocolMappingsAndPrefixFiltering(t *testing.T) {
 		{stdout: `[]`},
 	}}
 	client := NewWithRunner(runner, "owned-")
+	client.now = func() time.Time { return time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC) }
 	ctx := context.Background()
 
 	info, err := client.Info(ctx)
@@ -80,6 +82,7 @@ func TestProtocolMappingsAndPrefixFiltering(t *testing.T) {
 	wantCalls := [][]string{
 		{"info", "--format", "json"},
 		{"ps", "--all", "--format", "json"},
+		{"events", "--stream=false", "--since", "2026-11-09T11:45:00Z", "--filter", "event=restart", "--filter", "event=health_status", "--format", "json"},
 		{"volume", "ls", "--format", "json"},
 		{"ps", "--all", "--format", "json"},
 		{"container", "inspect", "--format", `{{.ID}}{{"\t"}}{{json .Mounts}}`, "--", "abc", "def"},

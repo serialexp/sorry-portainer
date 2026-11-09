@@ -12,12 +12,22 @@ test("all services running is Running", () => {
     total: 2,
     running: 2,
     unhealthy: 0,
+    restarted: 0,
+    recovered: 0,
   });
 });
 
 test("some services running is a partial count", () => {
   const state = stackRunState({ status: "saved", services: [web, { service: "db", state: "absent" }] });
-  assert.deepEqual(state, { label: "1 of 2 running", tone: "partial", total: 2, running: 1, unhealthy: 0 });
+  assert.deepEqual(state, {
+    label: "1 of 2 running",
+    tone: "partial",
+    total: 2,
+    running: 1,
+    unhealthy: 0,
+    restarted: 0,
+    recovered: 0,
+  });
 });
 
 test("no running service, or no container at all, is Stopped", () => {
@@ -36,6 +46,8 @@ test("a service with several containers counts once, and running if any runs", (
     total: 1,
     running: 1,
     unhealthy: 0,
+    restarted: 0,
+    recovered: 0,
   });
 });
 
@@ -47,6 +59,8 @@ test("all services running with a failing health check is degraded", () => {
     total: 2,
     running: 2,
     unhealthy: 1,
+    restarted: 0,
+    recovered: 0,
   });
 });
 
@@ -70,6 +84,8 @@ test("unhealthy counts only running containers, once per service", () => {
     total: 2,
     running: 1,
     unhealthy: 1,
+    restarted: 0,
+    recovered: 0,
   });
 });
 
@@ -86,4 +102,44 @@ test("service state labels are capitalized, absent reads Not created", () => {
   assert.equal(serviceStateLabel("unknown"), "Unknown");
   assert.equal(serviceStateLabel("absent"), "Not created");
   assert.equal(serviceStateLabel(""), "Unknown");
+});
+
+test("a recent restart or recovered health check degrades a running stack", () => {
+  const services = [
+    { ...web, recent_restarts: 2, restarts: 9, last_restart_ago_s: 30 },
+    { ...db, health: "healthy", unhealthy_ago_s: 400 },
+    { service: "cache", container: "app-cache-1", state: "running", restarts: 4 },
+  ];
+  assert.deepEqual(stackRunState({ status: "saved", services }), {
+    label: "Running, 1 restarted, 1 recovered",
+    tone: "degraded",
+    total: 3,
+    running: 3,
+    unhealthy: 0,
+    restarted: 1,
+    recovered: 1,
+  });
+});
+
+test("a service counts once, under its most urgent reason", () => {
+  const services = [
+    { service: "app", container: "app-1", state: "running", health: "unhealthy", recent_restarts: 1 },
+    { service: "app", container: "app-2", state: "running", health: "healthy", unhealthy_ago_s: 60 },
+  ];
+  const state = stackRunState({ status: "saved", services });
+  assert.equal(state.label, "Running, 1 unhealthy");
+  assert.deepEqual([state.unhealthy, state.restarted, state.recovered], [1, 0, 0]);
+});
+
+test("a crash loop caught between runs still warns", () => {
+  const services = [{ service: "app", container: "app-1", state: "exited", restarts: 40, recent_restarts: 12 }];
+  assert.deepEqual(stackRunState({ status: "saved", services }), {
+    label: "Stopped, 1 restarted",
+    tone: "partial",
+    total: 1,
+    running: 0,
+    unhealthy: 0,
+    restarted: 1,
+    recovered: 0,
+  });
 });

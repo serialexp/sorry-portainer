@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"time"
 )
 
 var (
@@ -158,11 +159,29 @@ type SecretRetain struct {
 	Stacks []string `json:"stacks"`
 }
 
+// RecentWindow is how far back the agent reads Podman's events for a
+// container's recent restarts and health failures.
+const RecentWindow = 15 * time.Minute
+
+// Recent is what happened to a container within RecentWindow, from Podman's
+// events. Durations are whole seconds before the agent answered, measured on
+// the agent host's clock, and at least 1 when set.
+type Recent struct {
+	// RecentRestarts counts restarts by the restart policy. A restart by a
+	// user resets Podman's restart count, so it never counts.
+	RecentRestarts int `json:"recent_restarts,omitempty"`
+	// LastRestartAgo is how long ago the latest of them was, 0 without one.
+	LastRestartAgo int64 `json:"last_restart_ago_s,omitempty"`
+	// UnhealthyAgo is how long ago the health check last reported the
+	// container unhealthy, 0 when it did not within the window.
+	UnhealthyAgo int64 `json:"unhealthy_ago_s,omitempty"`
+}
+
 // Container is one container as Podman lists it. Status is Podman's
 // human-readable status without the health result ("Up 2 hours"). Health is
 // the health check's result ("healthy", "unhealthy", "starting", ...), empty
 // for a container without a health check. Restarts counts restarts by the
-// container's restart policy.
+// container's restart policy since it was last started by a user.
 type Container struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
@@ -171,6 +190,7 @@ type Container struct {
 	Status   string `json:"status"`
 	Health   string `json:"health,omitempty"`
 	Restarts int    `json:"restarts,omitempty"`
+	Recent
 }
 type StartRequest struct {
 	ContainerID string `json:"container_id"`
@@ -207,7 +227,8 @@ type Stack struct {
 // StackService is one container of a stack's service, or the service itself
 // when it has none. State is Podman's container state ("running", "exited",
 // ...), "absent" for a service with no container, or "unknown" when the agent
-// cannot read Podman. Status, Health and Restarts are as in Container.
+// cannot read Podman. Status, Health, Restarts and Recent are as in
+// Container.
 type StackService struct {
 	Service   string `json:"service"`
 	Container string `json:"container,omitempty"`
@@ -216,6 +237,7 @@ type StackService struct {
 	Status    string `json:"status,omitempty"`
 	Health    string `json:"health,omitempty"`
 	Restarts  int    `json:"restarts,omitempty"`
+	Recent
 }
 
 // StackSaved answers a save: the saved stack and, when the save changed the

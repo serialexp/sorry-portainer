@@ -69,7 +69,7 @@ function ServiceRow(props: { service: StackService }) {
           <span class={props.service.state === "running" ? "state" : "state stopped"}>
             {serviceStateLabel(props.service.state)}
           </span>
-          <HealthNote state={props.service.state} health={props.service.health} restarts={props.service.restarts} />
+          <HealthNote facts={props.service} />
         </span>
         <Show when={props.service.status}>
           <small class="stack-service-status">{props.service.status}</small>
