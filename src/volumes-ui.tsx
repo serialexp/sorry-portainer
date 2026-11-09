@@ -1,11 +1,11 @@
 import { A, useLocation, useNavigate } from "@solidjs/router";
-import { BackIcon } from "./icons";
 import { createEffect, createSignal, For, Show } from "solid-js";
 import { ContainerChip } from "./container-chip";
 import { getVolume, type Volume, type VolumeDetail } from "./fleet-api";
 import { filteredVolumes, fleet, removeVolume, sessionEnded } from "./fleet-store";
 import { formatBytes } from "./format";
-import { hostPath, parseHostPath, volumePath } from "./host-route";
+import { hostPath, parseHostPath, stackPath, volumePath } from "./host-route";
+import { hostCrumbs, PageHeader } from "./page-header";
 import { RemoveButton } from "./remove-button";
 
 /**
@@ -28,6 +28,24 @@ function blockedLabel(volume: Volume): string | undefined {
 function sizeText(volume: Volume): string {
   if (volume.size_bytes === undefined) return "Not measured yet"; // A non-breaking space keeps the number and its unit on one line in a narrow column.
   return `${volume.size_partial ? "At least " : ""}${formatBytes(volume.size_bytes).replace(" ", String.fromCharCode(160))}`;
+}
+
+/** The Compose project that created the volume, from the label Podman Compose sets. */
+function composeProject(volume: VolumeDetail): string | undefined {
+  const labels = volume.labels ?? {};
+  return labels["io.podman.compose.project"] ?? labels["com.docker.compose.project"];
+}
+
+/** The volume's name inside its Compose project ("db-data" for "app_db-data"); the full name otherwise. */
+function shortVolumeName(volume: VolumeDetail): string {
+  const project = composeProject(volume);
+  return project && volume.name.startsWith(`${project}_`) ? volume.name.slice(project.length + 1) : volume.name;
+}
+
+/** The saved stack whose Compose project created the volume, if any. */
+function owningStack(volume: VolumeDetail): string | undefined {
+  const project = composeProject(volume);
+  return project ? fleet.stacks.find((stack) => stack.project === project)?.name : undefined;
 }
 
 /** When the volume was created, in local time; Podman's own text when it does not parse. */
@@ -159,6 +177,11 @@ export function VolumeDetailPage() {
     void load();
   });
 
+  const crumbName = () => {
+    const current = volume();
+    return current ? shortVolumeName(current) : name();
+  };
+
   function copyMountpoint(path: string) {
     navigator.clipboard?.writeText(path).catch(() => {});
     setCopied(true);
@@ -166,141 +189,150 @@ export function VolumeDetailPage() {
   }
 
   return (
-    <section class="panel resource-page stack-detail volume-detail">
-      <div class="stack-detail-head">
-        <div class="stack-detail-title">
-          <A class="stack-detail-back" href={hostPath(hostID(), "volumes")}>
-            <BackIcon /> All volumes
-          </A>
-          <h2 class="volume-title">{volume()?.name ?? name()}</h2>
+    <>
+      <PageHeader
+        crumbs={[
+          ...hostCrumbs(hostID()),
+          { label: "Volumes", href: hostPath(hostID(), "volumes") },
+          { label: crumbName() },
+        ]}
+        title={volume()?.name ?? name()}
+        actions={
           <Show when={volume()}>
             {(current) => (
-              <>
-                <span class="stack-card-meta">
-                  {current().driver} volume on {hostID()}
-                </span>
-                <div class="stack-detail-chips">
-                  <span class={(current().mounts?.length ?? 0) > 0 ? "state" : "state stopped"}>
-                    {(current().mounts?.length ?? 0) > 0
-                      ? "In use"
-                      : current().mounted_outside_prefix
-                        ? "In use elsewhere"
-                        : "Not in use"}
-                  </span>
-                </div>
-              </>
+              <RemoveButton
+                variant="header"
+                label="Remove volume"
+                question={`Remove volume ${current().name}? Its files are deleted from ${hostID()} and cannot be recovered.`}
+                blocked={blockedBy(current())}
+                blockedLabel={blockedLabel(current())}
+                onRemove={async () => {
+                  await removeVolume(current().name);
+                  navigate(hostPath(hostID(), "volumes"));
+                }}
+              />
             )}
           </Show>
-        </div>
+        }
+      >
         <Show when={volume()}>
           {(current) => (
-            <RemoveButton
-              label="Remove volume"
-              question={`Remove volume ${current().name}? Its files are deleted from ${hostID()} and cannot be recovered.`}
-              blocked={blockedBy(current())}
-              blockedLabel={blockedLabel(current())}
-              onRemove={async () => {
-                await removeVolume(current().name);
-                navigate(hostPath(hostID(), "volumes"));
-              }}
-            />
+            <div class="host-chips">
+              <span class={(current().mounts?.length ?? 0) > 0 ? "title-chip" : "title-chip stopped"}>
+                {(current().mounts?.length ?? 0) > 0
+                  ? "In use"
+                  : current().mounted_outside_prefix
+                    ? "In use elsewhere"
+                    : "Not in use"}
+              </span>
+              <Show when={owningStack(current())}>
+                {(stack) => (
+                  <A class="header-chip" href={stackPath(hostID(), stack())}>
+                    <span>Stack</span>
+                    <strong>{stack()}</strong>
+                  </A>
+                )}
+              </Show>
+            </div>
           )}
         </Show>
-      </div>
-      <Show when={loadError()}>
-        <div class="resource-empty">{loadError()}</div>
-      </Show>
-      <Show when={volume()}>
-        {(current) => (
-          <div class="stack-detail-grid">
-            <div class="stack-detail-block detail-wide">
-              <h3>Mountpoint</h3>
-              <div class="copy-box">
-                <code>{current().mountpoint || "Podman managed"}</code>
-                <Show when={current().mountpoint}>
-                  <button
-                    class="copy-button"
-                    type="button"
-                    aria-label="Copy mountpoint"
-                    onClick={() => copyMountpoint(current().mountpoint)}
-                  >
-                    {copied() ? "Copied" : "Copy path"}
-                  </button>
+      </PageHeader>
+      <section class="panel resource-page stack-detail volume-detail">
+        <Show when={loadError()}>
+          <div class="resource-empty">{loadError()}</div>
+        </Show>
+        <Show when={volume()}>
+          {(current) => (
+            <div class="stack-detail-grid">
+              <div class="stack-detail-block detail-wide">
+                <h3>Mountpoint</h3>
+                <div class="copy-box">
+                  <code>{current().mountpoint || "Podman managed"}</code>
+                  <Show when={current().mountpoint}>
+                    <button
+                      class="copy-button"
+                      type="button"
+                      aria-label="Copy mountpoint"
+                      onClick={() => copyMountpoint(current().mountpoint)}
+                    >
+                      {copied() ? "Copied" : "Copy path"}
+                    </button>
+                  </Show>
+                </div>
+              </div>
+              <div class="stack-detail-block">
+                <h3>Details</h3>
+                <dl class="fact-list">
+                  <dt>Driver</dt>
+                  <dd>{current().driver}</dd> <dt>Created</dt>
+                  <dd>{createdText(current().created)}</dd>
+                  <dt>Size on disk</dt>
+                  <dd>
+                    {sizeText(current())}
+                    <Show when={current().size_measured_at}>
+                      {(measured) => <span class="cell-muted"> · measured {measuredText(measured())}</span>}
+                    </Show>
+                  </dd>
+                </dl>
+              </div>
+              <div class="stack-detail-block detail-wide">
+                <h3>Mounted by</h3>
+                <Show
+                  when={(current().mounts?.length ?? 0) > 0}
+                  fallback={
+                    <p class="stack-note">
+                      {current().mounted_outside_prefix
+                        ? "No container of this prefix mounts the volume. A container outside this prefix does."
+                        : "No container of this prefix mounts the volume."}
+                    </p>
+                  }
+                >
+                  <div class="data-scroll">
+                    <div class="data-table cols-volume-mounts">
+                      <div class="data-head">
+                        <span>Container</span>
+                        <span>Path inside</span>
+                        <span>Mode</span>
+                        <span>State</span>
+                      </div>
+                      <For each={current().mounts}>
+                        {(mount) => (
+                          <div class="data-row">
+                            <A href={hostPath(hostID(), "containers")}>{mount.container}</A>
+                            <span class="cell-muted">{mount.destination}</span>
+                            <span class="chip-code">{mount.mode}</span>
+                            <span class={mount.state === "running" ? "state" : "state stopped"}>
+                              {mount.state === "running" ? "Running" : mount.state}
+                            </span>
+                          </div>
+                        )}
+                      </For>
+                    </div>
+                  </div>
+                </Show>
+              </div>
+              <div class="stack-detail-block detail-wide">
+                <h3>Labels</h3>
+                <Show
+                  when={Object.keys(current().labels ?? {}).length > 0}
+                  fallback={<p class="stack-note">No labels.</p>}
+                >
+                  <dl class="fact-list">
+                    <For each={Object.entries(current().labels ?? {}).sort(([a], [b]) => a.localeCompare(b))}>
+                      {([key, value]) => (
+                        <>
+                          <dt>{key}</dt>
+                          <dd>{value}</dd>
+                        </>
+                      )}
+                    </For>
+                  </dl>
                 </Show>
               </div>
             </div>
-            <div class="stack-detail-block">
-              <h3>Details</h3>
-              <dl class="fact-list">
-                <dt>Driver</dt>
-                <dd>{current().driver}</dd> <dt>Created</dt>
-                <dd>{createdText(current().created)}</dd>
-                <dt>Size on disk</dt>
-                <dd>
-                  {sizeText(current())}
-                  <Show when={current().size_measured_at}>
-                    {(measured) => <span class="cell-muted"> · measured {measuredText(measured())}</span>}
-                  </Show>
-                </dd>
-              </dl>
-            </div>
-            <div class="stack-detail-block detail-wide">
-              <h3>Mounted by</h3>
-              <Show
-                when={(current().mounts?.length ?? 0) > 0}
-                fallback={
-                  <p class="stack-note">
-                    {current().mounted_outside_prefix
-                      ? "No container of this prefix mounts the volume. A container outside this prefix does."
-                      : "No container of this prefix mounts the volume."}
-                  </p>
-                }
-              >
-                <div class="data-scroll">
-                  <div class="data-table cols-volume-mounts">
-                    <div class="data-head">
-                      <span>Container</span>
-                      <span>Path inside</span>
-                      <span>Mode</span>
-                      <span>State</span>
-                    </div>
-                    <For each={current().mounts}>
-                      {(mount) => (
-                        <div class="data-row">
-                          <A href={hostPath(hostID(), "containers")}>{mount.container}</A>
-                          <span class="cell-muted">{mount.destination}</span>
-                          <span class="chip-code">{mount.mode}</span>
-                          <span class={mount.state === "running" ? "state" : "state stopped"}>
-                            {mount.state === "running" ? "Running" : mount.state}
-                          </span>
-                        </div>
-                      )}
-                    </For>
-                  </div>
-                </div>
-              </Show>
-            </div>
-            <div class="stack-detail-block detail-wide">
-              <h3>Labels</h3>
-              <Show
-                when={Object.keys(current().labels ?? {}).length > 0}
-                fallback={<p class="stack-note">No labels.</p>}
-              >
-                <dl class="fact-list">
-                  <For each={Object.entries(current().labels ?? {}).sort(([a], [b]) => a.localeCompare(b))}>
-                    {([key, value]) => (
-                      <>
-                        <dt>{key}</dt>
-                        <dd>{value}</dd>
-                      </>
-                    )}
-                  </For>
-                </dl>
-              </Show>
-            </div>
-          </div>
-        )}
-      </Show>
-    </section>
+          )}
+        </Show>
+      </section>
+    </>
   );
 }

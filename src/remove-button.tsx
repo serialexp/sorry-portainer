@@ -1,5 +1,6 @@
 import { createSignal, Show } from "solid-js";
 import { sessionEnded } from "./fleet-store";
+import { TrashIcon } from "./icons";
 
 /**
  * A remove action that asks first, as the stack pages do, and keeps the host's
@@ -12,6 +13,8 @@ export function RemoveButton(props: {
   blocked?: string;
   /** The button's text while blocked, when it differs from the label, such as "In use elsewhere". */
   blockedLabel?: string;
+  /** "header" draws it as a page header's action: a plain button with a trash icon. */
+  variant?: "header";
   onRemove: () => Promise<void>;
 }) {
   const [busy, setBusy] = createSignal(false);
@@ -33,12 +36,15 @@ export function RemoveButton(props: {
   return (
     <div class="remove-control">
       <button
-        class="remove-button"
+        class={props.variant === "header" ? "add-button" : "remove-button"}
         type="button"
         disabled={busy() || Boolean(props.blocked)}
         title={props.blocked}
         onClick={() => void remove()}
       >
+        <Show when={props.variant === "header"}>
+          <TrashIcon />
+        </Show>
         {busy() ? "Removing…" : props.blocked && props.blockedLabel ? props.blockedLabel : props.label}
       </button>
       <Show when={error()}>

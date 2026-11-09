@@ -27,6 +27,7 @@ import {
   SearchIcon,
   ServerIcon,
 } from "./icons";
+import { PageHeader } from "./page-header";
 import { CreateStoreCard, HostSecretWarnings } from "./secrets-ui";
 import { Sidebar } from "./sidebar";
 import { StackDetail, StackEditor, StackList } from "./stacks-ui";
@@ -62,77 +63,94 @@ function Dashboard() {
   const enrolling = () => location.pathname === enrollmentPath;
   const selected = () => (route()?.hostID === fleet.selectedHost ? selectedHost() : undefined);
   const heading = () => pageHeading(location.pathname);
+  const search = () => (
+    <label class="search-box">
+      <SearchIcon />
+      <input
+        type="search"
+        value={fleet.query}
+        onInput={(event) => setQuery(event.currentTarget.value)}
+        placeholder={heading().search}
+        aria-label={heading().search}
+      />
+      <kbd>⌘K</kbd>
+    </label>
+  );
   return (
     <div class="app-shell">
       <Sidebar />
       <main>
-        <header>
-          <div>
-            <Show when={heading().hostList && route()} fallback={<p class="eyebrow">{heading().eyebrow}</p>}>
-              {(current) => (
-                <nav class="breadcrumb" aria-label="Breadcrumb">
-                  <A href="/">Hosts</A>
-                  <span aria-hidden="true">/</span>
-                  <span>{current().hostID}</span>
-                </nav>
-              )}
-            </Show>
-            <h1>{heading().title}</h1>
-            <Show when={heading().hostList && selected()} fallback={<p class="subtitle">{heading().subtitle}</p>}>
-              {(host) => (
-                <dl class="host-chips">
-                  <div>
-                    <dt>Hostname</dt>
-                    <dd>{host().hostname}</dd>
-                  </div>
-                  <div>
-                    <dt>Podman</dt>
-                    <dd>{host().engine_version}</dd>
-                  </div>
-                  <div>
-                    <dt>Prefix</dt>
-                    <dd class="mono">{host().prefix}</dd>
-                  </div>
-                </dl>
-              )}
-            </Show>
-          </div>
-          <div class="header-actions">
-            <Show when={!route() && !enrolling()}>
-              <A class="add-button solid" href={enrollmentPath}>
-                <PlusIcon />
-                Enroll host
-              </A>
-            </Show>
-            <Show when={section() === "stacks" && !route()?.action && selected()}>
-              <A class="add-button solid" href={newStackPath(fleet.selectedHost)}>
-                <PlusIcon />
-                New stack
-              </A>
-              <button
-                class="icon-button"
-                type="button"
-                aria-label="Refresh stacks"
-                title="Refresh"
-                disabled={fleet.stacksLoading}
-                onClick={() => void loadStacks()}
+        <Show
+          when={route()}
+          fallback={
+            <header>
+              <div>
+                <p class="eyebrow">{heading().eyebrow}</p>
+                <h1>{heading().title}</h1>
+                <p class="subtitle">{heading().subtitle}</p>
+              </div>
+              <div class="header-actions">
+                <Show when={!enrolling()}>
+                  <A class="add-button solid" href={enrollmentPath}>
+                    <PlusIcon />
+                    Enroll host
+                  </A>
+                </Show>
+                {search()}
+              </div>
+            </header>
+          }
+        >
+          {(current) => (
+            // A resource's own page draws its header itself, once the host has loaded.
+            <Show when={!current().action || !selected()}>
+              <PageHeader
+                crumbs={[{ label: "Hosts", href: "/" }, { label: current().hostID }]}
+                title={heading().title}
+                actions={
+                  <Show when={!current().action}>
+                    <Show when={current().section === "stacks" && selected()}>
+                      <A class="add-button solid" href={newStackPath(fleet.selectedHost)}>
+                        <PlusIcon />
+                        New stack
+                      </A>
+                      <button
+                        class="icon-button"
+                        type="button"
+                        aria-label="Refresh stacks"
+                        title="Refresh"
+                        disabled={fleet.stacksLoading}
+                        onClick={() => void loadStacks()}
+                      >
+                        <RefreshIcon />
+                      </button>
+                    </Show>
+                    {search()}
+                  </Show>
+                }
               >
-                <RefreshIcon />
-              </button>
+                <Show when={selected()} fallback={<p class="subtitle">{heading().subtitle}</p>}>
+                  {(host) => (
+                    <dl class="host-chips">
+                      <div>
+                        <dt>Hostname</dt>
+                        <dd>{host().hostname}</dd>
+                      </div>
+                      <div>
+                        <dt>Podman</dt>
+                        <dd>{host().engine_version}</dd>
+                      </div>
+                      <div>
+                        <dt>Prefix</dt>
+                        <dd class="mono">{host().prefix}</dd>
+                      </div>
+                    </dl>
+                  )}
+                </Show>
+              </PageHeader>
             </Show>
-            <label class="search-box">
-              <SearchIcon />
-              <input
-                type="search"
-                value={fleet.query}
-                onInput={(event) => setQuery(event.currentTarget.value)}
-                placeholder={heading().search}
-                aria-label={heading().search}
-              />
-              <kbd>⌘K</kbd>
-            </label>
-          </div>
-        </header>
+          )}
+        </Show>
         <Show when={fleet.notice}>
           <div class="notice" role="status">
             {fleet.notice}
@@ -185,16 +203,16 @@ function Dashboard() {
   );
 }
 /**
- * The header text for the page at pathname. A host's list pages (hostList)
- * show a breadcrumb back to the hosts and the host's chips instead of the
- * eyebrow and subtitle.
+ * The header text for the page at pathname. A host's pages show a breadcrumb
+ * instead of the eyebrow, and the host's chips instead of the subtitle once
+ * the host has loaded; a resource's own page (a route with an action) draws
+ * its own header then, so its title here shows only while the host loads.
  */
 function pageHeading(pathname: string): {
-  eyebrow: string;
+  eyebrow?: string;
   title: string;
   subtitle: string;
   search: string;
-  hostList?: boolean;
 } {
   if (pathname === enrollmentPath)
     return {
@@ -211,31 +229,21 @@ function pageHeading(pathname: string): {
       subtitle: "Choose a host to browse its resources.",
       search: "Search hosts",
     };
-  const eyebrow = `${route.hostID} / PODMAN`;
   const search = `Search ${route.section}`;
-  const hostList = !route.action;
   switch (route.section) {
     case "images":
       return route.action === "view"
-        ? { eyebrow, search, title: "Image", subtitle: `Image on ${route.hostID}'s Podman installation.` }
-        : {
-            eyebrow,
-            search,
-            hostList,
-            title: "Images",
-            subtitle: "Images available on this host's Podman installation.",
-          };
+        ? { search, title: "Image", subtitle: `Image on ${route.hostID}'s Podman installation.` }
+        : { search, title: "Images", subtitle: "Images available on this host's Podman installation." };
     case "volumes":
       return route.action === "view"
-        ? { eyebrow, search, title: "Volume", subtitle: `Persistent storage on ${route.hostID}.` }
-        : { eyebrow, search, hostList, title: "Volumes", subtitle: `Persistent storage owned by ${route.hostID}.` };
+        ? { search, title: "Volume", subtitle: `Persistent storage on ${route.hostID}.` }
+        : { search, title: "Volumes", subtitle: `Persistent storage owned by ${route.hostID}.` };
     case "containers":
-      return { eyebrow, search, hostList, title: "Containers", subtitle: `Containers on ${route.hostID}.` };
+      return { search, title: "Containers", subtitle: `Containers on ${route.hostID}.` };
     case "stacks":
       return {
-        eyebrow,
         search,
-        hostList,
         title:
           route.action === "new"
             ? "Create stack"

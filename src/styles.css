@@ -372,8 +372,112 @@ h2 {
 .breadcrumb span[aria-hidden] {
   color: #a3aea7;
 }
-.breadcrumb span:last-child {
+.breadcrumb [aria-current="page"] {
   color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.breadcrumb {
+  flex-wrap: wrap;
+}
+.page-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 14px;
+  min-width: 0;
+}
+.page-title h1 {
+  overflow-wrap: anywhere;
+}
+/* The status beside a page title: green running, grey stopped, amber partly up, red broken. */
+.title-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: var(--green-chip);
+  color: var(--green-ink);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.title-chip::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--green);
+}
+.title-chip.stopped {
+  background: var(--stopped-chip);
+  color: var(--stopped-ink);
+}
+.title-chip.stopped::before {
+  background: var(--stopped-dot);
+}
+.title-chip.warn {
+  background: var(--warn-chip);
+  color: var(--warn-ink);
+}
+.title-chip.warn::before {
+  background: var(--amber);
+}
+.title-chip.danger {
+  background: var(--danger-chip);
+  color: var(--danger);
+}
+.title-chip.danger::before {
+  background: var(--danger);
+}
+/* A fact in a header's action area, such as the editor's saved revision. */
+.header-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.header-chip > span {
+  color: var(--muted);
+}
+.header-chip.unsaved {
+  gap: 6px;
+  border-color: transparent;
+  background: var(--warn-chip);
+  color: var(--warn-ink);
+  font-weight: 600;
+}
+.header-chip.unsaved::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--amber);
+}
+/* An image's tag beside its name. */
+.tag-chip {
+  padding: 4px 10px;
+  border-radius: 8px;
+  background: var(--sidebar);
+  color: #f0c88e;
+  font: 14px var(--mono);
+}
+.header-reference {
+  font: 13px var(--mono);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.host-chips a {
+  color: inherit;
+  text-decoration: none;
+}
+.host-chips a:hover dd {
+  text-decoration: underline;
 }
 .host-chips {
   display: flex;
@@ -1238,6 +1342,20 @@ h2 {
 .stack-row-note.invalid {
   color: #8a2c1a;
 }
+/* What a detail page reports above its content: errors, notes and the last start or stop. */
+.detail-notices {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px 22px;
+}
+.detail-notices:empty {
+  display: none;
+}
+.detail-notices > .stack-row-note {
+  margin: 0;
+  padding-left: 0;
+}
 .stack-row > .run-result {
   flex-basis: 100%;
   padding-left: 58px;
@@ -1319,67 +1437,20 @@ h2 {
   background: #eaf0ea;
   color: var(--accent-ink);
 }
-.stack-card-meta {
-  font: 12.5px var(--mono);
-  color: var(--muted);
-}
-.stack-card-reboot {
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: var(--chip);
-  color: var(--ink-2);
-  font-size: 12.5px;
-  font-weight: 600;
-}
 .stack-card-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 10px;
 }
-.stack-detail-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px 20px;
-  padding: 22px;
-}
-.stack-detail-title {
-  display: grid;
-  gap: 8px;
-  min-width: 0;
-}
-.stack-detail-title h2 {
-  margin: 0;
-  font: 700 28px / 1.1 var(--display);
-  letter-spacing: -0.02em;
-  overflow-wrap: anywhere;
-}
-.stack-detail-back {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  align-self: flex-start;
-  font: 12px var(--mono);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--muted);
-  text-decoration: none;
-}
-.stack-detail-back:hover {
-  color: var(--ink);
-}
-.stack-detail-chips {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
 .stack-detail-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   border-top: 1px solid var(--line-soft);
+}
+.panel > .stack-detail-grid:first-child,
+.panel > .detail-notices:empty + .stack-detail-grid {
+  border-top: 0;
 }
 .stack-detail-block {
   display: grid;
@@ -1464,14 +1535,6 @@ h2 {
   font: 12px var(--mono);
   color: var(--muted);
 }
-.stack-card-waiting {
-  margin: 0;
-  padding: 10px 20px;
-  border-top: 1px solid var(--line-soft);
-  background: var(--warn-chip);
-  color: var(--warn-ink);
-  font-size: 13px;
-}
 
 /* Stacks */
 .stack-create form,
@@ -1508,28 +1571,6 @@ h2 {
 }
 .stack-create textarea {
   resize: vertical;
-}
-.stack-create > a:first-child {
-  display: inline-block;
-  margin: 22px 22px 0;
-  font: 12px var(--mono);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--muted);
-  text-decoration: none;
-}
-.stack-create > a:first-child:hover {
-  color: var(--ink);
-}
-.stack-create > h2,
-.stack-create > .subtitle {
-  margin-left: 22px;
-  margin-right: 22px;
-}
-.stack-create > h2 {
-  margin-top: 10px;
-  font: 700 26px / 1.15 var(--display);
-  letter-spacing: -0.02em;
 }
 .stack-create textarea.compose-editor {
   min-height: 360px;
@@ -1568,6 +1609,11 @@ h2 {
   margin-top: 34px;
   padding-top: 24px;
   border-top: 1px solid var(--line);
+}
+/* In the editor's panel it lines up with the form above it. */
+.stack-create > .stack-secrets {
+  margin: 12px 22px 0;
+  padding-bottom: 22px;
 }
 .stack-secrets h3,
 .stack-secrets p {
@@ -2516,9 +2562,6 @@ h2 {
 }
 .container-dot.up {
   background: var(--green);
-}
-.volume-title {
-  overflow-wrap: anywhere;
 }
 .copy-box {
   display: flex;

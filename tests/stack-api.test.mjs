@@ -20,9 +20,9 @@ const ok = (body) => ({ ok: true, json: async () => body });
 const failed = (status, text = "") => ({ ok: false, status, text: async () => text });
 
 test("reboot label follows the stack's desired state", () => {
-  assert.equal(rebootLabel({ desired: "up" }), "starts after reboot");
-  assert.equal(rebootLabel({ desired: "down" }), "stays stopped after reboot");
-  assert.equal(rebootLabel({}), "stays stopped after reboot");
+  assert.equal(rebootLabel({ desired: "up" }), "Starts");
+  assert.equal(rebootLabel({ desired: "down" }), "Stays stopped");
+  assert.equal(rebootLabel({}), "Stays stopped");
 });
 
 test("listing and detail are host-scoped", async () => {

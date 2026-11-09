@@ -3,12 +3,12 @@ import { createEffect, createSignal, For, Match, Show, Switch } from "solid-js";
 import { filteredStacks, fleet, loadStacks, searchTerm, sessionEnded } from "./fleet-store";
 import { editStackPath, hostPath, newStackPath, parseHostPath, stackPath } from "./host-route";
 import { HealthNote } from "./health-note";
-import { BackIcon, ChevronRightIcon, InfoIcon, PlayIcon, PlusIcon, StackIcon, StopIcon } from "./icons";
+import { ChevronRightIcon, InfoIcon, PencilIcon, PlayIcon, PlusIcon, StackIcon, StopIcon } from "./icons";
+import { hostCrumbs, PageHeader } from "./page-header";
 import { NoSecretStore, StackSecretsPanel, StackStoreNotice } from "./secrets-ui";
 import {
   type StackRunState,
   type StackService,
-  canStart,
   serviceStateLabel,
   rowActions,
   serviceSummary,
@@ -49,17 +49,18 @@ function ServiceTable(props: { name: string; services: StackService[] }) {
   );
 }
 
-/** The chip style for a stack's run state; partial, degraded and invalid need attention. */
-function runChipClass(tone: StackRunState["tone"]): string {
+/** The title chip for a stack's run state: green running, amber partly up or with problems, red broken, grey otherwise. */
+function titleChipClass(tone: StackRunState["tone"]): string {
   switch (tone) {
     case "running":
-      return "state";
+      return "title-chip";
     case "partial":
     case "degraded":
+      return "title-chip warn";
     case "invalid":
-      return "warn-chip";
+      return "title-chip danger";
     default:
-      return "state stopped";
+      return "title-chip stopped";
   }
 }
 
@@ -338,10 +339,14 @@ export function StackDetail() {
     void load();
   });
 
-  // Start stays available until the stack has loaded and while any service is not running.
-  const startOffered = () => {
+  const runState = () => {
     const current = stack();
-    return !current || canStart(stackRunState(current));
+    return current ? stackRunState(current) : undefined;
+  };
+  // Start and Stop as the stack list offers them, once the stack has loaded.
+  const actions = () => {
+    const state = runState();
+    return state ? rowActions(state) : { start: false, stop: false };
   };
 
   // Start or stop, then reload so the page shows what the stack is now.
@@ -395,129 +400,153 @@ export function StackDetail() {
   }
 
   return (
-    <section class="panel resource-page stack-detail">
-      <div class="stack-detail-head">
-        <div class="stack-detail-title">
-          <A class="stack-detail-back" href={hostPath(hostID(), "stacks")}>
-            <BackIcon /> All stacks
-          </A>
-          <Show when={stack()} fallback={<h2>{name()}</h2>}>
-            {(current) => {
-              const runState = () => stackRunState(current());
-              return (
-                <>
-                  <h2>{current().name}</h2>
-                  <span class="stack-card-meta">
-                    compose · {current().project} · v{current().version}
-                  </span>
-                  <div class="stack-detail-chips">
-                    <span class={runChipClass(runState().tone)}>{runState().label}</span>
-                    <span class="stack-card-reboot">{rebootLabel(current())}</span>
-                  </div>
-                </>
-              );
-            }}
-          </Show>
-        </div>
-        <div class="stack-card-actions">
-          <A class="add-button" href={editStackPath(hostID(), name())}>
-            Edit
-          </A>
-          <Show when={startOffered()}>
-            <button class="start" type="button" disabled={!!runner.busy() || !stack()} onClick={() => operate("up")}>
-              {runner.busyLabel(name(), "up", "Start stack", "Starting…")}
-            </button>
-          </Show>
-          <button class="stop" type="button" disabled={!!runner.busy() || !stack()} onClick={() => operate("down")}>
-            {runner.busyLabel(name(), "down", "Stop stack", "Stopping…")}
-          </button>
-        </div>
-      </div>
+    <>
+      <PageHeader
+        crumbs={[...hostCrumbs(hostID()), { label: "Stacks", href: hostPath(hostID(), "stacks") }, { label: name() }]}
+        title={name()}
+        badge={
+          <Show when={runState()}>{(state) => <span class={titleChipClass(state().tone)}>{state().label}</span>}</Show>
+        }
+        actions={
+          <>
+            <A class="add-button" href={editStackPath(hostID(), name())}>
+              <PencilIcon />
+              Edit compose
+            </A>
+            <Show when={actions().stop}>
+              <button class="add-button" type="button" disabled={!!runner.busy()} onClick={() => operate("down")}>
+                <StopIcon />
+                {runner.busyLabel(name(), "down", "Stop stack", "Stopping…")}
+              </button>
+            </Show>
+            <Show when={actions().start}>
+              <button class="add-button solid" type="button" disabled={!!runner.busy()} onClick={() => operate("up")}>
+                <PlayIcon />
+                {runner.busyLabel(name(), "up", "Start stack", "Starting…")}
+              </button>
+            </Show>
+          </>
+        }
+      >
+        <Show when={stack()}>
+          {(current) => (
+            <dl class="host-chips">
+              <div>
+                <dt>Project</dt>
+                <dd class="mono">{current().project}</dd>
+              </div>
+              <div>
+                <dt>Revision</dt>
+                <dd>v{current().version}</dd>
+              </div>
+              <div>
+                <dt>After reboot</dt>
+                <dd>{rebootLabel(current())}</dd>
+              </div>
+            </dl>
+          )}
+        </Show>
+      </PageHeader>
       <StackStoreNotice />
-      <Show when={loadError()}>
-        <p class="form-error" role="alert">
-          {loadError()}
-        </p>
-      </Show>
-      <Show when={runner.operationError() || actionError()}>
-        <p class="form-error" role="alert">
-          {runner.operationError() || actionError()}
-        </p>
-      </Show>
-      <Show when={runner.operationOutput() || actionOutput()}>
-        <pre class="stack-output">{runner.operationOutput() || actionOutput()}</pre>
-      </Show>
-      <Show when={loading() && !stack()}>
-        <p class="resource-empty">Loading stack…</p>
-      </Show>
-      <Show when={stack()?.waiting}>
-        <p class="stack-card-waiting" role="status">
-          {stack()?.waiting}
-        </p>
-      </Show>
-      <Show when={stack()?.services?.length}>
-        <ServiceTable name={name()} services={stack()?.services ?? []} />
-      </Show>
-      <div class="stack-detail-grid">
-        <section class="stack-detail-block" aria-labelledby="stack-secrets-heading">
-          <h3 id="stack-secrets-heading">Secrets</h3>
-          <Show when={stack()?.secrets?.length} fallback={<p class="stack-note">This stack uses no secrets.</p>}>
-            <ul class="stack-chip-list">
-              <For each={stack()?.secrets}>{(secret) => <li class="chip-code">{secret}</li>}</For>
-            </ul>
-            <p class="stack-note">
-              Their values are set on the <A href={editStackPath(hostID(), name())}>edit page</A>.
+      <section class="panel resource-page stack-detail">
+        <div class="detail-notices">
+          <Show when={loadError()}>
+            <p class="form-error" role="alert">
+              {loadError()}
             </p>
           </Show>
-        </section>
-        <section class="stack-detail-block" aria-labelledby="stack-revisions-heading">
-          <h3 id="stack-revisions-heading">Revisions</h3>
-          <p class="stack-note">Every save keeps the previous Compose file. Restoring creates a new revision.</p>
-          <ul class="revision-list">
-            <For each={revisions()}>
-              {(version) => (
-                <li class="revision-row">
-                  <strong>v{version}</strong>
-                  <Show when={stack()?.version === version}>
-                    <span class="state">Current</span>
-                  </Show>
-                  <div class="stack-card-actions">
-                    <button
-                      class="add-button"
-                      type="button"
-                      disabled={revisionBusy() !== 0}
-                      onClick={() => toggleView(version)}
-                    >
-                      {shown()?.version === version ? "Hide" : "View"}
-                    </button>
-                    <Show when={stack()?.version !== version}>
+          <Show when={runner.result()}>{(result) => <RunResult result={result()} onHide={runner.hideResult} />}</Show>
+          <Show when={actionError()}>
+            <p class="form-error" role="alert">
+              {actionError()}
+            </p>
+          </Show>
+          <Show when={actionOutput()}>
+            <pre class="stack-output">{actionOutput()}</pre>
+          </Show>
+          <Show when={loading() && !stack()}>
+            <p class="resource-empty">Loading stack…</p>
+          </Show>
+          <Show when={stack()?.status === "invalid"}>
+            <p class="stack-row-note invalid" role="alert">
+              <InfoIcon />
+              <span>
+                The Compose file does not parse, so the stack cannot start.{" "}
+                <A href={editStackPath(hostID(), name())}>Edit compose</A>
+              </span>
+            </p>
+          </Show>
+          <Show when={stack()?.waiting}>
+            <p class="stack-row-note" role="status">
+              <InfoIcon />
+              <span>{stack()?.waiting}</span>
+            </p>
+          </Show>
+        </div>
+        <Show when={stack()?.services?.length}>
+          <ServiceTable name={name()} services={stack()?.services ?? []} />
+        </Show>
+        <div class="stack-detail-grid">
+          <section class="stack-detail-block" aria-labelledby="stack-secrets-heading">
+            <h3 id="stack-secrets-heading">Secrets</h3>
+            <Show when={stack()?.secrets?.length} fallback={<p class="stack-note">This stack uses no secrets.</p>}>
+              <ul class="stack-chip-list">
+                <For each={stack()?.secrets}>{(secret) => <li class="chip-code">{secret}</li>}</For>
+              </ul>
+              <p class="stack-note">
+                Their values are set on the <A href={editStackPath(hostID(), name())}>edit page</A>.
+              </p>
+            </Show>
+          </section>
+          <section class="stack-detail-block" aria-labelledby="stack-revisions-heading">
+            <h3 id="stack-revisions-heading">Revisions</h3>
+            <p class="stack-note">Every save keeps the previous Compose file. Restoring creates a new revision.</p>
+            <ul class="revision-list">
+              <For each={revisions()}>
+                {(version) => (
+                  <li class="revision-row">
+                    <strong>v{version}</strong>
+                    <Show when={stack()?.version === version}>
+                      <span class="state">Current</span>
+                    </Show>
+                    <div class="stack-card-actions">
                       <button
                         class="add-button"
                         type="button"
-                        disabled={revisionBusy() !== 0 || !stack()}
-                        onClick={() => restore(version)}
+                        disabled={revisionBusy() !== 0}
+                        onClick={() => toggleView(version)}
                       >
-                        {revisionBusy() === version ? "Restoring…" : "Restore"}
+                        {shown()?.version === version ? "Hide" : "View"}
                       </button>
-                    </Show>
-                  </div>
-                </li>
-              )}
-            </For>
-          </ul>
-        </section>
-      </div>
-      <Show when={shown()}>
-        {(revision) => (
-          <section class="stack-detail-block" aria-label={`Revision ${revision().version}`}>
-            <h3>Revision v{revision().version} · Compose file</h3>
-            <pre class="stack-output">{revision().compose_yaml}</pre>
-            <h3>Environment</h3>
-            <pre class="stack-output">{formatEnvironment(revision().environment) || "No environment."}</pre>
+                      <Show when={stack()?.version !== version}>
+                        <button
+                          class="add-button"
+                          type="button"
+                          disabled={revisionBusy() !== 0 || !stack()}
+                          onClick={() => restore(version)}
+                        >
+                          {revisionBusy() === version ? "Restoring…" : "Restore"}
+                        </button>
+                      </Show>
+                    </div>
+                  </li>
+                )}
+              </For>
+            </ul>
           </section>
-        )}
-      </Show>
-    </section>
+        </div>
+        <Show when={shown()}>
+          {(revision) => (
+            <section class="stack-detail-block" aria-label={`Revision ${revision().version}`}>
+              <h3>Revision v{revision().version} · Compose file</h3>
+              <pre class="stack-output">{revision().compose_yaml}</pre>
+              <h3>Environment</h3>
+              <pre class="stack-output">{formatEnvironment(revision().environment) || "No environment."}</pre>
+            </section>
+          )}
+        </Show>
+      </section>
+    </>
   );
 }
 
@@ -540,6 +569,8 @@ export function StackEditor() {
   const [deploying, setDeploying] = createSignal(false);
   const [saved, setSaved] = createSignal(false);
   const [deployOutput, setDeployOutput] = createSignal("");
+  // The Compose file or environment changed since the stack was loaded or last saved.
+  const [dirty, setDirty] = createSignal(false);
   // A stack this editor created; later saves update it, and its name is fixed.
   const [created, setCreated] = createSignal("");
   const existingStack = () => editedStack() ?? (created() || undefined);
@@ -558,6 +589,7 @@ export function StackEditor() {
     setEnvironmentEdited(false);
     setVersion(0);
     setSaved(false);
+    setDirty(false);
     setError("");
     setDeployOutput("");
     if (!stackName) {
@@ -600,6 +632,7 @@ export function StackEditor() {
       setVersion(result.version || version() + 1);
       setEnvironmentEdited(false);
       setSaved(true);
+      setDirty(false);
       void loadStacks();
       return { stackName: existing, operation: result.operation };
     }
@@ -608,6 +641,7 @@ export function StackEditor() {
     setEnvironmentEdited(false);
     setCreated(stackName);
     setSaved(true);
+    setDirty(false);
     void loadStacks();
     // The next save is an update, which needs the version just created.
     // Without it the save buttons stay disabled, but the stack exists.
@@ -714,106 +748,128 @@ export function StackEditor() {
   }
 
   return (
-    <section class="panel resource-page stack-create">
-      <A class="stack-detail-back" href={hostPath(currentHost(), "stacks")}>
-        <BackIcon /> Back to stacks
-      </A>
-      <h2>{editedStack() ? `Edit ${editedStack()}` : `Create stack on ${currentHost()}`}</h2>
-      <p class="subtitle">
-        {editedStack()
-          ? `Editing version ${version()}. Saving creates a new revision.`
-          : "Save and start deploys to this host. You can also save a draft without starting it."}
-        {saved() ? " Changes saved. You can retry Start without saving another version." : ""}
-      </p>
-      <StackStoreNotice />
-      <Show when={loading()}>
-        <p>Loading stack…</p>
-      </Show>
-      <form onSubmit={save}>
-        <label>
-          Stack name
-          <input
-            required
-            maxLength={63}
-            pattern="[a-z0-9][a-z0-9_\-]{0,62}"
-            value={name()}
-            onInput={(event) => setName(event.currentTarget.value)}
-            readOnly={!!existingStack()}
-            disabled={busy()}
-            placeholder="my-stack"
-          />
-        </label>
-        <label>
-          Compose YAML
-          <textarea
-            class="compose-editor"
-            required
-            rows={16}
-            value={compose()}
-            onInput={(event) => {
-              setCompose(event.currentTarget.value);
-              setSaved(false);
-            }}
-            disabled={busy()}
-            placeholder={"services:\n  web:\n    image: quay.io/libpod/busybox:latest"}
-            spellcheck={false}
-          />
-        </label>
-        <label>
-          Environment
-          <textarea
-            rows={6}
-            value={environmentText()}
-            onInput={(event) => {
-              setEnvironmentText(event.currentTarget.value);
-              setEnvironmentEdited(true);
-              setSaved(false);
-            }}
-            disabled={busy()}
-            placeholder={"# KEY=VALUE, one per line; use ${KEY} in the Compose file\nTZ=Europe/Amsterdam"}
-            spellcheck={false}
-          />
-        </label>
-        <p class="stack-note">
-          Values are substituted for <code>${"{KEY}"}</code> in the Compose file and stored in plain text with each
-          revision. Saving a changed environment restarts the stack if it is running. Passwords and keys belong in stack
-          secrets.
-        </p>
-        <Show when={error()}>
-          <p class="form-error" role="alert">
-            {error()}
-          </p>
-        </Show>
-        <Show when={deployOutput()}>
-          <pre class="stack-output">{deployOutput()}</pre>
-        </Show>
-        <div class="stack-actions">
-          <button
-            class="primary"
-            type="button"
-            onClick={saveAndStart}
-            disabled={busy() || (!!existingStack() && !version())}
-          >
-            {deploying() ? "Starting…" : saved() ? "Retry start" : "Save and start"}
-          </button>
-          <button class="add-button" type="submit" disabled={busy() || (!!existingStack() && !version())}>
-            {saving() ? "Saving…" : "Save without starting"}
-          </button>
-        </div>
-      </form>
-      <Show
-        when={editedStack()}
-        fallback={
-          <Show when={secrets.store !== "unavailable"} fallback={<NoSecretStore />}>
-            <p class="stack-note">
-              Stacks can use Compose <code>secrets:</code>. Save the stack, then set the secret values on its edit page
-              before starting it.
-            </p>
+    <>
+      <PageHeader
+        crumbs={[
+          ...hostCrumbs(currentHost()),
+          { label: "Stacks", href: hostPath(currentHost(), "stacks") },
+          ...(editedStack()
+            ? [{ label: editedStack() ?? "", href: stackPath(currentHost(), editedStack() ?? "") }, { label: "Edit" }]
+            : [{ label: "New" }]),
+        ]}
+        title={editedStack() ? `Edit ${editedStack()}` : "New stack"}
+        actions={
+          <Show when={editedStack() && version()}>
+            <span class="header-chip">
+              <span>Saved</span>
+              <strong>v{version()}</strong>
+            </span>
+            <Show when={dirty()}>
+              <span class="header-chip unsaved">Unsaved changes</span>
+            </Show>
           </Show>
         }
       >
-        {(stackName) => <StackSecretsPanel hostID={currentHost()} stackName={stackName()} />}
-      </Show>
-    </section>
+        <p class="subtitle">
+          {editedStack()
+            ? `Editing version ${version()}. Saving creates a new revision.`
+            : `A Compose project that runs on ${currentHost()} with Podman Compose.`}
+          {saved() ? " Changes saved. You can retry Start without saving another version." : ""}
+        </p>
+      </PageHeader>
+      <StackStoreNotice />
+      <section class="panel resource-page stack-create">
+        <Show when={loading()}>
+          <p>Loading stack…</p>
+        </Show>
+        <form onSubmit={save}>
+          <label>
+            Stack name
+            <input
+              required
+              maxLength={63}
+              pattern="[a-z0-9][a-z0-9_\-]{0,62}"
+              value={name()}
+              onInput={(event) => setName(event.currentTarget.value)}
+              readOnly={!!existingStack()}
+              disabled={busy()}
+              placeholder="my-stack"
+            />
+          </label>
+          <label>
+            Compose YAML
+            <textarea
+              class="compose-editor"
+              required
+              rows={16}
+              value={compose()}
+              onInput={(event) => {
+                setCompose(event.currentTarget.value);
+                setSaved(false);
+                setDirty(true);
+              }}
+              disabled={busy()}
+              placeholder={"services:\n  web:\n    image: quay.io/libpod/busybox:latest"}
+              spellcheck={false}
+            />
+          </label>
+          <label>
+            Environment
+            <textarea
+              rows={6}
+              value={environmentText()}
+              onInput={(event) => {
+                setEnvironmentText(event.currentTarget.value);
+                setEnvironmentEdited(true);
+                setSaved(false);
+                setDirty(true);
+              }}
+              disabled={busy()}
+              placeholder={"# KEY=VALUE, one per line; use ${KEY} in the Compose file\nTZ=Europe/Amsterdam"}
+              spellcheck={false}
+            />
+          </label>
+          <p class="stack-note">
+            Values are substituted for <code>${"{KEY}"}</code> in the Compose file and stored in plain text with each
+            revision. Saving a changed environment restarts the stack if it is running. Passwords and keys belong in
+            stack secrets.
+          </p>
+          <Show when={error()}>
+            <p class="form-error" role="alert">
+              {error()}
+            </p>
+          </Show>
+          <Show when={deployOutput()}>
+            <pre class="stack-output">{deployOutput()}</pre>
+          </Show>
+          <div class="stack-actions">
+            <button
+              class="primary"
+              type="button"
+              onClick={saveAndStart}
+              disabled={busy() || (!!existingStack() && !version())}
+            >
+              {deploying() ? "Starting…" : saved() ? "Retry start" : "Save and start"}
+            </button>
+            <button class="add-button" type="submit" disabled={busy() || (!!existingStack() && !version())}>
+              {saving() ? "Saving…" : "Save without starting"}
+            </button>
+          </div>
+        </form>
+        <Show
+          when={editedStack()}
+          fallback={
+            <Show when={secrets.store !== "unavailable"} fallback={<NoSecretStore />}>
+              <p class="stack-note">
+                Stacks can use Compose <code>secrets:</code>. Save the stack, then set the secret values on its edit
+                page before starting it.
+              </p>
+            </Show>
+          }
+        >
+          {(stackName) => <StackSecretsPanel hostID={currentHost()} stackName={stackName()} />}
+        </Show>
+      </section>
+    </>
   );
 }

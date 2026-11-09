@@ -40,3 +40,6 @@
   - Reported but not verified: repeated immediate renewals once the CA has under 30 days left; a 128-character host ID gets a 129-character default prefix.
   - Deployment note: the default web listen address `:8080` binds every interface.
 - [ ] Agent: `stacks.inspect` for a missing stack answers `open /var/lib/sorry-portainer-agent/stacks/NAME/compose.yaml: no such file or directory`. Answer "stack NAME does not exist" instead, without the agent's paths (seen through the CLI, 2026-11-07; the dashboard shows the same).
+- [ ] UI, Stack detail body: the design's Stack page (`StackDetail.dc.html`) has tabs (Overview, Compose, …), a "Last operation" card, an "After a reboot" card, and Services/Secrets/Volumes cards; ours still has the older services table, Secrets and Revisions blocks. Only the header was moved to the design (2026-11-10). Ask Bart before redoing the body.
+- [ ] UI, Image detail: the design's header has "Pull again"; there is no image pull in the agent or API yet, so the button is left out.
+- [ ] UI: a full page load of `/local-a/volumes` briefly shows "No volumes on local-a" (and zero counts) before the host's resources arrive. Show a loading state until the first load finishes.

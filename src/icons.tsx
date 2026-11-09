@@ -20,12 +20,14 @@ import {
   PhLockSimpleOpenIcon,
   PhMagnifyingGlassIcon,
   PhPackageIcon,
+  PhPencilSimpleIcon,
   PhPlayIcon,
   PhPlusIcon,
   PhProhibitIcon,
   PhSquaresFourIcon,
   PhStackSimpleIcon,
   PhStopIcon,
+  PhTrashIcon,
   PhWarningIcon,
 } from "solidjs-phosphor";
 
@@ -90,3 +92,7 @@ export const InfoIcon = (props: Props) => <PhInfoIcon class="icon" size={props.s
 export const RefreshIcon = (props: Props) => (
   <PhArrowClockwiseIcon class="icon" size={props.size ?? 16} aria-hidden="true" />
 );
+export const PencilIcon = (props: Props) => (
+  <PhPencilSimpleIcon class="icon" size={props.size ?? 15} aria-hidden="true" />
+);
+export const TrashIcon = (props: Props) => <PhTrashIcon class="icon" size={props.size ?? 15} aria-hidden="true" />;

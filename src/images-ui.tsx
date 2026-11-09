@@ -1,5 +1,4 @@
 import { A, useLocation, useNavigate } from "@solidjs/router";
-import { BackIcon } from "./icons";
 import { createEffect, createSignal, For, Show } from "solid-js";
 import { ContainerChip } from "./container-chip";
 import { formatBytes } from "./format";
@@ -7,6 +6,7 @@ import { type Image, type ImageDetail, getImage } from "./fleet-api";
 import { filteredImages, fleet, removeImage, sessionEnded } from "./fleet-store";
 import { hostPath, imagePath, parseHostPath } from "./host-route";
 import { splitImageRef } from "./image-ref";
+import { hostCrumbs, PageHeader } from "./page-header";
 import { RemoveButton } from "./remove-button";
 
 /**
@@ -174,6 +174,13 @@ export function ImageDetailPage() {
     setTimeout(() => setCopied(false), 1600);
   }
 
+  // The image's name without registry or tag, as the list shows it; its short ID until it loads.
+  const title = () => {
+    const current = image();
+    if (!current) return imageID().slice(0, 12);
+    return splitImageRef(current.tags?.[0] ?? "").name || "untagged image";
+  };
+
   const layers = () => {
     const steps = image()?.layers ?? [];
     const largest = Math.max(0, ...steps.map((step) => step.size));
@@ -186,174 +193,162 @@ export function ImageDetailPage() {
   };
 
   return (
-    <section class="panel resource-page stack-detail image-detail">
-      <div class="stack-detail-head">
-        <div class="stack-detail-title">
-          <A class="stack-detail-back" href={hostPath(hostID(), "images")}>
-            <BackIcon /> All images
-          </A>
+    <>
+      <PageHeader
+        crumbs={[...hostCrumbs(hostID()), { label: "Images", href: hostPath(hostID(), "images") }, { label: title() }]}
+        title={title()}
+        badge={
+          <For each={(image()?.tags ?? []).map((tag) => splitImageRef(tag).tag).filter(Boolean)}>
+            {(tag) => <span class="tag-chip">{tag}</span>}
+          </For>
+        }
+        actions={
           <Show when={image()}>
-            {(current) => {
-              const ref = () => splitImageRef(current().tags?.[0] ?? "");
-              return (
-                <>
-                  <h2>{ref().name || "untagged image"}</h2>
-                  <span class="stack-card-meta">{current().tags?.[0] ?? current().id.slice(0, 12)}</span>
-                  <div class="stack-detail-chips">
-                    <For each={current().tags ?? []}>
-                      {(tag) => <span class="chip-code">{splitImageRef(tag).tag}</span>}
-                    </For>
-                    <span class={(current().containers?.length ?? 0) > 0 ? "state" : "state stopped"}>
-                      {(current().containers?.length ?? 0) > 0
-                        ? "In use"
-                        : current().used_outside_prefix
-                          ? "In use elsewhere"
-                          : "Not in use"}
-                    </span>
-                  </div>
-                </>
-              );
-            }}
+            {(current) => (
+              <RemoveButton
+                variant="header"
+                label="Remove"
+                question={removalQuestion(current(), hostID())}
+                blocked={blockedBy(current())}
+                blockedLabel={blockedLabel(current())}
+                onRemove={async () => {
+                  await removeImage(current().id);
+                  navigate(hostPath(hostID(), "images"));
+                }}
+              />
+            )}
           </Show>
-        </div>
+        }
+      >
+        <Show when={image()}>
+          {(current) => <span class="header-reference">{current().tags?.[0] ?? current().id}</span>}
+        </Show>
+      </PageHeader>
+      <section class="panel resource-page stack-detail image-detail">
+        <Show when={loadError()}>
+          <div class="resource-empty">{loadError()}</div>
+        </Show>
         <Show when={image()}>
           {(current) => (
-            <RemoveButton
-              label="Remove"
-              question={removalQuestion(current(), hostID())}
-              blocked={blockedBy(current())}
-              blockedLabel={blockedLabel(current())}
-              onRemove={async () => {
-                await removeImage(current().id);
-                navigate(hostPath(hostID(), "images"));
-              }}
-            />
-          )}
-        </Show>
-      </div>
-      <Show when={loadError()}>
-        <div class="resource-empty">{loadError()}</div>
-      </Show>
-      <Show when={image()}>
-        {(current) => (
-          <div class="stack-detail-grid">
-            <div class="stack-detail-block">
-              <h3>Details</h3>
-              <dl class="fact-list">
-                <dt>Size</dt>
-                <dd>{formatBytes(current().size)}</dd>
-                <dt>Created</dt>
-                <dd>{new Date(current().created * 1000).toLocaleString()}</dd>
-                <dt>Platform</dt>
-                <dd>{current().platform}</dd>
-              </dl>
-            </div>
-            <div class="stack-detail-block detail-wide">
-              <h3>Image ID</h3>
-              <div class="copy-box">
-                <code>{current().id}</code>
-                <button
-                  class="copy-button"
-                  type="button"
-                  aria-label="Copy image ID"
-                  onClick={() => copyID(current().id)}
-                >
-                  {copied() ? "Copied" : "Copy ID"}
-                </button>
-              </div>
-            </div>
-            <div class="stack-detail-block">
-              <h3>Configuration</h3>
-              <dl class="fact-list">
-                <dt>Command</dt>
-                <dd>{current().command?.join(" ") || "None"}</dd>
-                <dt>Entrypoint</dt>
-                <dd>{current().entrypoint?.join(" ") || "None"}</dd>
-                <dt>Working dir</dt>
-                <dd>{current().working_dir || "/"}</dd>
-                <dt>Exposed ports</dt>
-                <dd>{current().ports?.join(", ") || "None"}</dd>
-              </dl>
-            </div>
-            <div class="stack-detail-block">
-              <h3>Environment</h3>
-              <Show when={(current().env?.length ?? 0) > 0} fallback={<p class="stack-note">No environment.</p>}>
+            <div class="stack-detail-grid">
+              <div class="stack-detail-block">
+                <h3>Details</h3>
                 <dl class="fact-list">
-                  <For each={current().env}>
-                    {(entry) => {
-                      const cut = entry.indexOf("=");
-                      return (
-                        <>
-                          <dt>{cut === -1 ? entry : entry.slice(0, cut)}</dt>
-                          <dd>{cut === -1 ? "" : entry.slice(cut + 1)}</dd>
-                        </>
-                      );
-                    }}
-                  </For>
+                  <dt>Size</dt>
+                  <dd>{formatBytes(current().size)}</dd>
+                  <dt>Created</dt>
+                  <dd>{new Date(current().created * 1000).toLocaleString()}</dd>
+                  <dt>Platform</dt>
+                  <dd>{current().platform}</dd>
                 </dl>
-              </Show>
-            </div>
-            <div class="stack-detail-block detail-wide">
-              <h3>Used by</h3>
-              <Show
-                when={(current().containers?.length ?? 0) > 0}
-                fallback={
-                  <p class="stack-note">
-                    {current().used_outside_prefix
-                      ? "No container of this prefix runs the image. A container outside this prefix does."
-                      : "No container of this prefix runs the image."}
-                  </p>
-                }
-              >
-                <div class="container-chips">
-                  <For each={current().containers}>
-                    {(use) => (
-                      <ContainerChip
-                        href={hostPath(hostID(), "containers")}
-                        container={use.container}
-                        state={use.state}
-                      />
-                    )}
-                  </For>
+              </div>
+              <div class="stack-detail-block detail-wide">
+                <h3>Image ID</h3>
+                <div class="copy-box">
+                  <code>{current().id}</code>
+                  <button
+                    class="copy-button"
+                    type="button"
+                    aria-label="Copy image ID"
+                    onClick={() => copyID(current().id)}
+                  >
+                    {copied() ? "Copied" : "Copy ID"}
+                  </button>
                 </div>
-              </Show>
-              <p class="stack-note">
-                Images belong to the Podman installation on this host, not to one prefix, so other prefixes may use it
-                too.
-              </p>
-            </div>
-            <div class="stack-detail-block detail-wide">
-              <h3>Layers</h3>
-              <Show when={layers().length > 0} fallback={<p class="stack-note">No build steps recorded.</p>}>
-                <div class="data-scroll">
-                  <div class="data-table cols-image-layers">
-                    <div class="data-head">
-                      <span>#</span>
-                      <span>Step</span>
-                      <span>Share of largest</span>
-                      <span>Size</span>
-                    </div>
-                    <For each={layers()}>
-                      {(layer) => (
-                        <div class="data-row">
-                          <span class="cell-muted">{layer.number}</span>
-                          <span class="layer-command" title={layer.command}>
-                            {layer.command}
-                          </span>
-                          <span class="layer-track" aria-hidden="true">
-                            <span class="layer-fill" style={{ width: `${layer.percent}%` }} />
-                          </span>
-                          <span class="cell-value">{layer.size}</span>
-                        </div>
+              </div>
+              <div class="stack-detail-block">
+                <h3>Configuration</h3>
+                <dl class="fact-list">
+                  <dt>Command</dt>
+                  <dd>{current().command?.join(" ") || "None"}</dd>
+                  <dt>Entrypoint</dt>
+                  <dd>{current().entrypoint?.join(" ") || "None"}</dd>
+                  <dt>Working dir</dt>
+                  <dd>{current().working_dir || "/"}</dd>
+                  <dt>Exposed ports</dt>
+                  <dd>{current().ports?.join(", ") || "None"}</dd>
+                </dl>
+              </div>
+              <div class="stack-detail-block">
+                <h3>Environment</h3>
+                <Show when={(current().env?.length ?? 0) > 0} fallback={<p class="stack-note">No environment.</p>}>
+                  <dl class="fact-list">
+                    <For each={current().env}>
+                      {(entry) => {
+                        const cut = entry.indexOf("=");
+                        return (
+                          <>
+                            <dt>{cut === -1 ? entry : entry.slice(0, cut)}</dt>
+                            <dd>{cut === -1 ? "" : entry.slice(cut + 1)}</dd>
+                          </>
+                        );
+                      }}
+                    </For>
+                  </dl>
+                </Show>
+              </div>
+              <div class="stack-detail-block detail-wide">
+                <h3>Used by</h3>
+                <Show
+                  when={(current().containers?.length ?? 0) > 0}
+                  fallback={
+                    <p class="stack-note">
+                      {current().used_outside_prefix
+                        ? "No container of this prefix runs the image. A container outside this prefix does."
+                        : "No container of this prefix runs the image."}
+                    </p>
+                  }
+                >
+                  <div class="container-chips">
+                    <For each={current().containers}>
+                      {(use) => (
+                        <ContainerChip
+                          href={hostPath(hostID(), "containers")}
+                          container={use.container}
+                          state={use.state}
+                        />
                       )}
                     </For>
                   </div>
-                </div>
-              </Show>
+                </Show>
+                <p class="stack-note">
+                  Images belong to the Podman installation on this host, not to one prefix, so other prefixes may use it
+                  too.
+                </p>
+              </div>
+              <div class="stack-detail-block detail-wide">
+                <h3>Layers</h3>
+                <Show when={layers().length > 0} fallback={<p class="stack-note">No build steps recorded.</p>}>
+                  <div class="data-scroll">
+                    <div class="data-table cols-image-layers">
+                      <div class="data-head">
+                        <span>#</span>
+                        <span>Step</span>
+                        <span>Share of largest</span>
+                        <span>Size</span>
+                      </div>
+                      <For each={layers()}>
+                        {(layer) => (
+                          <div class="data-row">
+                            <span class="cell-muted">{layer.number}</span>
+                            <span class="layer-command" title={layer.command}>
+                              {layer.command}
+                            </span>
+                            <span class="layer-track" aria-hidden="true">
+                              <span class="layer-fill" style={{ width: `${layer.percent}%` }} />
+                            </span>
+                            <span class="cell-value">{layer.size}</span>
+                          </div>
+                        )}
+                      </For>
+                    </div>
+                  </div>
+                </Show>
+              </div>
             </div>
-          </div>
-        )}
-      </Show>
-    </section>
+          )}
+        </Show>
+      </section>
+    </>
   );
 }

@@ -27,7 +27,7 @@ export type { StackService } from "./stack-state.ts";
  * recorded one) stays stopped, like one that was stopped.
  */
 export function rebootLabel(stack: Pick<Stack, "desired">): string {
-  return stack.desired === "up" ? "starts after reboot" : "stays stopped after reboot";
+  return stack.desired === "up" ? "Starts" : "Stays stopped";
 }
 export type StackOperation = { name: string; operation: string; success: boolean; output?: string };
 

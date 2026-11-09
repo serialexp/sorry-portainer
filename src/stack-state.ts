@@ -86,15 +86,6 @@ export function serviceStateLabel(state: string): string {
   }
 }
 
-/**
- * Whether Start does anything for a stack in this state. It brings up the
- * services that are not running, so it is pointless only when every declared
- * service already runs (Running, or Running with warnings).
- */
-export function canStart(state: StackRunState): boolean {
-  return !(state.total > 0 && state.running === state.total);
-}
-
 /** How the stack list names each attention reason. */
 const problemLabel: Record<Attention, string> = {
   unhealthy: "unhealthy",
