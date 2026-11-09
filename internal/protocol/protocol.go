@@ -319,7 +319,21 @@ type ServiceImage struct {
 	// Error says why the status is unknown or unchecked, and stays set with
 	// the last good answer when the latest check failed.
 	Error string `json:"error,omitempty"`
+	// Failure is the kind of the latest registry failure (ImageFailure*),
+	// set whenever the status is unknown because of one.
+	Failure string `json:"failure,omitempty"`
 }
+
+// Kinds of a ServiceImage's Failure.
+const (
+	// ImageFailureDenied: the registry refused the credentials or asked for
+	// some. Docker Hub also answers so for a repository that does not exist.
+	ImageFailureDenied = "denied"
+	// ImageFailureNotFound: the registry has no such tag.
+	ImageFailureNotFound = "not_found"
+	// ImageFailureUnreachable: no answer, a timeout, or a server error.
+	ImageFailureUnreachable = "unreachable"
+)
 
 // StackUpdateRequest pulls the image of one service and, when the stack
 // runs, recreates the service.

@@ -88,6 +88,10 @@ test("each status has its line", () => {
   });
   const unknown = imageStatusLine({ service: "x", status: "unknown", error: "dial tcp: i/o timeout" }, now);
   assert.deepEqual([unknown.text, unknown.tone, unknown.title], ["Couldn’t check", "muted", "dial tcp: i/o timeout"]);
+  const failedAs = (failure) => imageStatusLine({ service: "x", status: "unknown", failure }, now);
+  assert.deepEqual([failedAs("denied").text, failedAs("denied").tone], ["No access", "muted"]);
+  assert.deepEqual([failedAs("not_found").text, failedAs("not_found").tone], ["Tag not found", "muted"]);
+  assert.equal(failedAs("unreachable").text, "Couldn’t check");
   assert.equal(imageStatusLine({ service: "x", status: "pinned" }, now).text, "Pinned by digest");
   assert.equal(imageStatusLine({ service: "x", status: "local", error: "no image" }, now).title, "no image");
   assert.equal(imageStatusLine({ service: "x", status: "unchecked", error: "uses variables" }, now).text, "Not checked");
@@ -102,6 +106,12 @@ test("the header says when images were checked, or which registry failed", () =>
   assert.equal(checkedText([current, down], now), "Couldn’t reach docker.io · last checked 2 hours ago");
   assert.equal(checkedText([{ ...down, checked_at: undefined }], now), "Couldn’t reach docker.io");
   assert.equal(checkedText([{ service: "d", status: "unknown" }], now), "Couldn’t reach the registry");
+  assert.equal(checkedText([current, { ...down, failure: "unreachable" }], now), "Couldn’t reach docker.io · last checked 2 hours ago");
+  assert.equal(checkedText([{ ...down, failure: "denied" }], now), "docker.io refused access · last checked 2 hours ago");
+  assert.equal(
+    checkedText([{ ...down, image: "docker.io/aeolun/homes:v2", failure: "not_found", checked_at: undefined }], now),
+    "Tag v2 not found on docker.io",
+  );
 });
 
 test("updates count only services behind", () => {

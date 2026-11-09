@@ -200,7 +200,7 @@ func (m *Manager) Images(ctx context.Context, n string, force bool) (protocol.St
 		entry.Error = remote.Err
 		entry.Status, entry.RunningDigest = compareImage(s, index, remote.Digest)
 		if remote.Err != "" || remote.Digest == "" {
-			entry.Status = protocol.ImageUnknown
+			entry.Status, entry.Failure = protocol.ImageUnknown, failureKind(remote.Failure)
 			continue
 		}
 		if entry.Status == protocol.ImageBehind {
@@ -212,6 +212,20 @@ func (m *Manager) Images(ctx context.Context, n string, force bool) (protocol.St
 		}
 	}
 	return out, nil
+}
+
+// failureKind is the protocol's name for a checker failure.
+func failureKind(f imagecheck.Failure) string {
+	switch f {
+	case imagecheck.Denied:
+		return protocol.ImageFailureDenied
+	case imagecheck.NotFound:
+		return protocol.ImageFailureNotFound
+	case "":
+		return ""
+	default:
+		return protocol.ImageFailureUnreachable
+	}
 }
 
 // compareImage says whether a service runs latest, and the digest it runs.

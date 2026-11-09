@@ -18,7 +18,16 @@ export type ServiceImage = {
   /** When the registry last answered, unix seconds; absent if it never did. */
   checked_at?: number;
   error?: string;
+  /** Why the status is unknown, when the registry was asked and failed. */
+  failure?: ImageFailure;
 };
+
+/**
+ * "denied": the registry refused the credentials or asked for some (Docker
+ * Hub also says so for a repository that does not exist); "not_found": no
+ * such tag; "unreachable": no answer, a timeout, or a server error.
+ */
+export type ImageFailure = "denied" | "not_found" | "unreachable";
 
 export type StackImages = { name: string; services: ServiceImage[] };
 
@@ -122,7 +131,14 @@ export function imageStatusLine(img: ServiceImage, now: number): ImageStatusLine
       return { text: `Newer ${imageTag(image)}${built}`, tone: "warn", title };
     }
     case "unknown":
-      return { text: "Couldn’t check", tone: "muted", title: img.error || "The registry could not be reached" };
+      switch (img.failure) {
+        case "denied":
+          return { text: "No access", tone: "muted", title: img.error || "The registry refused access to the image" };
+        case "not_found":
+          return { text: "Tag not found", tone: "muted", title: img.error || "The registry has no such tag" };
+        default:
+          return { text: "Couldn’t check", tone: "muted", title: img.error || "The registry could not be reached" };
+      }
     case "pinned":
       return { text: "Pinned by digest", tone: "muted", title: "The image is named by digest, so it cannot change" };
     case "local":
@@ -132,14 +148,19 @@ export function imageStatusLine(img: ServiceImage, now: number): ImageStatusLine
   }
 }
 
-/** The Services header's check line: when the images were checked, or which registry could not be reached. */
+/**
+ * The Services header's check line: when the images were checked, or the
+ * first check that failed: a registry that refused access, a tag it does not
+ * have, or one that could not be reached.
+ */
 export function checkedText(images: ServiceImage[], now: number): string {
   const failed = images.find((img) => img.status === "unknown");
   if (failed) {
     const where = failed.registry || "the registry";
-    return failed.checked_at
-      ? `Couldn’t reach ${where} · last checked ${timeAgo(now - failed.checked_at)}`
-      : `Couldn’t reach ${where}`;
+    let text = `Couldn’t reach ${where}`;
+    if (failed.failure === "denied") text = `${where} refused access`;
+    if (failed.failure === "not_found") text = `Tag ${imageTag(failed.image)} not found on ${where}`;
+    return failed.checked_at ? `${text} · last checked ${timeAgo(now - failed.checked_at)}` : text;
   }
   const times = images.flatMap((img) => (img.checked_at ? [img.checked_at] : []));
   if (!times.length) return "";

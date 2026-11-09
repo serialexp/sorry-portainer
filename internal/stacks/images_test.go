@@ -94,7 +94,7 @@ func imageManager(t *testing.T, containers []podman.ProjectContainer) (*Manager,
 		"docker.io/aeolun/homes:latest": {Digest: digest("b"), CheckedAt: time.Unix(1_800_000_000, 0)},
 		"mysql:8":                       {Digest: digest("d"), CheckedAt: time.Unix(1_800_000_000, 0)},
 		"redis:7":                       {Digest: digest("e"), CheckedAt: time.Unix(1_800_000_000, 0)},
-		"quay.io/team/mirror:1":         {Digest: digest("f"), CheckedAt: time.Unix(1_700_000_000, 0), Err: "dial tcp: i/o timeout"},
+		"quay.io/team/mirror:1":         {Digest: digest("f"), CheckedAt: time.Unix(1_700_000_000, 0), Err: "dial tcp: i/o timeout", Failure: imagecheck.Unreachable},
 	}}
 	m.EnableImageChecks(images, checker)
 	return m, images, checker, executor
@@ -128,7 +128,8 @@ func TestImagesComparesEachServiceWithItsTag(t *testing.T) {
 			Error: "The image name uses variables, which Compose resolves when the stack starts."},
 		// The registry did not answer: the last good digest and time stay.
 		{Service: "mirror", Image: "quay.io/team/mirror:1", Status: protocol.ImageUnknown, Registry: "quay.io",
-			LatestDigest: digest("f"), CheckedAt: 1_700_000_000, Error: "dial tcp: i/o timeout"},
+			LatestDigest: digest("f"), CheckedAt: 1_700_000_000, Error: "dial tcp: i/o timeout",
+			Failure: protocol.ImageFailureUnreachable},
 	}
 	if !reflect.DeepEqual(got.Services, want) {
 		t.Fatalf("services:\n got %+v\nwant %+v", got.Services, want)
@@ -333,5 +334,18 @@ func TestUpdateRefusesWhatCannotBePulled(t *testing.T) {
 	}
 	if len(images.pulled) != 0 {
 		t.Fatalf("pulled %v", images.pulled)
+	}
+}
+
+func TestFailureKindsMapToTheProtocol(t *testing.T) {
+	for in, want := range map[imagecheck.Failure]string{
+		"":                     "",
+		imagecheck.Denied:      protocol.ImageFailureDenied,
+		imagecheck.NotFound:    protocol.ImageFailureNotFound,
+		imagecheck.Unreachable: protocol.ImageFailureUnreachable,
+	} {
+		if got := failureKind(in); got != want {
+			t.Errorf("failureKind(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

@@ -6,8 +6,12 @@ package imagecheck
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"sync"
 	"time"
+
+	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 )
 
 // Defaults for Options fields left zero.
@@ -37,6 +41,36 @@ type Remote struct {
 	// Err is why the latest attempt failed, empty when it succeeded. Digest
 	// and CheckedAt then still hold the last good answer.
 	Err string
+	// Failure is the kind of the latest failure, empty when it succeeded.
+	Failure Failure
+}
+
+// Failure is what kind of failure a check ran into.
+type Failure string
+
+const (
+	// Denied: the registry refused the credentials, or asked for some
+	// (HTTP 401 or 403). Docker Hub also answers 401 for a repository that
+	// does not exist.
+	Denied Failure = "denied"
+	// NotFound: the registry has no such tag (HTTP 404).
+	NotFound Failure = "not_found"
+	// Unreachable: anything else; no answer, a timeout, or a server error.
+	Unreachable Failure = "unreachable"
+)
+
+// failureOf classifies a failed request by the registry's HTTP status.
+func failureOf(err error) Failure {
+	var answered *transport.Error
+	if errors.As(err, &answered) {
+		switch answered.StatusCode {
+		case http.StatusUnauthorized, http.StatusForbidden:
+			return Denied
+		case http.StatusNotFound:
+			return NotFound
+		}
+	}
+	return Unreachable
 }
 
 type Options struct {
@@ -168,7 +202,7 @@ func (c *Checker) failed(ref string, err error) Remote {
 	if e := c.entries[ref]; e != nil {
 		remote = e.remote
 	}
-	remote.Err = err.Error()
+	remote.Err, remote.Failure = err.Error(), failureOf(err)
 	return remote
 }
 
@@ -200,7 +234,7 @@ func (c *Checker) ask(ctx context.Context, ref string) Remote {
 		c.entries[ref] = e
 	}
 	if err != nil {
-		e.remote.Err = err.Error()
+		e.remote.Err, e.remote.Failure = err.Error(), failureOf(err)
 	} else {
 		e.remote = Remote{Digest: digest, CheckedAt: now}
 	}

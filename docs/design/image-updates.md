@@ -1,6 +1,6 @@
 # Stack image updates — Design
 
-Status: implemented in the working tree (2026-11-10), not released; four open questions
+Status: implemented, not released; open: two-step progress, wording for states the design does not cover
 Owner: Bart
 Last updated: 2026-11-10
 
@@ -61,21 +61,29 @@ Tick items as they land and move them to Done.
 - [x] **Extended — narrow screens.** The services table scrolls sideways
   instead of cutting off the Update column.
 
+- [x] **Decision — TTL.** Bart (2026-11-10): 15 minutes, confirmed.
+- [x] **Decision — "built", not "pushed".** Bart (2026-11-10): expected.
+- [x] **Extended — failure kinds.** Bart (2026-11-10): an auth failure
+  is different from an unreachable registry. The checker classifies a
+  failure by HTTP status (`denied` for 401/403, `not_found` for 404,
+  `unreachable` otherwise) and `ServiceImage.failure` carries it. The row
+  says "No access", "Tag not found" or "Couldn’t check"; the header says
+  "{registry} refused access", "Tag {tag} not found on {registry}" or
+  "Couldn’t reach {registry}". The wording is ours, not the design's.
+
 ### Outstanding
 
 - [ ] **Open — progress while updating.** The design shows "Pulling new
   image…" then "Recreating container…"; the update is one request with no
-  progress, so the row says "Updating…" throughout.
-- [ ] **Open — "Couldn't reach".** The header says "Couldn't reach
-  {registry}" for any failed check, including a refused login to a private
-  image; the row's tooltip carries the registry's error.
+  progress, so the row says "Updating…" throughout. Bart (2026-11-10)
+  wants two steps; how the dashboard learns the step is undecided.
 - [ ] **Open — states the design does not cover.** Images pinned by digest,
   local images (`localhost/…` or `build:`), and image names with variables
   in a stopped stack. They show a grey line for now ("Pinned by digest",
-  "Local image", "Not checked"); Bart to confirm with the design agent.
-- [ ] **Open — CLI.** Whether `sorry-portainer` gets `stacks images` /
-  `stacks update`. Not built in v1.
-- [ ] **Open — TTL.** 15 minutes. Bart to confirm.
+  "Local image", "Not checked"); Bart to confirm with the design agent,
+  together with the failure wording below.
+- [ ] **Defer — CLI.** `sorry-portainer stacks images` / `stacks update`.
+  Bart (2026-11-10): "Fine" to leave out of v1.
 
 ## Why this exists
 

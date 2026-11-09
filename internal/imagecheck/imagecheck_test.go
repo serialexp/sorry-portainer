@@ -3,6 +3,8 @@ package imagecheck
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -18,6 +20,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/random"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 )
 
 // fakeRegistry answers from a map and counts requests.
@@ -136,7 +139,7 @@ func TestLatestFailureKeepsTheLastGoodAnswer(t *testing.T) {
 	fake.errs["r:1"] = errors.New("dial tcp: no route to host")
 	now.now = now.now.Add(2 * time.Hour)
 	got := checker.Latest(ctx, []string{"r:1"}, false)["r:1"]
-	if got.Digest != "sha256:one" || !got.CheckedAt.Equal(good) || !strings.Contains(got.Err, "no route") {
+	if got.Digest != "sha256:one" || !got.CheckedAt.Equal(good) || !strings.Contains(got.Err, "no route") || got.Failure != Unreachable {
 		t.Fatalf("failed check = %+v, want the last good digest, its time and the error", got)
 	}
 	// The failure is cached too: a down registry is not asked on every open.
@@ -151,8 +154,27 @@ func TestLatestFailureKeepsTheLastGoodAnswer(t *testing.T) {
 	}
 	// Success clears the error.
 	delete(fake.errs, "r:1")
-	if got := checker.Latest(ctx, []string{"r:1"}, true)["r:1"]; got.Err != "" || !got.CheckedAt.Equal(now.now) {
+	if got := checker.Latest(ctx, []string{"r:1"}, true)["r:1"]; got.Err != "" || got.Failure != "" || !got.CheckedAt.Equal(now.now) {
 		t.Fatalf("after recovery = %+v", got)
+	}
+}
+
+func TestFailuresAreClassifiedByTheRegistrysStatus(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want Failure
+	}{
+		{&transport.Error{StatusCode: http.StatusUnauthorized}, Denied},
+		{&transport.Error{StatusCode: http.StatusForbidden}, Denied},
+		{&transport.Error{StatusCode: http.StatusNotFound}, NotFound},
+		{&transport.Error{StatusCode: http.StatusBadGateway}, Unreachable},
+		{fmt.Errorf("HEAD: %w", &transport.Error{StatusCode: http.StatusUnauthorized}), Denied},
+		{errors.New("dial tcp: no route to host"), Unreachable},
+		{context.DeadlineExceeded, Unreachable},
+	} {
+		if got := failureOf(tc.err); got != tc.want {
+			t.Errorf("failureOf(%v) = %q, want %q", tc.err, got, tc.want)
+		}
 	}
 }
 
@@ -342,6 +364,33 @@ func TestRemoteRegistryAgainstARegistry(t *testing.T) {
 	}
 	if _, err := reg.Head(ctx, host+"/team/missing:latest"); err == nil {
 		t.Fatal("Head of a missing tag succeeded")
+	}
+}
+
+// TestCheckerNamesARegistrysRefusals checks the failure kinds against real
+// HTTP answers: a missing tag, and a repository the registry refuses.
+func TestCheckerNamesARegistrysRefusals(t *testing.T) {
+	inner := registry.New()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/v2/team/private/") {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"errors":[{"code":"UNAUTHORIZED","message":"authentication required"}]}`))
+			return
+		}
+		inner.ServeHTTP(w, r)
+	}))
+	defer server.Close()
+	host := strings.TrimPrefix(server.URL, "http://")
+	reg := remoteRegistry{keychain: authn.NewMultiKeychain(), platform: v1.Platform{OS: "linux", Architecture: "amd64"}, options: []name.Option{name.Insecure}}
+	checker := New(reg, Options{})
+	missing, private := host+"/team/missing:latest", host+"/team/private:latest"
+	got := checker.Latest(context.Background(), []string{missing, private}, false)
+	if got[missing].Failure != NotFound || got[missing].Err == "" {
+		t.Errorf("missing tag = %+v, want not found", got[missing])
+	}
+	if got[private].Failure != Denied || got[private].Err == "" {
+		t.Errorf("refused repository = %+v, want denied", got[private])
 	}
 }
 
