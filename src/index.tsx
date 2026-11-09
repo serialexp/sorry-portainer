@@ -6,6 +6,7 @@ import {
   filteredContainers,
   filteredHosts,
   fleet,
+  loadStacks,
   selectedHost,
   setQuery,
   showHost,
@@ -22,6 +23,7 @@ import {
   EyeIcon,
   EyeSlashIcon,
   PlusIcon,
+  RefreshIcon,
   SearchIcon,
   ServerIcon,
 } from "./icons";
@@ -107,6 +109,16 @@ function Dashboard() {
                 <PlusIcon />
                 New stack
               </A>
+              <button
+                class="icon-button"
+                type="button"
+                aria-label="Refresh stacks"
+                title="Refresh"
+                disabled={fleet.stacksLoading}
+                onClick={() => void loadStacks()}
+              >
+                <RefreshIcon />
+              </button>
             </Show>
             <label class="search-box">
               <SearchIcon />

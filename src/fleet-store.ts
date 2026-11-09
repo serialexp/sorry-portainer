@@ -197,7 +197,8 @@ export async function loadStacks() {
   const hostID = fleet.selectedHost;
   if (!hostID) return;
   const request = ++stackRequest;
-  setFleet({ stacks: [], stacksError: "", stacksLoading: !fleet.demo });
+  // The list stays on screen while it reloads; changing host clears it (clearHost).
+  setFleet({ stacksError: "", stacksLoading: !fleet.demo });
   if (fleet.demo) return;
   try {
     const stacks = await listStacks(hostID);

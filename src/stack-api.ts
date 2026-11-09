@@ -175,6 +175,25 @@ export function updateStack(
   return saveStack(hostID, name, composeYAML, expectedVersion, environment, request);
 }
 
+// Terminal control sequences: CSI (colours, cursor moves) and OSC (titles,
+// links). Podman Compose prints them even when its output is not a terminal.
+const csi = /\x1b\[[0-?]*[ -/]*[@-~]/g;
+const osc = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
+
+/** Command output as plain text: terminal control sequences removed. */
+export function terminalText(output: string): string {
+  return output.replace(osc, "").replace(csi, "");
+}
+
+/** A start or stop that ran and failed; `output` is what Podman Compose printed. */
+export class StackOperationError extends Error {
+  readonly output: string;
+  constructor(message: string, output: string) {
+    super(message);
+    this.output = output;
+  }
+}
+
 async function stackOperation(
   hostID: string,
   name: string,
@@ -185,13 +204,14 @@ async function stackOperation(
   const response = await request(`${endpoint(hostID, name)}/${operation}`, { method: "POST" });
   if (!response.ok) throw await failure(response, failed);
   const result = (await response.json()) as StackOperation;
-  if (!result.success) throw new Error(result.output || `${failed}.`);
-  return result;
+  const output = terminalText(result.output ?? "");
+  if (!result.success) throw new StackOperationError(`${failed}.`, output);
+  return { ...result, output };
 }
 
 /** Starts the stack; the agent also starts it again after a reboot. */
 export function deployStack(hostID: string, name: string, request: typeof fetch = fetch): Promise<StackOperation> {
-  return stackOperation(hostID, name, "up", "Deploy failed", request);
+  return stackOperation(hostID, name, "up", "Start failed", request);
 }
 
 /** Stops and removes the stack's containers; it stays stopped after a reboot. */

@@ -3,13 +3,14 @@ import { createEffect, createSignal, For, Match, Show, Switch } from "solid-js";
 import { filteredStacks, fleet, loadStacks, searchTerm, sessionEnded } from "./fleet-store";
 import { editStackPath, hostPath, newStackPath, parseHostPath, stackPath } from "./host-route";
 import { HealthNote } from "./health-note";
-import { BackIcon, ChevronRightIcon, PlayIcon, StackIcon, StopIcon } from "./icons";
+import { BackIcon, ChevronRightIcon, InfoIcon, PlayIcon, PlusIcon, StackIcon, StopIcon } from "./icons";
 import { NoSecretStore, StackSecretsPanel, StackStoreNotice } from "./secrets-ui";
 import {
   type StackRunState,
   type StackService,
   canStart,
   serviceStateLabel,
+  rowActions,
   serviceSummary,
   stackPill,
   stackRunState,
@@ -24,8 +25,10 @@ import {
   listStackVersions,
   parseEnvironment,
   rebootLabel,
+  StackOperationError,
   stackNamePattern,
   stopStack,
+  terminalText,
   updateStack,
   type Stack,
   type StackOperation,
@@ -88,11 +91,13 @@ function ServiceRow(props: { service: StackService }) {
   );
 }
 
-/** Start and stop for a host's stacks, with the busy state and output a page shows. */
+/** What the last start or stop did: its stack, a title ("Started web", or the failure) and Podman Compose's output. */
+export type StackRunResult = { name: string; failed: boolean; title: string; output: string };
+
+/** Start and stop for a host's stacks, with the busy state and the last result a page shows. */
 export function createStackRunner() {
   const [busy, setBusy] = createSignal("");
-  const [operationError, setOperationError] = createSignal("");
-  const [operationOutput, setOperationOutput] = createSignal("");
+  const [result, setResult] = createSignal<StackRunResult | null>(null);
   const [busyOperation, setBusyOperation] = createSignal<"up" | "down">("up");
   async function run(name: string, operation: "up" | "down") {
     const verb = operation === "up" ? "start" : "stop";
@@ -100,16 +105,21 @@ export function createStackRunner() {
     if (operation === "down" && !window.confirm(question)) return;
     setBusy(name);
     setBusyOperation(operation);
-    setOperationError("");
-    setOperationOutput("");
+    setResult(null);
     const hostID = fleet.selectedHost;
     try {
-      const result = operation === "up" ? await deployStack(hostID, name) : await stopStack(hostID, name);
+      const done = operation === "up" ? await deployStack(hostID, name) : await stopStack(hostID, name);
       if (fleet.selectedHost !== hostID) return;
-      setOperationOutput(result.output || `${name}: ${verb} command completed.`);
+      const title = `${operation === "up" ? "Started" : "Stopped"} ${name}`;
+      setResult({ name, failed: false, title, output: done.output ?? "" });
     } catch (cause) {
       if (fleet.selectedHost === hostID && !sessionEnded(cause))
-        setOperationError(cause instanceof Error ? cause.message : `Could not ${verb} stack.`);
+        setResult({
+          name,
+          failed: true,
+          title: cause instanceof Error ? cause.message : `Could not ${verb} stack.`,
+          output: cause instanceof StackOperationError ? cause.output : "",
+        });
     } finally {
       setBusy("");
       // A failed start still changes what the stack comes back to after a reboot.
@@ -118,31 +128,62 @@ export function createStackRunner() {
   }
   const busyLabel = (name: string, operation: "up" | "down", idle: string, active: string) =>
     busy() === name && busyOperation() === operation ? active : idle;
-  return { busy, operationError, operationOutput, run, busyLabel };
+  const operationError = () => (result()?.failed ? result()?.title : "");
+  const operationOutput = () => result()?.output ?? "";
+  return { busy, result, hideResult: () => setResult(null), operationError, operationOutput, run, busyLabel };
+}
+
+/** A start or stop's result inside the row or page it belongs to: the title, then the output. */
+function RunResult(props: { result: StackRunResult; onHide: () => void }) {
+  return (
+    <div class="run-result">
+      <div class="run-result-head">
+        <span
+          class={props.result.failed ? "run-result-title failed" : "run-result-title"}
+          role={props.result.failed ? "alert" : "status"}
+        >
+          {props.result.title}
+        </span>
+        <button class="small-button" type="button" onClick={() => props.onHide()}>
+          Hide output
+        </button>
+      </div>
+      <Show when={props.result.output}>
+        <pre class="stack-output">{props.result.output}</pre>
+      </Show>
+    </div>
+  );
 }
 
 /** The selected host's stacks, one row each. */
 export function StackList() {
-  const { busy, operationError, operationOutput, run, busyLabel } = createStackRunner();
+  const { busy, result, hideResult, run, busyLabel } = createStackRunner();
   return (
     <>
-      <Show when={fleet.stacksError || operationError()}>
+      <Show when={fleet.stacksError}>
         <p class="form-error" role="alert">
-          {fleet.stacksError || operationError()}
+          {fleet.stacksError}
         </p>
       </Show>
-      <Show when={operationOutput()}>
-        <pre class="stack-output">{operationOutput()}</pre>
-      </Show>
-      <Show when={!fleet.stacksLoading} fallback={<div class="resource-empty">Loading stacks…</div>}>
+      <Show
+        when={!fleet.stacksLoading || fleet.stacks.length}
+        fallback={<div class="resource-empty">Loading stacks…</div>}
+      >
         <Switch
           fallback={
             <div class="empty-card">
               <span class="empty-icon" aria-hidden="true">
                 <StackIcon size={24} />
               </span>
-              <h3>No stacks on {fleet.selectedHost}</h3>
-              <p>Compose projects running on this host will show up here.</p>
+              <h3>No stacks saved on {fleet.selectedHost}</h3>
+              <p>
+                A stack is a Compose file saved here. Compose projects started outside sorry,portainer don’t appear in
+                this list.
+              </p>
+              <A class="add-button solid" href={newStackPath(fleet.selectedHost)}>
+                <PlusIcon />
+                New stack
+              </A>
             </div>
           }
         >
@@ -152,6 +193,8 @@ export function StackList() {
                 {(stack) => {
                   const runState = () => stackRunState(stack);
                   const pill = () => stackPill(runState());
+                  const offered = () => rowActions(runState());
+                  const rowResult = () => (result()?.name === stack.name ? result() : null);
                   return (
                     <div class="stack-row">
                       <span class="stack-row-icon" aria-hidden="true">
@@ -165,12 +208,19 @@ export function StackList() {
                           {stack.project} · v{stack.version || 1}
                         </span>
                       </div>
-                      <span class={`stack-pill ${pill().tone}`} title={serviceSummary(stack.services ?? [])}>
+                      <span
+                        class={`stack-pill ${pill().tone}`}
+                        title={
+                          runState().tone === "invalid"
+                            ? "Fix the Compose file to start this stack"
+                            : serviceSummary(stack.services ?? [])
+                        }
+                      >
                         <span class="pill-dot" aria-hidden="true"></span>
                         {pill().text}
                       </span>
                       <div class="stack-row-actions">
-                        <Show when={runState().running === 0}>
+                        <Show when={offered().start}>
                           <button
                             class="start"
                             type="button"
@@ -182,7 +232,7 @@ export function StackList() {
                             {busyLabel(stack.name, "up", "Start", "Starting…")}
                           </button>
                         </Show>
-                        <Show when={runState().running > 0}>
+                        <Show when={offered().stop}>
                           <button
                             class="stop"
                             type="button"
@@ -203,14 +253,20 @@ export function StackList() {
                         </A>
                       </div>
                       <Show when={runState().tone === "invalid"}>
-                        <p class="stack-row-note" role="status">
-                          The Compose file does not parse. Open Edit to fix it; the stack cannot start until it does.
+                        <p class="stack-row-note invalid" role="alert">
+                          <InfoIcon />
+                          <span>The Compose file does not parse, so the stack cannot start.</span>
+                          <A href={editStackPath(fleet.selectedHost, stack.name)}>Edit compose</A>
                         </p>
                       </Show>
                       <Show when={stack.waiting}>
                         <p class="stack-row-note" role="status">
-                          {stack.waiting}
+                          <InfoIcon />
+                          <span>{stack.waiting}</span>
                         </p>
+                      </Show>
+                      <Show when={rowResult()}>
+                        {(current) => <RunResult result={current()} onHide={hideResult} />}
                       </Show>
                     </div>
                   );
@@ -328,7 +384,7 @@ export function StackDetail() {
       setShown(null);
       if (saved.operation && !saved.operation.success) {
         setActionError(`Saved as revision ${saved.version}, but restarting the stack failed.`);
-        setActionOutput(saved.operation.output || "");
+        setActionOutput(terminalText(saved.operation.output || ""));
       }
     } catch (cause) {
       if (!sessionEnded(cause)) setActionError(cause instanceof Error ? cause.message : "Could not restore revision.");
@@ -642,11 +698,13 @@ export function StackEditor() {
         if (updating) await refreshReferencedSecrets(hostID, target);
       }
       // The save already brought the stack up with its new environment.
-      if (applied && !applied.success) throw new Error(applied.output || "Deploy failed.");
+      if (applied && !applied.success)
+        throw new StackOperationError("Start failed.", terminalText(applied.output ?? ""));
       const result = applied ?? (await deployStack(hostID, target));
-      setDeployOutput(result.output || "Deployment command completed.");
+      setDeployOutput(terminalText(result.output || "Deployment command completed."));
     } catch (cause) {
       if (sessionEnded(cause)) return;
+      if (cause instanceof StackOperationError) setDeployOutput(cause.output);
       setError(
         `${saved() ? "Stack saved, but deployment failed" : "Could not save stack"}: ${cause instanceof Error ? cause.message : "Unknown error"}`,
       );

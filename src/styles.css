@@ -554,6 +554,26 @@ h2 {
 .add-button.solid .icon {
   color: var(--amber);
 }
+.icon-button {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--button-line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+}
+.icon-button:hover:not(:disabled) {
+  background: #f1f3ec;
+  border-color: #b7c5ba;
+}
+.icon-button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
 .header-actions .add-button {
   min-height: 44px;
   padding: 0 16px;
@@ -1167,10 +1187,19 @@ h2 {
 .stack-pill.partial .pill-dot {
   background: var(--warn-dot);
 }
+.stack-pill.invalid {
+  background: var(--danger-chip);
+  color: #8a2c1a;
+}
+.stack-pill.invalid .pill-dot {
+  background: #c9573f;
+}
 .stack-row-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
+  min-width: 190px;
 }
 .stack-row-open {
   display: grid;
@@ -1186,10 +1215,71 @@ h2 {
 }
 .stack-row-note {
   flex-basis: 100%;
-  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px;
+  margin: -4px 0 0;
   padding-left: 58px;
   font-size: 13.5px;
+  line-height: 1.5;
   color: var(--warn-ink);
+}
+.stack-row-note .icon {
+  flex: none;
+  margin-top: 3px;
+}
+.stack-row-note > span {
+  flex: 1 1 300px;
+}
+.stack-row-note a {
+  font-weight: 600;
+}
+.stack-row-note.invalid {
+  color: #8a2c1a;
+}
+.stack-row > .run-result {
+  flex-basis: 100%;
+  padding-left: 58px;
+}
+.run-result {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.run-result-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.run-result-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--green-ink);
+}
+.run-result-title.failed {
+  color: #8a2c1a;
+}
+.small-button {
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--button-line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font: 600 12.5px var(--body);
+  cursor: pointer;
+}
+.small-button:hover {
+  background: #f1f3ec;
+  border-color: #b7c5ba;
+}
+.run-result .stack-output {
+  margin: 0;
+  max-height: 180px;
 }
 .no-matches {
   padding: 40px 24px;

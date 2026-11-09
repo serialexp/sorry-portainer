@@ -10,7 +10,9 @@ import {
   maxEnvironment,
   parseEnvironment,
   rebootLabel,
+  StackOperationError,
   stopStack,
+  terminalText,
   updateStack,
 } from "../src/stack-api.ts";
 
@@ -95,7 +97,12 @@ test("deploy invokes up and rejects non-success operations and transport errors"
   const request = async (url, options) => { calls.push({ url, options }); return ok({ success: true, operation: "up" }); };
   await deployStack("build node", "web", request);
   assert.deepEqual(calls, [{ url: "/api/hosts/build%20node/stacks/web/up", options: { method: "POST" } }]);
-  await assert.rejects(deployStack("host", "web", async () => ok({ success: false, output: "pull failed" })), /pull failed/);
+  await assert.rejects(deployStack("host", "web", async () => ok({ success: false, output: "pull failed" })), (error) => {
+    assert.ok(error instanceof StackOperationError);
+    assert.equal(error.message, "Start failed.");
+    assert.equal(error.output, "pull failed");
+    return true;
+  });
   await assert.rejects(deployStack("host", "web", async () => ({ ok: false, status: 502, text: async () => "host unavailable" })), /host unavailable/);
 });
 
@@ -117,4 +124,19 @@ test("invalid input and failed saves cannot report creation or version update", 
   assert.equal(calls, 0);
   await assert.rejects(createStack("host", "web", "bad", undefined, async () => ({ ok: false, status: 409, text: async () => "stack already exists" })), /already exists/);
   await assert.rejects(updateStack("host", "web", "bad", 1, undefined, async () => ({ ok: false, status: 409, text: async () => "version mismatch" })), /version mismatch/);
+});
+
+test("terminal colour codes and titles are stripped from command output", () => {
+  assert.equal(terminalText("\x1b[4m>>>> compose <<<<\x1b[0m done"), ">>>> compose <<<< done");
+  assert.equal(terminalText("\x1b[1;31mred\x1b[m \x1b]0;title\x07plain"), "red plain");
+  assert.equal(terminalText("no codes, 100% [ok]"), "no codes, 100% [ok]");
+});
+
+test("a start's output comes back without colour codes", async () => {
+  const result = await deployStack("host", "web", async () => ok({ success: true, output: "\x1b[32mstarted\x1b[0m" }));
+  assert.equal(result.output, "started");
+  await assert.rejects(
+    deployStack("host", "web", async () => ok({ success: false, output: "\x1b[31mport in use\x1b[0m" })),
+    (error) => error.output === "port in use",
+  );
 });

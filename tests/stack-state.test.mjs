@@ -1,6 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { canStart, serviceStateLabel, serviceSummary, stackPill, stackRunState } from "../src/stack-state.ts";
+import {
+  canStart,
+  rowActions,
+  serviceStateLabel,
+  serviceSummary,
+  stackPill,
+  stackRunState,
+} from "../src/stack-state.ts";
 
 const web = { service: "web", container: "app-web-1", state: "running" };
 const db = { service: "db", container: "app-db-1", state: "running" };
@@ -157,6 +164,7 @@ test("Start is offered unless every service already runs", () => {
 });
 
 const pill = (services, status = "saved") => stackPill(stackRunState({ status, services }));
+const actions = (services, status = "saved") => rowActions(stackRunState({ status, services }));
 
 test("the pill is green when every service is up", () => {
   assert.deepEqual(pill([web, db]), { text: "2/2 up", tone: "up" });
@@ -170,23 +178,38 @@ test("the pill is amber when some services are up", () => {
   assert.deepEqual(pill([web, { ...db, state: "exited" }]), { text: "1/2 up", tone: "partial" });
 });
 
-test("the pill keeps health notes and turns amber for them", () => {
-  assert.deepEqual(pill([{ ...web, health: "unhealthy" }, db]), { text: "2/2 up, 1 unhealthy", tone: "partial" });
+test("the pill names the most urgent problem only, in amber", () => {
+  const restarting = { ...db, recent_restarts: 2 };
+  assert.deepEqual(pill([{ ...web, health: "unhealthy" }, restarting]), { text: "2/2 up · 1 unhealthy", tone: "partial" });
+  assert.deepEqual(pill([web, restarting]), { text: "2/2 up · 1 restarting", tone: "partial" });
 });
 
 test("a stack with no services shows 0/0 up in grey", () => {
   assert.deepEqual(pill([]), { text: "0/0 up", tone: "down" });
 });
 
-test("a file that does not parse shows its label in amber", () => {
-  assert.deepEqual(pill([], "invalid"), { text: "Compose file does not parse", tone: "partial" });
+test("a file that does not parse is a red Invalid file", () => {
+  assert.deepEqual(pill([], "invalid"), { text: "Invalid file", tone: "invalid" });
 });
 
 test("an unknown state shows Unknown in grey", () => {
   assert.deepEqual(pill([{ ...web, state: "unknown" }]), { text: "Unknown", tone: "down" });
 });
 
-test("the summary lists each service once, up when any container runs", () => {
+test("a row offers Start while a service is down and Stop while one is up", () => {
+  const down = { ...db, state: "exited" };
+  assert.deepEqual(actions([web, db]), { start: false, stop: true });
+  assert.deepEqual(actions([web, down]), { start: true, stop: true });
+  assert.deepEqual(actions([{ ...web, state: "exited" }, down]), { start: true, stop: false });
+});
+
+test("a row offers neither for a broken file or an unknown state", () => {
+  assert.deepEqual(actions([], "invalid"), { start: false, stop: false });
+  assert.deepEqual(actions([{ ...web, state: "unknown" }]), { start: false, stop: false });
+});
+
+test("the summary lists each service once with its state or worst problem", () => {
   const second = { service: "web", container: "app-web-2", state: "exited" };
-  assert.equal(serviceSummary([web, second, { ...db, state: "exited" }]), "web: up, db: down");
+  const cache = { service: "cache", state: "running", health: "unhealthy" };
+  assert.equal(serviceSummary([web, second, { ...db, state: "exited" }, cache]), "web: up, db: down, cache: unhealthy");
 });

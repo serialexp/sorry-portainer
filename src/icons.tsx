@@ -4,6 +4,7 @@
 // currentColor; the class "icon" lets CSS place and colour them.
 
 import {
+  PhArrowClockwiseIcon,
   PhArrowLeftIcon,
   PhArrowRightIcon,
   PhCaretRightIcon,
@@ -13,6 +14,7 @@ import {
   PhEyeIcon,
   PhEyeSlashIcon,
   PhHardDrivesIcon,
+  PhInfoIcon,
   PhKeyIcon,
   PhLockSimpleIcon,
   PhLockSimpleOpenIcon,
@@ -84,3 +86,7 @@ export function BrandMark() {
     </svg>
   );
 }
+export const InfoIcon = (props: Props) => <PhInfoIcon class="icon" size={props.size ?? 15} aria-hidden="true" />;
+export const RefreshIcon = (props: Props) => (
+  <PhArrowClockwiseIcon class="icon" size={props.size ?? 16} aria-hidden="true" />
+);
