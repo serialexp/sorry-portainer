@@ -1,4 +1,4 @@
-# Current task: move jp1 from Docker to Podman 6 — phases 1–3 done (switched 2026-11-08); next, the reboot experiment and phase 4. v0.2.6 (container health, recent restarts, secret reveal) is released and deployed.
+# Current task: move jp1 from Docker to Podman 6 — phases 1–3 done (switched 2026-11-08); next, the reboot experiment and phase 4. v0.2.7 (secret store UI per the design, on top of v0.2.6's container health, recent restarts and secret reveal) is released and deployed to jp1 and hel1 (2026-11-09).
 
 ## Secret store UI per the design (rapid-owl, 2026-11-09)
 
