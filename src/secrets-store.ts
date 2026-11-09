@@ -14,6 +14,7 @@ import {
   unlockStore,
 } from "./secrets-api";
 import { onSessionEnd, sessionEnded } from "./fleet-store";
+import { retrySecondsLeft, unlockFailure } from "./secret-unlock.ts";
 
 // Secret-store state shared by the store banner and the per-stack panels.
 // Components read it directly instead of receiving it through props.
@@ -33,6 +34,12 @@ type SecretsState = {
   store: StoreState | "unknown" | "unavailable";
   storeBusy: boolean;
   storeError: string;
+  /** Epoch ms until which the master refuses unlock attempts; 0 for none. */
+  retryUntil: number;
+  /** The clock the countdown reads; ticks only while counting down. */
+  now: number;
+  /** Set by the sidebar's "Set up"; the Hosts page's create form takes focus and clears it. */
+  setupRequested: boolean;
   stacks: Record<string, StackSecretsState>;
 };
 
@@ -40,6 +47,9 @@ const initial = (): SecretsState => ({
   store: "unknown",
   storeBusy: false,
   storeError: "",
+  retryUntil: 0,
+  now: 0,
+  setupRequested: false,
   stacks: {},
 });
 
@@ -50,8 +60,51 @@ export { secrets };
 // Bumped when the session ends, so answers to earlier requests are dropped.
 let generation = 0;
 
+let retryTicker: ReturnType<typeof setInterval> | undefined;
+
+function stopRetryClock() {
+  if (retryTicker !== undefined) clearInterval(retryTicker);
+  retryTicker = undefined;
+}
+
+// Counts down once a second until the master accepts attempts again.
+function startRetryClock(until: number) {
+  stopRetryClock();
+  setSecrets({ retryUntil: until, now: Date.now() });
+  retryTicker = setInterval(() => {
+    const now = Date.now();
+    if (now >= secrets.retryUntil) {
+      stopRetryClock();
+      setSecrets({ retryUntil: 0, now });
+    } else setSecrets("now", now);
+  }, 1000);
+}
+
+/** Seconds until unlocking may be tried again; 0 when it may be tried now. */
+export function retryWait(): number {
+  return retrySecondsLeft(secrets.retryUntil, secrets.now);
+}
+
+/** Clears the shared error line, as typing a new passphrase does. */
+export function clearStoreError() {
+  if (secrets.storeError) setSecrets("storeError", "");
+}
+
+/** Asks the Hosts page's create form to take focus. */
+export function requestStoreSetup() {
+  setSecrets("setupRequested", true);
+}
+
+/** Answers whether setup focus was requested, and clears the request. */
+export function takeSetupRequest(): boolean {
+  if (!secrets.setupRequested) return false;
+  setSecrets("setupRequested", false);
+  return true;
+}
+
 onSessionEnd(() => {
   ++generation;
+  stopRetryClock();
   // Replace stacks wholesale; a plain set would merge the old entries in.
   setSecrets(reconcile(initial()));
 });
@@ -93,7 +146,7 @@ export async function refreshStoreState() {
   }
 }
 
-async function storeAction(action: () => Promise<StoreState>, fallback: string): Promise<boolean> {
+async function storeAction(action: () => Promise<StoreState>, failed: (cause: unknown) => void): Promise<boolean> {
   if (secrets.storeBusy) return false;
   const started = generation;
   setSecrets({ storeBusy: true, storeError: "" });
@@ -103,23 +156,34 @@ async function storeAction(action: () => Promise<StoreState>, fallback: string):
     setSecrets("store", state);
     return true;
   } catch (cause) {
-    if (started === generation && !sessionEnded(cause)) setSecrets("storeError", message(cause, fallback));
+    if (started === generation && !sessionEnded(cause)) failed(cause);
     return false;
   } finally {
     if (started === generation) setSecrets("storeBusy", false);
   }
 }
 
+const showError = (fallback: string) => (cause: unknown) => setSecrets("storeError", message(cause, fallback));
+
 export function initializeSecretStore(passphrase: string) {
-  return storeAction(() => initializeStore(passphrase), "Could not create the secret store.");
+  return storeAction(() => initializeStore(passphrase), showError("Could not create the secret store."));
 }
 
+/** Unlocks the store. Refused while the master's attempt limit counts down. */
 export function unlockSecretStore(passphrase: string) {
-  return storeAction(() => unlockStore(passphrase), "Could not unlock the secret store.");
+  if (retryWait() > 0) return Promise.resolve(false);
+  return storeAction(
+    () => unlockStore(passphrase),
+    (cause) => {
+      const failure = unlockFailure(cause, Date.now());
+      setSecrets("storeError", failure.error);
+      if (failure.retryUntil) startRetryClock(failure.retryUntil);
+    },
+  );
 }
 
 export function lockSecretStore() {
-  return storeAction(() => lockStore(), "Could not lock the secret store.");
+  return storeAction(() => lockStore(), showError("Could not lock the secret store."));
 }
 
 export function setReferencedSecrets(hostID: string, stack: string, names: string[]) {

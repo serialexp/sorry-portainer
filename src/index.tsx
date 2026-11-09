@@ -16,7 +16,7 @@ import {
 import { EnrollmentPage } from "./enrollment-ui";
 import { HealthNote } from "./health-note";
 import { enrollmentPath, hostPath, parseHostPath } from "./host-route";
-import { HostSecretWarnings, SecretStoreBanner } from "./secrets-ui";
+import { CreateStoreCard, HostSecretWarnings, SecretStoreSidebar } from "./secrets-ui";
 import { StackDetail, StackEditor, StackList } from "./stacks-ui";
 import { VolumeDetailPage, VolumeList } from "./volumes-ui";
 import { ImageDetailPage, ImageList } from "./images-ui";
@@ -88,11 +88,14 @@ function Dashboard() {
             </nav>
           </Show>
         </Show>
-        <div class="sidebar-footer">
-          <div class="pulse"></div>All systems nominal
-          <button class="text-button" onClick={() => void signOut()}>
-            Sign out
-          </button>
+        <div class="sidebar-bottom">
+          <SecretStoreSidebar />
+          <div class="sidebar-footer">
+            <div class="pulse"></div>All systems nominal
+            <button class="text-button" onClick={() => void signOut()}>
+              Sign out
+            </button>
+          </div>
         </div>
       </aside>
       <main>
@@ -126,7 +129,6 @@ function Dashboard() {
             {fleet.notice}
           </div>
         </Show>
-        <SecretStoreBanner />
         <Show when={enrolling()}>
           <EnrollmentPage />
         </Show>
@@ -222,57 +224,60 @@ function pageHeading(pathname: string): { eyebrow: string; title: string; subtit
 function Overview() {
   const navigate = useNavigate();
   return (
-    <section class="fleet-section" aria-labelledby="fleet-heading">
-      <div class="section-heading">
-        <h2 id="fleet-heading">Podman hosts</h2>
-        <p>
-          {filteredHosts().length} {filteredHosts().length === 1 ? "host" : "hosts"}
-        </p>
-      </div>
-      <div class="host-grid">
-        <For each={filteredHosts()}>
-          {(host) => (
-            <button class="host-card" onClick={() => navigate(hostPath(host.host_id, "containers"))}>
-              <div class="host-card-top">
-                <div class="host-name">
-                  <span class="host-icon" aria-hidden="true">
-                    ⌂
-                  </span>
-                  <div>
-                    <strong>{host.host_id}</strong>
-                    <small>{host.hostname}</small>
+    <>
+      <CreateStoreCard />
+      <section class="fleet-section" aria-labelledby="fleet-heading">
+        <div class="section-heading">
+          <h2 id="fleet-heading">Podman hosts</h2>
+          <p>
+            {filteredHosts().length} {filteredHosts().length === 1 ? "host" : "hosts"}
+          </p>
+        </div>
+        <div class="host-grid">
+          <For each={filteredHosts()}>
+            {(host) => (
+              <button class="host-card" onClick={() => navigate(hostPath(host.host_id, "containers"))}>
+                <div class="host-card-top">
+                  <div class="host-name">
+                    <span class="host-icon" aria-hidden="true">
+                      ⌂
+                    </span>
+                    <div>
+                      <strong>{host.host_id}</strong>
+                      <small>{host.hostname}</small>
+                    </div>
                   </div>
+                  <span class="online">
+                    <i class="dot green"></i>Online
+                  </span>
                 </div>
-                <span class="online">
-                  <i class="dot green"></i>Online
-                </span>
-              </div>
-              <dl class="host-meta">
-                <div>
-                  <dt>Podman</dt>
-                  <dd>{host.engine_version}</dd>
+                <dl class="host-meta">
+                  <div>
+                    <dt>Podman</dt>
+                    <dd>{host.engine_version}</dd>
+                  </div>
+                  <div>
+                    <dt>Prefix</dt>
+                    <dd class="mono">{host.prefix}</dd>
+                  </div>
+                </dl>
+                <div class="host-foot">
+                  <span>Browse resources</span>
+                  {host.swap_active ? <span class="warn-chip">Swap active</span> : <span aria-hidden="true">→</span>}
                 </div>
-                <div>
-                  <dt>Prefix</dt>
-                  <dd class="mono">{host.prefix}</dd>
-                </div>
-              </dl>
-              <div class="host-foot">
-                <span>Browse resources</span>
-                {host.swap_active ? <span class="warn-chip">Swap active</span> : <span aria-hidden="true">→</span>}
-              </div>
-            </button>
-          )}
-        </For>
-        <A class="enroll-tile" href={enrollmentPath}>
-          <span class="host-icon" aria-hidden="true">
-            +
-          </span>
-          <strong>Enroll a host</strong>
-          <small>Create a one-time token, then run the agent's enroll command on the new machine.</small>
-        </A>
-      </div>
-    </section>
+              </button>
+            )}
+          </For>
+          <A class="enroll-tile" href={enrollmentPath}>
+            <span class="host-icon" aria-hidden="true">
+              +
+            </span>
+            <strong>Enroll a host</strong>
+            <small>Create a one-time token, then run the agent's enroll command on the new machine.</small>
+          </A>
+        </div>
+      </section>
+    </>
   );
 }
 function HostPage() {

@@ -2,7 +2,7 @@
 
 Status: partial — phases 1 and 2 (rotation, agent restart, host reboot) and showing a stored value implemented and tested end to end on rootless Podman 4.9.3/runc; stack deletion, crun and Ubuntu 26.04 outstanding
 Owner: Bart
-Last updated: 2026-11-07
+Last updated: 2026-11-09
 
 ## Implementation status
 
@@ -39,6 +39,7 @@ items as they land and move them to Done.
 - [x] **Phase 2 — host reboot and agent restart.** Bart (2026-09-25): the agent remembers. `Up` and `Down` record the desired state in `<stack>/state.json` (no secrets), with the host's boot ID when an `up` succeeded. At start the agent brings up, one at a time, every stack that should be up but has not been up since this boot; a stack whose secrets have not arrived waits, and the master's push starts it (`SecretSyncResult.started`). The stack list shows "starts after reboot" / "stays stopped after reboot" and why a stack is waiting; the list got a Stop button (with confirmation) so the desired state can be set to down from the UI.
 - [x] **Tests — restart and reboot (extended beyond the original plan).** Unit tests for desired state, resume after reboot vs agent restart, waiting for and starting on the push, a broken state file, and digest comparisons (`internal/stacks/desired_test.go`, `internal/secrets`); benchmarks for listing and resuming 1000 stacks; the live Podman test now also covers an agent restart (push restarts nothing) and a simulated reboot (plain stack back at once, secret stack started by the push).
 - [x] **Decision and implementation — showing a stored value (2026-11-07).** Bart chose "Show, re-enter passphrase", which reverses the write-only rule in phase 1. See [Follow-up](#follow-up-2026-11-07-showing-a-stored-value).
+- [x] **Secret store UI per the design's "Secret store" board (2026-11-09, extended beyond the original plan).** The banner on every page is gone. The store's status lives in the sidebar footer ("Secrets locked · Unlock", which expands in place; "Secrets unlocked · Lock", the only Lock control; "Secrets not set up · Set up", which focuses the create form). The create form is a card above the host grid on the Hosts page only. Stack pages (new, edit, detail) show an unlock banner under the header while locked, or a "not set up yet" line linking to the Hosts page. Both unlock forms share the store's error line and countdown: a wrong passphrase (403) shows "Could not unlock: the passphrase is wrong.", and the attempt limit (429) disables the field and counts down from Retry-After. With no store configured the footer is hidden and the secrets panel (and New stack's secrets note) says so. While locked, the panel's form and Show/Replace/Delete are disabled with a note.
 
 ### Outstanding
 

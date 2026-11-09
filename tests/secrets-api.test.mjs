@@ -2,7 +2,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   SecretsUnavailableError,
+  TooManyAttemptsError,
+  WrongPassphraseError,
   deleteStackSecret,
+  retryAfterSeconds,
   getStoreState,
   initializeStore,
   listStackSecrets,
@@ -14,7 +17,12 @@ import {
 import { UnauthorizedError } from "../src/fleet-api.ts";
 
 const ok = (body) => ({ ok: true, json: async () => body });
-const fail = (status, text) => ({ ok: false, status, text: async () => text });
+const fail = (status, text, headers = {}) => ({
+  ok: false,
+  status,
+  text: async () => text,
+  headers: { get: (name) => headers[name] ?? null },
+});
 
 test("a 401 from any secret route means the session ended", async () => {
   const unauthorized = async () => fail(401, "authentication required");
@@ -55,9 +63,43 @@ test("short passphrases are refused before any request", async () => {
   assert.equal(calls, 0);
 });
 
+test("unlocking tells a wrong passphrase from the attempt limit", async () => {
+  await assert.rejects(
+    unlockStore("wrong passphrase!", async () => fail(403, "wrong passphrase")),
+    WrongPassphraseError,
+  );
+  await assert.rejects(
+    unlockStore("wrong passphrase!", async () =>
+      fail(429, "too many passphrase attempts; try again in 42 seconds", { "Retry-After": "42" }),
+    ),
+    (error) => error instanceof TooManyAttemptsError && error.retryAfterSeconds === 42,
+  );
+  // Without a Retry-After there is nothing to count down: the message is shown.
+  await assert.rejects(
+    unlockStore("wrong passphrase!", async () => fail(429, "too many passphrase attempts; try again in 3 seconds")),
+    (error) => !(error instanceof TooManyAttemptsError) && /try again in 3 seconds/.test(error.message),
+  );
+  await assert.rejects(
+    unlockStore("x", async () => fail(503, "secret store not configured")),
+    SecretsUnavailableError,
+  );
+});
+
+test("Retry-After is read as whole seconds only", () => {
+  assert.equal(retryAfterSeconds("42"), 42);
+  assert.equal(retryAfterSeconds(" 7 "), 7);
+  assert.equal(retryAfterSeconds("0"), 0);
+  assert.equal(retryAfterSeconds(null), undefined);
+  assert.equal(retryAfterSeconds(""), undefined);
+  assert.equal(retryAfterSeconds("Wed, 21 Oct 2026 07:28:00 GMT"), undefined);
+  assert.equal(retryAfterSeconds("1.5"), undefined);
+});
+
 test("server errors carry the server's message; 503 means no secret store", async () => {
-  await assert.rejects(unlockStore("wrong passphrase!", async () => fail(403, "wrong passphrase")), /wrong passphrase/);
-  await assert.rejects(getStoreState(async () => fail(503, "secret store not configured")), SecretsUnavailableError);
+  await assert.rejects(
+    getStoreState(async () => fail(503, "secret store not configured")),
+    SecretsUnavailableError,
+  );
   await assert.rejects(
     listStackSecrets("h", "s", async () => fail(503, "")),
     (error) => error instanceof SecretsUnavailableError,

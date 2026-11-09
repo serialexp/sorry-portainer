@@ -3,9 +3,9 @@ import { createEffect, createSignal, For, Show } from "solid-js";
 import { filteredStacks, fleet, loadStacks, searchTerm, sessionEnded } from "./fleet-store";
 import { editStackPath, hostPath, newStackPath, parseHostPath, stackPath } from "./host-route";
 import { HealthNote } from "./health-note";
-import { StackSecretsPanel } from "./secrets-ui";
+import { NoSecretStore, StackSecretsPanel, StackStoreNotice } from "./secrets-ui";
 import { type StackRunState, type StackService, canStart, serviceStateLabel, stackRunState } from "./stack-state";
-import { setReferencedSecrets } from "./secrets-store";
+import { secrets, setReferencedSecrets } from "./secrets-store";
 import {
   createStack,
   deployStack,
@@ -388,6 +388,7 @@ export function StackDetail() {
           </button>
         </div>
       </div>
+      <StackStoreNotice />
       <Show when={loadError()}>
         <p class="form-error" role="alert">
           {loadError()}
@@ -675,6 +676,7 @@ export function StackEditor() {
           : "Save and start deploys to this host. You can also save a draft without starting it."}
         {saved() ? " Changes saved. You can retry Start without saving another version." : ""}
       </p>
+      <StackStoreNotice />
       <Show when={loading()}>
         <p>Loading stack…</p>
       </Show>
@@ -753,10 +755,12 @@ export function StackEditor() {
       <Show
         when={editedStack()}
         fallback={
-          <p class="stack-note">
-            Stacks can use Compose <code>secrets:</code>. Save the stack, then set the secret values on its edit page
-            before starting it.
-          </p>
+          <Show when={secrets.store !== "unavailable"} fallback={<NoSecretStore />}>
+            <p class="stack-note">
+              Stacks can use Compose <code>secrets:</code>. Save the stack, then set the secret values on its edit page
+              before starting it.
+            </p>
+          </Show>
         }
       >
         {(stackName) => <StackSecretsPanel hostID={currentHost()} stackName={stackName()} />}

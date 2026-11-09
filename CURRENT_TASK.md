@@ -1,5 +1,13 @@
 # Current task: move jp1 from Docker to Podman 6 — phases 1–3 done (switched 2026-11-08); next, the reboot experiment and phase 4. v0.2.6 (container health, recent restarts, secret reveal) is released and deployed.
 
+## Secret store UI per the design (rapid-owl, 2026-11-09)
+
+- Design source: the Claude Design canvas recorded in CLAUDE.md ("Design source"). The "Secret store" board is the spec; the design agent answered seven placement questions on it.
+- Done and captured in Wheat ("Secret store UI: sidebar status, Hosts create card, stack page banners, attempt countdown"). Frontend tests (78), tsc and build pass. Checked in the dev browser against the real master: sidebar locked → expand → wrong passphrase (field keeps text) → Escape collapses; the 429 countdown disables the field and re-enables it; stack detail and edit banners; panel disabled while locked.
+- Not checked in the browser: "not set up" (Hosts create card, sidebar Set up, stack page line) and "no secret store". The dev store would have to be parked to show them, and its passphrase isn't recorded. Unlocking itself wasn't checked for the same reason.
+- Differences from the design left alone (not asked for): the StackDetail board puts the secrets table on the detail page with Name/Size/Used by/Updated columns and an "Add secret" button; ours keeps the panel on the edit page. New stack has no "What this creates" panel; the no-store note replaces the secrets note there instead.
+- Earlier the same day: the "Connected to the Podman fleet" notice was removed (Wheat "Dashboard: drop the Connected notice…").
+
 ## Podman 6 packages and the jp1 move (2026-11-06)
 
 - Plan (docs/design/caddy-podman.md): Caddy runs as a stack under the agent user, behind `{{upstreams}}` labels; big-bang switch; accounts become `sorry-portainer-master` and `sorry-portainer-agent` (hel1 renamed in place). Client addresses need Podman 6's `rootless_port_forwarder = "pasta"`, so we build Podman 6 ourselves.

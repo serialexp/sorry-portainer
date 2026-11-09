@@ -30,6 +30,27 @@ export const maxSecretBytes = 64 * 1024;
 /** Thrown when the master has no secret store configured (HTTP 503). */
 export class SecretsUnavailableError extends Error {}
 
+/** Thrown when unlocking with a wrong passphrase (HTTP 403). */
+export class WrongPassphraseError extends Error {}
+
+/**
+ * Thrown when the master refuses passphrase attempts for a while (HTTP 429).
+ * `retryAfterSeconds` is the master's Retry-After value.
+ */
+export class TooManyAttemptsError extends Error {
+  readonly retryAfterSeconds: number;
+  constructor(message: string, retryAfterSeconds: number) {
+    super(message);
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
+}
+
+/** The whole seconds in a Retry-After header, or undefined when it holds none. */
+export function retryAfterSeconds(header: string | null | undefined): number | undefined {
+  if (!header || !/^\d+$/.test(header.trim())) return undefined;
+  return Number(header.trim());
+}
+
 async function failure(response: Response, fallback: string): Promise<Error> {
   const text = (await response.text()).trim();
   if (response.status === 401) return new UnauthorizedError(text || fallback);
@@ -48,23 +69,37 @@ export function getStoreState(request: typeof fetch = fetch): Promise<StoreState
   return stateRequest("status", undefined, "Could not read the secret store state", request);
 }
 
-function passphraseRequest(action: "initialize" | "unlock", passphrase: string, request: typeof fetch) {
-  return stateRequest(
-    action,
-    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ passphrase }) },
-    action === "initialize" ? "Could not create the secret store" : "Could not unlock the secret store",
-    request,
-  );
-}
+/**
+ * Unlocks the store. A wrong passphrase throws WrongPassphraseError, and the
+ * master's attempt limit throws TooManyAttemptsError with its wait.
+ */
 
 export async function initializeStore(passphrase: string, request: typeof fetch = fetch): Promise<StoreState> {
   if (passphrase.length < minPassphraseLength)
     throw new Error(`Use a passphrase of at least ${minPassphraseLength} characters.`);
-  return passphraseRequest("initialize", passphrase, request);
+  return stateRequest(
+    "initialize",
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ passphrase }) },
+    "Could not create the secret store",
+    request,
+  );
 }
 
-export function unlockStore(passphrase: string, request: typeof fetch = fetch): Promise<StoreState> {
-  return passphraseRequest("unlock", passphrase, request);
+export async function unlockStore(passphrase: string, request: typeof fetch = fetch): Promise<StoreState> {
+  const response = await request("/api/secrets/unlock", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ passphrase }),
+  });
+  if (response.status === 403) throw new WrongPassphraseError((await response.text()).trim() || "wrong passphrase");
+  if (response.status === 429) {
+    const text = (await response.text()).trim() || "too many passphrase attempts";
+    const wait = retryAfterSeconds(response.headers?.get("Retry-After"));
+    // Without a wait to count down, the master's message is all there is.
+    throw wait === undefined ? new Error(text) : new TooManyAttemptsError(text, wait);
+  }
+  if (!response.ok) throw await failure(response, "Could not unlock the secret store");
+  return ((await response.json()) as { state: StoreState }).state;
 }
 
 export function lockStore(request: typeof fetch = fetch): Promise<StoreState> {

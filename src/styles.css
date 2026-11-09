@@ -201,7 +201,6 @@ button {
   color: #c9d6ce;
 }
 .sidebar-footer {
-  margin-top: auto;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -1303,46 +1302,394 @@ h2 {
   color: var(--warn-ink);
 }
 
-/* Secret store banner */
-.secret-store {
-  margin: 0;
-  padding: 12px 15px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--surface);
-  color: var(--ink-2);
-  font-size: 13.5px;
+/* Secret store: the sidebar footer panel (every page) */
+.sidebar-bottom {
+  margin-top: auto;
+  display: grid;
+  gap: 14px;
 }
-.secret-store.locked,
-.secret-store.uninitialized {
-  background: var(--warn-chip);
-  border-color: #f1e0bd;
-  color: var(--warn-ink);
+.store-panel {
+  display: grid;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--sidebar-panel);
+  border: 1px solid rgba(227, 168, 87, 0.35);
+  border-radius: 10px;
 }
-.secret-store-row {
+.store-panel.unlocked {
+  border-color: rgba(255, 255, 255, 0.07);
+}
+.store-panel-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
 }
-.secret-store-form {
+.store-panel-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--amber-soft);
+}
+.store-panel.unlocked .store-panel-state {
+  color: #b5e3c6;
+}
+.store-panel-form {
+  display: grid;
+  gap: 10px;
+}
+.store-panel-action,
+.store-panel-cancel {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 10px;
+  border-radius: 7px;
+  font: inherit;
+  font-size: 12.5px;
+  text-decoration: none;
+  cursor: pointer;
+}
+.store-panel-action {
+  border: 0;
+  background: var(--amber);
+  color: var(--sidebar);
+  font-weight: 700;
+}
+.store-panel-cancel {
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: transparent;
+  color: #ffffff;
+  font-weight: 600;
+}
+.store-panel-action:disabled {
+  background: #5e5440;
+  color: #c9bfa9;
+  cursor: not-allowed;
+}
+.store-panel-buttons {
+  display: flex;
+  gap: 6px;
+}
+.store-panel-buttons button {
+  flex: 1;
+  min-height: 36px;
+  font-size: 13px;
+}
+.store-panel-input {
+  min-height: 40px;
+  box-sizing: border-box;
+  padding: 0 10px;
+  border: 1px solid var(--amber);
+  border-radius: 8px;
+  background: var(--sidebar);
+  color: #ffffff;
+  font: inherit;
+  font-size: 13.5px;
+}
+.store-panel-input::placeholder {
+  color: #8fa39a;
+}
+.store-panel-input.error {
+  border-color: #e08a75;
+}
+.store-panel-input:disabled {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: #1f302a;
+  color: #8fa39a;
+}
+.store-panel-error,
+.store-panel-wait {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+.store-panel-error {
+  color: #f2a493;
+}
+.store-panel-wait {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  color: var(--amber-soft);
+}
+.store-panel-wait .icon {
+  flex: none;
+  margin-top: 2px;
+}
+
+/* Secret store: the create card, on the Hosts page while there is no store */
+.store-create {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-bottom: 36px;
+  padding: 22px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+}
+.store-create-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+.store-create-head > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.store-create-head h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+.store-create-head span {
+  max-width: 820px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #3e4b44;
+}
+.store-create-icon {
+  flex: none;
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 11px;
+  background: var(--sidebar);
+  color: var(--amber);
+}
+.store-create-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--danger-chip);
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: #8a2c1a;
+}
+.store-create-warning .icon {
+  flex: none;
+  margin-top: 2px;
+}
+.store-create-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+.store-create-fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.store-create-fields input {
+  min-height: 46px;
+  box-sizing: border-box;
+  padding: 0 14px;
+  border: 1px solid var(--field-line);
+  border-radius: 10px;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 400;
+}
+.store-create-fields input:focus {
+  outline: none;
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px rgba(47, 122, 85, 0.15);
+}
+.store-create-fields .store-solid {
+  min-height: 46px;
+  padding: 0 22px;
+  font-size: 14.5px;
+}
+.store-create-help {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+.store-create-help.error {
+  color: var(--danger);
+}
+.store-solid {
+  min-height: 44px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--sidebar);
+  color: #ffffff;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.store-solid:hover:not(:disabled) {
+  background: #25392f;
+}
+.store-solid:disabled {
+  background: #c9c3b4;
+  color: #4f4a3f;
+  cursor: not-allowed;
+}
+
+/* Secret store: stack pages, while locked or not set up */
+.store-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 16px 0 20px;
+  padding: 16px 18px;
+  background: var(--warn-chip);
+  border: 1px solid #ebcf9f;
+  border-radius: 14px;
+}
+.store-banner-main {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 16px;
 }
-.secret-store-form p {
-  flex-basis: 100%;
-  margin: 0 0 4px;
+.store-banner-icon {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: #f3ddb4;
+  color: var(--warn-ink);
+}
+.store-banner-copy {
+  flex: 1 1 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.store-banner-copy strong {
+  font-size: 14.5px;
+  color: #4e3209;
+}
+.store-banner-copy span {
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: #6b4a16;
+}
+.store-banner-fields {
+  flex: 1 1 340px;
+  display: flex;
+  gap: 8px;
+}
+.store-banner-fields input {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  box-sizing: border-box;
+  padding: 0 14px;
+  border: 1px solid #e3c48e;
+  border-radius: 10px;
+  background: #fffdf8;
+  font: inherit;
+  font-size: 14px;
+}
+.store-banner-fields input::placeholder {
+  color: #8c7656;
+}
+.store-banner-fields input.error {
+  border-color: #c9573f;
+}
+.store-banner-fields input:disabled {
+  border-color: #ebd7b1;
+  background: #f7ebd4;
+}
+.store-banner-note {
+  margin: 0 0 0 56px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13.5px;
+  color: var(--warn-ink);
+}
+.store-banner-note.error {
+  color: var(--danger);
+}
+.store-setup-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin: 16px 0 20px;
+  padding: 14px 18px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  color: var(--accent-ink);
+}
+.store-setup-line > span {
+  flex: 1 1 300px;
+  font-size: 14px;
+  color: #3e4b44;
+}
+.store-setup-line strong {
+  color: var(--ink);
+}
+
+/* Secret store: none configured on this master */
+.no-store {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px 18px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  color: var(--muted);
+}
+.no-store .icon {
+  flex: none;
+  margin-top: 1px;
+}
+.no-store > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.no-store strong {
+  font-size: 14.5px;
+  color: var(--ink);
+}
+.no-store span {
+  font-size: 13.5px;
   line-height: 1.5;
 }
-.secret-store-form input {
-  flex: 1 1 200px;
-  padding: 10px 12px;
-  border: 1px solid var(--field-line);
-  border-radius: 10px;
-  background: var(--surface);
-  font: 14px var(--body);
+.no-store code {
+  font: 12.5px var(--mono);
+}
+
+/* Stack secrets panel while the store is locked */
+.secret-locked-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13.5px;
+  color: var(--warn-ink);
+}
+.secret-form fieldset {
+  display: grid;
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+.secret-form fieldset:disabled {
+  opacity: 0.6;
 }
 
 /* Enrollment: the dark "new host" and "new token" panels from the design */
