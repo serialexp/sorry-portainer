@@ -1,6 +1,9 @@
 # Current task: move jp1 from Docker to Podman 6 — phases 1–3 done (switched 2026-11-08); next, the reboot experiment and phase 4. v0.2.10 (image update check and Update per service) is released and deployed to jp1 and hel1 (2026-11-12).
 
-## Image updates, v0.2.10 (rapid-owl, 2026-11-12)
+## Registry logins (rapid-owl, 2026-11-12), design only
+
+- Bart: private Docker Hub images can't be checked or pulled; the agent account on jp1/hel1 has no login files. Design `docs/design/registry-logins.md`, all decisions made by Bart (master's secret store, dashboard page, all hosts, push and keep with a per-host tmpfs auth.json, show after passphrase, test via an agent, registry or namespace keys, username in the clear, reuse the tmpfs file on agent restart, agent pre-pulls before `up`, corrupt file → start empty). Reviewed by Codex and Antigravity; findings applied (see its Review section). Next: the design agent's board for the page (list in the doc's Dashboard section), then phase 1 (backend), which doesn't need the board.
+
 
 - Wheat changes "Stack image updates: registry check per service, Update (pull + force-recreate)", "Image checks: tell a refused or missing tag apart from an unreachable registry" and "Stack updates report their steps: relay progress frames, streamed to the dashboard" (design: `docs/design/image-updates.md`). Open: the design agent's wording for pinned/local/unresolved images and the failure states.
 - v0.2.10: main and tag → `7aae00a` pushed to Gothab as separate steps; release run `8504d451…` passed, release `4d85a5f1-6078-411f-be52-957ae5458e5d`; assets checked against SHA256SUMS and pinned in `vars/release.yml`. rsansible rebuilt from source; check run, real run (jp1 server, CLI and agent; hel1 agent), second run changed=0. `hosts list` shows jp1 and hel1 online; no errors in the logs. Server and agents must be deployed together (a new agent's progress frames disconnect an old server). GitHub not pushed.
