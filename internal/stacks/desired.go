@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/serialexp/sorry-portainer/internal/protocol"
+	"github.com/serialexp/sorry-portainer/internal/registries"
 )
 
 // stackState is what the agent remembers about a stack across its own
@@ -89,14 +90,27 @@ func pending(s stackState, boot string) bool {
 	return boot != "" && s.Desired == desiredUp && s.UpBoot != boot
 }
 
-func (m *Manager) setWaiting(n, reason string) {
+// setWaiting records why a bring-up of n failed; a nil err clears it.
+func (m *Manager) setWaiting(n string, err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if reason == "" {
+	if err == nil {
 		delete(m.waiting, n)
-	} else {
-		m.waiting[n] = reason
+		return
 	}
+	w := waitState{reason: waitingReason(err)}
+	if missing, ok := errors.AsType[*missingLoginError](err); ok {
+		w.login = missing.repository
+	}
+	m.waiting[n] = w
+}
+
+// waitState is why a stack that should be up has not come up since boot.
+type waitState struct {
+	reason string
+	// login is the repository a registry refused to pull from, when the
+	// stack waits for a registry login.
+	login string
 }
 
 // describeState fills a stack's Desired and Waiting fields. It requires the
@@ -111,8 +125,9 @@ func (m *Manager) describeState(stack *protocol.Stack) error {
 		return nil
 	}
 	m.mu.Lock()
-	stack.Waiting = m.waiting[stack.Name]
+	w := m.waiting[stack.Name]
 	m.mu.Unlock()
+	stack.Waiting, stack.WaitingLogin = w.reason, w.login
 	if stack.Waiting == "" {
 		stack.Waiting = "waiting to start after the agent started"
 	}
@@ -123,6 +138,9 @@ func (m *Manager) describeState(stack *protocol.Stack) error {
 func waitingReason(err error) string {
 	if missing, ok := errors.AsType[*missingSecretsError](err); ok {
 		return fmt.Sprintf("waiting for secrets %s from the master (is it unlocked?)", strings.Join(missing.names, ", "))
+	}
+	if missing, ok := errors.AsType[*missingLoginError](err); ok {
+		return "waiting for registry login for " + registries.RegistryOf(missing.repository)
 	}
 	first, _, _ := strings.Cut(err.Error(), "\n")
 	return "start failed: " + first
@@ -160,11 +178,13 @@ func (m *Manager) Resume(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		m.resumeOne(ctx, n)
+		m.resumeOne(ctx, n, "the agent started")
 	}
 }
 
-func (m *Manager) resumeOne(ctx context.Context, n string) {
+// resumeOne brings up n if it is still pending; after says what prompted it,
+// for the log.
+func (m *Manager) resumeOne(ctx context.Context, n, after string) {
 	l := m.lock(n)
 	l.Lock()
 	defer l.Unlock()
@@ -174,10 +194,10 @@ func (m *Manager) resumeOne(ctx context.Context, n string) {
 		return
 	}
 	if _, err := m.operateLocked(ctx, n, "up"); err != nil {
-		m.logf("stack %s did not start after the agent started: %s", n, waitingReason(err))
+		m.logf("stack %s did not start after %s: %s", n, after, waitingReason(err))
 		return
 	}
-	m.logf("stack %s started after the agent started", n)
+	m.logf("stack %s started after %s", n, after)
 }
 
 // stackNames lists the saved stacks.

@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,19 +18,45 @@ import (
 func digest(c string) string { return "sha256:" + strings.Repeat(c, 64) }
 
 type fakeImages struct {
+	mu      sync.Mutex
 	local   []podman.LocalImage
 	listErr error
 	pulled  []string
 	pullErr error
+	// absent are the references ImageExists says Podman lacks; pullErrs
+	// fail the pulls of particular references. A pull that works makes the
+	// reference present.
+	absent   map[string]bool
+	pullErrs map[string]error
 }
 
 func (f *fakeImages) LocalImages(context.Context) ([]podman.LocalImage, error) {
 	return f.local, f.listErr
 }
 
+func (f *fakeImages) ImageExists(_ context.Context, ref string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return !f.absent[ref], nil
+}
+
 func (f *fakeImages) Pull(_ context.Context, ref string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.pulled = append(f.pulled, ref)
+	if err := f.pullErrs[ref]; err != nil {
+		return "", err
+	}
+	if f.pullErr == nil {
+		delete(f.absent, ref)
+	}
 	return "0123456789ab", f.pullErr
+}
+
+func (f *fakeImages) pulledSnapshot() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.pulled...)
 }
 
 type fakeChecker struct {

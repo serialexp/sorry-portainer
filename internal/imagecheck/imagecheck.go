@@ -7,6 +7,7 @@ package imagecheck
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -73,6 +74,18 @@ func failureOf(err error) Failure {
 	return Unreachable
 }
 
+// describe is the text kept and shown for a failed request. A registry's
+// error body can echo request details, so an HTTP answer is reduced to its
+// status; other errors (DNS, connection, TLS) come from this host's network
+// stack and carry no registry text.
+func describe(err error) string {
+	var answered *transport.Error
+	if errors.As(err, &answered) {
+		return fmt.Sprintf("the registry answered %d %s", answered.StatusCode, http.StatusText(answered.StatusCode))
+	}
+	return err.Error()
+}
+
 type Options struct {
 	TTL         time.Duration
 	MaxEntries  int
@@ -92,6 +105,8 @@ type entry struct {
 type call struct {
 	done   chan struct{}
 	remote Remote
+	// generation is the Checker's generation when the request started.
+	generation uint64
 }
 
 // Checker caches registry answers per reference. It is safe for concurrent use.
@@ -105,6 +120,10 @@ type Checker struct {
 	built    map[string]time.Time
 	// builtOrder is the insertion order of built, oldest first, for eviction.
 	builtOrder []string
+	// generation changes on every Flush. A request records it when it starts
+	// and only caches its answer if it is still current, so a request made
+	// with logins that have since changed cannot refill the cache.
+	generation uint64
 }
 
 func New(registry Registry, options Options) *Checker {
@@ -202,14 +221,14 @@ func (c *Checker) failed(ref string, err error) Remote {
 	if e := c.entries[ref]; e != nil {
 		remote = e.remote
 	}
-	remote.Err, remote.Failure = err.Error(), failureOf(err)
+	remote.Err, remote.Failure = describe(err), failureOf(err)
 	return remote
 }
 
 // ask makes one HEAD request for ref, or waits for the one already running.
 func (c *Checker) ask(ctx context.Context, ref string) Remote {
 	c.mu.Lock()
-	if running := c.inflight[ref]; running != nil {
+	if running := c.inflight[ref]; running != nil && running.generation == c.generation {
 		c.mu.Unlock()
 		select {
 		case <-running.done:
@@ -218,7 +237,7 @@ func (c *Checker) ask(ctx context.Context, ref string) Remote {
 			return c.failed(ref, ctx.Err())
 		}
 	}
-	current := &call{done: make(chan struct{})}
+	current := &call{done: make(chan struct{}), generation: c.generation}
 	c.inflight[ref] = current
 	c.mu.Unlock()
 
@@ -228,23 +247,35 @@ func (c *Checker) ask(ctx context.Context, ref string) Remote {
 
 	c.mu.Lock()
 	now := c.options.Now()
-	e := c.entries[ref]
-	if e == nil {
-		e = &entry{}
-		c.entries[ref] = e
+	var remote Remote
+	if e := c.entries[ref]; e != nil {
+		remote = e.remote
 	}
 	if err != nil {
-		e.remote.Err, e.remote.Failure = err.Error(), failureOf(err)
+		remote.Err, remote.Failure = describe(err), failureOf(err)
 	} else {
-		e.remote = Remote{Digest: digest, CheckedAt: now}
+		remote = Remote{Digest: digest, CheckedAt: now}
 	}
-	e.attempted = now
-	c.evictLocked()
-	current.remote = e.remote
-	delete(c.inflight, ref)
+	if current.generation == c.generation {
+		c.entries[ref] = &entry{remote: remote, attempted: now}
+		c.evictLocked()
+	}
+	current.remote = remote
+	if c.inflight[ref] == current {
+		delete(c.inflight, ref)
+	}
 	c.mu.Unlock()
 	close(current.done)
 	return current.remote
+}
+
+// Flush drops every cached answer and makes requests already running unable
+// to cache theirs. The agent calls it when its registry logins change.
+func (c *Checker) Flush() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.generation++
+	clear(c.entries)
 }
 
 // evictLocked drops the least recently attempted entries beyond MaxEntries.

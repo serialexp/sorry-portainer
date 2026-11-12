@@ -19,6 +19,9 @@ type Agent struct {
 	HostID, Prefix string
 	Handler        Handler
 	Stacks         *stacks.Manager
+	// Registries holds the host's registry logins; nil refuses the
+	// registries operations.
+	Registries Registries
 	// Heartbeat is the server's ping interval; zero selects DefaultHeartbeat.
 	// The agent treats heartbeatMisses silent intervals as a dead connection.
 	Heartbeat time.Duration
@@ -57,6 +60,15 @@ func (a *Agent) RequestReconnect() {
 }
 
 var errStacksUnavailable = errors.New("stack agent unavailable")
+
+var errRegistriesUnavailable = errors.New("this agent was started without registry logins")
+
+// Registries is the agent's registry login set; registryvault.Vault is the
+// implementation, behind an adapter that picks how Test signs in.
+type Registries interface {
+	Sync(protocol.RegistrySync) (protocol.RegistrySynced, error)
+	Test(ctx context.Context, login protocol.RegistryLogin) (protocol.RegistryTestResult, error)
+}
 
 // agentSession is the agent side of one connection. The reader goroutine
 // dispatches each request to its own worker, bounded by protocol.MaxInFlight;
@@ -390,6 +402,22 @@ func (a *Agent) handle(ctx context.Context, operation string, payload json.RawMe
 			return nil, err
 		}
 		return a.Stacks.RetainSecrets(request)
+	case opRegistriesSync, opRegistriesTest:
+		if a.Registries == nil {
+			return nil, errRegistriesUnavailable
+		}
+		if operation == opRegistriesSync {
+			request, err := decodePayload[protocol.RegistrySync](payload)
+			if err != nil {
+				return nil, err
+			}
+			return a.Registries.Sync(request)
+		}
+		request, err := decodePayload[protocol.RegistryTest](payload)
+		if err != nil {
+			return nil, err
+		}
+		return a.Registries.Test(ctx, request.Login)
 	}
 	if !strings.HasPrefix(operation, "stacks.") {
 		return nil, unknownOperationError{operation}

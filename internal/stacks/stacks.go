@@ -87,6 +87,17 @@ func composeEnvironment(base []string, stack map[string]string, provider string)
 		values[key] = value
 	}
 	values["PODMAN_COMPOSE_PROVIDER"] = provider
+	// The registry login variables are the agent's own, whatever a stack
+	// saved before checkEnvironment refused them, so a stack can't point
+	// Podman at other logins.
+	for key := range reservedEnvironment {
+		delete(values, key)
+	}
+	for _, entry := range base {
+		if key, value, ok := strings.Cut(entry, "="); ok && reservedEnvironment[key] {
+			values[key] = value
+		}
+	}
 
 	keys := make([]string, 0, len(values))
 	for key := range values {
@@ -144,13 +155,17 @@ type Manager struct {
 	// bootID (see SetBootID) and waiting are guarded by mu. waiting holds why
 	// a stack that should be up has not come up since boot.
 	bootID  string
-	waiting map[string]string
+	waiting map[string]waitState
+	// logins is nil unless EnableRegistryLogins was called. loginRound and
+	// loginAgain, guarded by mu, serialize LoginsChanged's rounds.
+	logins                 RegistryLogins
+	loginRound, loginAgain bool
 	// Logf reports background bring-ups; nil discards them.
 	Logf func(format string, args ...any)
 }
 
 func New(root, prefix string, e Executor) *Manager {
-	return &Manager{root: root, prefix: prefix, executor: e, locks: map[string]*sync.Mutex{}, waiting: map[string]string{}}
+	return &Manager{root: root, prefix: prefix, executor: e, locks: map[string]*sync.Mutex{}, waiting: map[string]waitState{}}
 }
 func ValidName(n string) bool { return protocol.ValidStackName(n) }
 func (m *Manager) lock(n string) *sync.Mutex {
@@ -314,6 +329,10 @@ const maxEnvironment = 128
 
 var environmentKey = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
+// reservedEnvironment are keys a stack may not set: they would point Podman
+// at registry logins other than the agent's.
+var reservedEnvironment = map[string]bool{"REGISTRY_AUTH_FILE": true, "DOCKER_CONFIG": true}
+
 // checkEnvironment refuses keys that are not variable names and values an
 // env file or the dashboard's KEY=VALUE field could not show back. Errors
 // name keys, never values.
@@ -324,6 +343,9 @@ func checkEnvironment(env map[string]string) error {
 	for key, value := range env {
 		if !environmentKey.MatchString(key) {
 			return fmt.Errorf("environment key %q is not a valid name", key)
+		}
+		if reservedEnvironment[key] {
+			return fmt.Errorf("environment key %s is reserved: the agent chooses the registry logins Podman uses", key)
 		}
 		if strings.ContainsAny(value, "\n\r\x00") {
 			return fmt.Errorf("environment %s: values cannot contain line breaks or NUL", key)
@@ -560,14 +582,27 @@ func (m *Manager) operateLocked(ctx context.Context, n, op string) (protocol.Sta
 		if e := m.writeState(n, state); e != nil {
 			return protocol.StackOperation{}, fmt.Errorf("record desired state: %w", e)
 		}
-		m.setWaiting(n, "")
+		m.setWaiting(n, nil)
 	}
 	plan, e := m.prepareRuntime(n, op != "down")
 	if e != nil {
 		if op == "up" {
-			m.setWaiting(n, waitingReason(e))
+			m.setWaiting(n, e)
 		}
 		return protocol.StackOperation{Name: n, Operation: op, Output: e.Error()}, e
+	}
+	// One bound for the pulls and Compose, inside the relay's operation
+	// timeout.
+	runCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	var pulled string
+	if op == "up" {
+		// podman-compose 1.0.6 exits 0 when a pull fails, so missing images
+		// are pulled first, where a refusal can be told apart.
+		if pulled, e = m.pullMissing(runCtx, n); e != nil {
+			m.setWaiting(n, e)
+			return protocol.StackOperation{Name: n, Operation: op, Output: pulled + e.Error()}, e
+		}
 	}
 	// podman-compose 1.0.6 accepts -p/-f, but not Docker Compose's
 	// --project-directory option. The executor sets its working directory.
@@ -578,9 +613,8 @@ func (m *Manager) operateLocked(ctx context.Context, n, op string) (protocol.Sta
 	} else {
 		args = append(args, op)
 	}
-	runCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-	defer cancel()
 	out, e := m.executor.Run(runCtx, args, m.dir(n), env)
+	out = pulled + m.scrub(out)
 	if e == nil && op != "down" && !plan.empty() {
 		if e = m.checkInjected(runCtx, n, plan.Services); e != nil {
 			out += "\n" + e.Error()
@@ -588,7 +622,7 @@ func (m *Manager) operateLocked(ctx context.Context, n, op string) (protocol.Sta
 	}
 	if op == "up" {
 		if e != nil {
-			m.setWaiting(n, waitingReason(e))
+			m.setWaiting(n, e)
 		} else if boot := m.currentBoot(); boot != "" {
 			state.UpBoot = boot
 			if e = m.writeState(n, state); e != nil {

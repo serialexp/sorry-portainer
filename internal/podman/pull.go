@@ -2,7 +2,9 @@ package podman
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os/exec"
 	"strings"
 )
 
@@ -56,4 +58,21 @@ func (c *Client) Pull(ctx context.Context, ref string) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(string(data)), nil
+}
+
+// ImageExists reports whether Podman has an image ref names, resolving it
+// as `podman run` would (short names included), without asking a registry.
+func (c *Client) ImageExists(ctx context.Context, ref string) (bool, error) {
+	if ref == "" || strings.HasPrefix(ref, "-") {
+		return false, fmt.Errorf("invalid image reference %q", ref)
+	}
+	_, err := c.run(ctx, "image", "exists", "--", ref)
+	if err == nil {
+		return true, nil
+	}
+	// `podman image exists` exits 1 for a missing image, 125 for a failure.
+	if exit, ok := errors.AsType[*exec.ExitError](err); ok && exit.ExitCode() == 1 {
+		return false, nil
+	}
+	return false, err
 }

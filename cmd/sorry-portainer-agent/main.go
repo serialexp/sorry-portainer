@@ -20,6 +20,7 @@ import (
 	"github.com/serialexp/sorry-portainer/internal/imagecheck"
 	"github.com/serialexp/sorry-portainer/internal/podman"
 	"github.com/serialexp/sorry-portainer/internal/protocol"
+	"github.com/serialexp/sorry-portainer/internal/registryvault"
 	"github.com/serialexp/sorry-portainer/internal/relay"
 	"github.com/serialexp/sorry-portainer/internal/secrets"
 	"github.com/serialexp/sorry-portainer/internal/stacks"
@@ -85,6 +86,10 @@ func main() {
 	// SIGTERM from systemd cancels in-flight operations and waits for them.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	logins, err := startRegistryLogins(cfg.HostID)
+	if err != nil {
+		log.Fatalf("registry logins: %v", err)
+	}
 	// Podman cannot report volume sizes, so a background scan measures them.
 	client.StartVolumeSizeScan(ctx, podman.DefaultVolumeSizeInterval, log.Printf)
 
@@ -99,13 +104,26 @@ func main() {
 	manager := stacks.New(cfg.StateDir+"/stacks", cfg.Prefix, stacks.NewComposeExecutor(cfg.ComposeProvider))
 	manager.EnableSecrets(stacks.SecretSupport{HostID: cfg.HostID, Vault: vault, Containers: client})
 	manager.EnableRuntimeStatus(client)
-	manager.EnableImageChecks(client, imagecheck.New(imagecheck.NewRemoteRegistry(), imagecheck.Options{}))
+	checker := imagecheck.New(imagecheck.NewRemoteRegistry(logins), imagecheck.Options{})
+	manager.EnableImageChecks(client, checker)
+	manager.EnableRegistryLogins(logins)
+	// A new login set makes earlier registry answers stale, and may be what
+	// a waiting stack needs.
+	logins.OnCommit(func() {
+		checker.Flush()
+		manager.LoginsChanged(ctx)
+	})
 	manager.Logf = log.Printf
 	manager.SetBootID(bootID)
 	// After a reboot, bring back the stacks that were up. Stacks with secrets
 	// wait for the master's push, which arrives once the relay connects.
 	go manager.Resume(ctx)
-	agent := &relay.Agent{HostID: cfg.HostID, Prefix: cfg.Prefix, Handler: client, Stacks: manager, Describe: describeHost}
+	agent := &relay.Agent{HostID: cfg.HostID, Prefix: cfg.Prefix, Handler: client, Stacks: manager,
+		Registries: registryvault.Relay{Vault: logins},
+		Describe: func(info *protocol.HostInfo) {
+			describeHost(info)
+			info.RegistrySetID = logins.SetID()
+		}}
 	renewer := &agentcred.Renewer{HostID: cfg.HostID, ServerURL: cfg.ServerURL, ServerName: cfg.ServerName, CA: ca,
 		Dir: filepath.Dir(cfg.CredentialFile), CredentialFile: cfg.CredentialFile, Holder: holder,
 		// The master promotes the new certificate when the agent connects
@@ -153,6 +171,25 @@ func readBootID() (string, error) {
 		return "", errors.New("empty boot ID")
 	}
 	return id, nil
+}
+
+// startRegistryLogins opens the registry login vault, reading back the set
+// an earlier run left, and points every Podman command the agent runs, and
+// podman-compose's, at its auth file. It must run before any Podman command.
+func startRegistryLogins(hostID string) (*registryvault.Vault, error) {
+	dir, err := registryvault.DefaultDir()
+	if err != nil {
+		return nil, err
+	}
+	logins, err := registryvault.Open(dir, hostID, registryvault.Options{Logf: log.Printf})
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Setenv("REGISTRY_AUTH_FILE", logins.Path()); err != nil {
+		return nil, err
+	}
+	log.Printf("registry logins: %s (set %q)", logins.Path(), logins.SetID())
+	return logins, nil
 }
 
 // startSecretSupport opens the hook socket and writes the hook JSON. The

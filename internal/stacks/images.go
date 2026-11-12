@@ -18,6 +18,8 @@ import (
 // ImageSource is what image checks and updates need from Podman.
 type ImageSource interface {
 	LocalImages(ctx context.Context) ([]podman.LocalImage, error)
+	// ImageExists reports whether Podman has the image ref names.
+	ImageExists(ctx context.Context, ref string) (bool, error)
 	Pull(ctx context.Context, ref string) (string, error)
 }
 
@@ -174,6 +176,9 @@ func (m *Manager) Images(ctx context.Context, n string, force bool) (protocol.St
 		out.Services[i] = protocol.ServiceImage{Service: s.service, Image: s.ref, Status: s.status, Error: s.reason}
 		if s.status == "" {
 			out.Services[i].Registry = imagecheck.RegistryName(s.ref)
+			if m.logins != nil {
+				out.Services[i].Login = m.logins.LoginFor(s.ref)
+			}
 			refs = append(refs, s.ref)
 		}
 	}
@@ -311,6 +316,7 @@ func (m *Manager) Update(ctx context.Context, n, service string, progress func(s
 	// The cached answer predates the pull either way.
 	m.checker.Forget(target.ref)
 	if err != nil {
+		err = m.pullError(target.ref, err)
 		output.WriteString(err.Error())
 		result.Output = output.String()
 		return result, err
@@ -333,7 +339,7 @@ func (m *Manager) Update(ctx context.Context, n, service string, progress func(s
 	runCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	out, err := m.executor.Run(runCtx, args, m.dir(n), stack.Environment)
-	output.WriteString(out)
+	output.WriteString(m.scrub(out))
 	if err == nil && !plan.empty() {
 		if err = m.checkInjected(runCtx, n, plan.Services); err != nil {
 			output.WriteString("\n" + err.Error())

@@ -26,9 +26,14 @@ const (
 // Secret operations. Their payloads carry secret values, which must never be
 // logged on either side.
 const (
-	opSecretsSync   = "secrets.sync"
-	opSecretsRetain = "secrets.retain"
+	opSecretsSync    = "secrets.sync"
+	opSecretsRetain  = "secrets.retain"
+	opRegistriesSync = "registries.sync"
+	opRegistriesTest = "registries.test"
 )
+
+// RegistryTestTimeout covers the agent's 30-second sign-in test.
+const RegistryTestTimeout = 40 * time.Second
 
 // Remote is the server's registry of connected agents.
 type Remote struct {
@@ -284,6 +289,22 @@ func (r *Remote) SyncSecrets(ctx context.Context, hostID string, sync protocol.S
 // RetainSecrets makes the agent forget the secrets of stacks not listed.
 func (r *Remote) RetainSecrets(ctx context.Context, hostID string, stacks []string) error {
 	return r.call(ctx, hostID, opSecretsRetain, protocol.SecretRetain{Stacks: stacks}, nil, DefaultRequestTimeout)
+}
+
+// SyncRegistries replaces the host's registry logins. The agent answers
+// once the set is committed; stacks waiting for a login start afterwards.
+func (r *Remote) SyncRegistries(ctx context.Context, hostID string, sync protocol.RegistrySync) (protocol.RegistrySynced, error) {
+	var out protocol.RegistrySynced
+	err := r.call(ctx, hostID, opRegistriesSync, sync, &out, DefaultRequestTimeout)
+	return out, err
+}
+
+// TestRegistry has the host sign in to a registry with a login, without
+// keeping it.
+func (r *Remote) TestRegistry(ctx context.Context, hostID string, login protocol.RegistryLogin) (protocol.RegistryTestResult, error) {
+	var out protocol.RegistryTestResult
+	err := r.call(ctx, hostID, opRegistriesTest, protocol.RegistryTest{Login: login}, &out, RegistryTestTimeout)
+	return out, err
 }
 
 // StackImages asks whether a stack's images are still what their tags point to.

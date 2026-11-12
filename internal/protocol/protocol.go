@@ -39,8 +39,9 @@ const (
 )
 
 // Version 4 added stack secrets (secrets.sync, secrets.retain, and the
-// secret fields of HostInfo).
-const Version = 4
+// secret fields of HostInfo). Version 5 added registry logins
+// (registries.sync, registries.test, HostInfo.RegistrySetID).
+const Version = 5
 
 // MaxMessageSize bounds one encoded relay message in either direction. Stack
 // operation output is capped at 1 MiB before JSON escaping, and inventories are
@@ -141,6 +142,50 @@ type HostInfo struct {
 	// place; SecretsProblem says why not.
 	SecretsReady   bool   `json:"secrets_ready"`
 	SecretsProblem string `json:"secrets_problem,omitempty"`
+	// RegistrySetID is the ID of the registry login set the agent holds,
+	// empty when it holds none (for example after a reboot).
+	RegistrySetID string `json:"registry_set_id,omitempty"`
+}
+
+// RegistryLogin is one registry login. Key is a registry or a namespace in
+// it, in its stored spelling (registries.NormalizeKey). The password is sent
+// as base64 so the message size does not depend on JSON escaping. Passwords
+// are never logged.
+type RegistryLogin struct {
+	Key      string `json:"key"`
+	Username string `json:"username"`
+	Password []byte `json:"password"`
+}
+
+// RegistrySync replaces the agent's whole set of registry logins.
+type RegistrySync struct {
+	SetID  string          `json:"set_id"`
+	Logins []RegistryLogin `json:"logins"`
+}
+
+// RegistrySynced answers a RegistrySync once the set is committed.
+type RegistrySynced struct {
+	SetID string `json:"set_id"`
+}
+
+// RegistryTest asks the agent to sign in to a login's registry with it.
+type RegistryTest struct {
+	Login RegistryLogin `json:"login"`
+}
+
+// Kinds of a failed registry test.
+const (
+	RegistryTestDenied      = "denied"
+	RegistryTestUnreachable = "unreachable"
+	RegistryTestTLS         = "tls"
+)
+
+// RegistryTestResult is the outcome of a RegistryTest. Message is written by
+// the agent, never copied from the registry or Podman.
+type RegistryTestResult struct {
+	OK      bool   `json:"ok"`
+	Failure string `json:"failure,omitempty"`
+	Message string `json:"message,omitempty"`
 }
 
 // SecretSync replaces one stack's secret set in the agent's memory. An empty
@@ -226,6 +271,9 @@ type Stack struct {
 	// up since the host booted, for example because its secrets have not
 	// arrived.
 	Waiting string `json:"waiting,omitempty"`
+	// WaitingLogin is the registry login key a waiting stack needs, when it
+	// waits because a pull was refused.
+	WaitingLogin string `json:"waiting_login,omitempty"`
 	// Environment is the active revision's environment (Inspect and saves
 	// only). Values are configuration, shown and edited in the dashboard;
 	// secrets belong in stack secrets.
@@ -333,6 +381,9 @@ type ServiceImage struct {
 	// Failure is the kind of the latest registry failure (ImageFailure*),
 	// set whenever the status is unknown because of one.
 	Failure string `json:"failure,omitempty"`
+	// Login is the key of the registry login the agent signed in with, empty
+	// when it holds none for this image.
+	Login string `json:"login,omitempty"`
 }
 
 // Kinds of a ServiceImage's Failure.

@@ -3,6 +3,7 @@ package podman
 import (
 	"context"
 	"errors"
+	"os/exec"
 	"reflect"
 	"strings"
 	"testing"
@@ -54,5 +55,32 @@ func TestPull(t *testing.T) {
 	}
 	if len(runner.calls) != 2 {
 		t.Fatalf("calls = %d, invalid references must not run podman", len(runner.calls))
+	}
+}
+
+func TestImageExists(t *testing.T) {
+	missing := exec.Command("sh", "-c", "exit 1").Run()
+	broken := exec.Command("sh", "-c", "exit 125").Run()
+	runner := &fakeRunner{responses: []response{
+		{},
+		{err: missing},
+		{stderr: "Error: database is locked", err: broken},
+	}}
+	client := NewWithRunner(runner)
+	ctx := context.Background()
+	if ok, err := client.ImageExists(ctx, "redis:7"); !ok || err != nil {
+		t.Fatalf("present image = %v, %v", ok, err)
+	}
+	if !reflect.DeepEqual(runner.calls[0], []string{"image", "exists", "--", "redis:7"}) {
+		t.Fatalf("call = %v", runner.calls[0])
+	}
+	if ok, err := client.ImageExists(ctx, "redis:8"); ok || err != nil {
+		t.Fatalf("missing image = %v, %v", ok, err)
+	}
+	if ok, err := client.ImageExists(ctx, "redis:9"); ok || err == nil || !strings.Contains(err.Error(), "database is locked") {
+		t.Fatalf("failure = %v, %v", ok, err)
+	}
+	if _, err := client.ImageExists(ctx, "--all"); err == nil || len(runner.calls) != 3 {
+		t.Fatalf("an option was passed as a reference: %v", err)
 	}
 }
