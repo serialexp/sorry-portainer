@@ -15,7 +15,7 @@ import {
 } from "./fleet-store";
 import { EnrollmentPage } from "./enrollment-ui";
 import { HealthNote } from "./health-note";
-import { enrollmentPath, hostPath, newStackPath, parseHostPath } from "./host-route";
+import { enrollmentPath, hostPath, newStackPath, parseHostPath, registriesPath, settingsPath } from "./host-route";
 import {
   ArrowRightIcon,
   BrandMark,
@@ -28,6 +28,7 @@ import {
   ServerIcon,
 } from "./icons";
 import { PageHeader } from "./page-header";
+import { SettingsPage } from "./registries-ui";
 import { CreateStoreCard, HostSecretWarnings } from "./secrets-ui";
 import { Sidebar } from "./sidebar";
 import { StackDetail, StackEditor, StackList } from "./stacks-ui";
@@ -58,9 +59,15 @@ function App() {
 
 function Dashboard() {
   const location = useLocation();
+  const navigate = useNavigate();
   const route = () => parseHostPath(location.pathname);
   const section = () => route()?.section;
   const enrolling = () => location.pathname === enrollmentPath;
+  const settings = () => location.pathname === settingsPath || location.pathname.startsWith(`${settingsPath}/`);
+  // /settings opens its first section; so does a section that doesn't exist.
+  createEffect(() => {
+    if (settings() && location.pathname !== registriesPath) navigate(registriesPath, { replace: true });
+  });
   const selected = () => (route()?.hostID === fleet.selectedHost ? selectedHost() : undefined);
   const heading = () => pageHeading(location.pathname);
   const search = () => (
@@ -80,76 +87,78 @@ function Dashboard() {
     <div class="app-shell">
       <Sidebar />
       <main>
-        <Show
-          when={route()}
-          fallback={
-            <header>
-              <div>
-                <p class="eyebrow">{heading().eyebrow}</p>
-                <h1>{heading().title}</h1>
-                <p class="subtitle">{heading().subtitle}</p>
-              </div>
-              <div class="header-actions">
-                <Show when={!enrolling()}>
-                  <A class="add-button solid" href={enrollmentPath}>
-                    <PlusIcon />
-                    Enroll host
-                  </A>
-                </Show>
-                {search()}
-              </div>
-            </header>
-          }
-        >
-          {(current) => (
-            // A resource's own page draws its header itself, once the host has loaded.
-            <Show when={!current().action || !selected()}>
-              <PageHeader
-                crumbs={[{ label: "Hosts", href: "/" }, { label: current().hostID }]}
-                title={heading().title}
-                actions={
-                  <Show when={!current().action}>
-                    <Show when={current().section === "stacks" && selected()}>
-                      <A class="add-button solid" href={newStackPath(fleet.selectedHost)}>
-                        <PlusIcon />
-                        New stack
-                      </A>
-                      <button
-                        class="icon-button"
-                        type="button"
-                        aria-label="Refresh stacks"
-                        title="Refresh"
-                        disabled={fleet.stacksLoading}
-                        onClick={() => void loadStacks()}
-                      >
-                        <RefreshIcon />
-                      </button>
-                    </Show>
-                    {search()}
+        <Show when={!settings()}>
+          <Show
+            when={route()}
+            fallback={
+              <header>
+                <div>
+                  <p class="eyebrow">{heading().eyebrow}</p>
+                  <h1>{heading().title}</h1>
+                  <p class="subtitle">{heading().subtitle}</p>
+                </div>
+                <div class="header-actions">
+                  <Show when={!enrolling()}>
+                    <A class="add-button solid" href={enrollmentPath}>
+                      <PlusIcon />
+                      Enroll host
+                    </A>
                   </Show>
-                }
-              >
-                <Show when={selected()} fallback={<p class="subtitle">{heading().subtitle}</p>}>
-                  {(host) => (
-                    <dl class="host-chips">
-                      <div>
-                        <dt>Hostname</dt>
-                        <dd>{host().hostname}</dd>
-                      </div>
-                      <div>
-                        <dt>Podman</dt>
-                        <dd>{host().engine_version}</dd>
-                      </div>
-                      <div>
-                        <dt>Prefix</dt>
-                        <dd class="mono">{host().prefix}</dd>
-                      </div>
-                    </dl>
-                  )}
-                </Show>
-              </PageHeader>
-            </Show>
-          )}
+                  {search()}
+                </div>
+              </header>
+            }
+          >
+            {(current) => (
+              // A resource's own page draws its header itself, once the host has loaded.
+              <Show when={!current().action || !selected()}>
+                <PageHeader
+                  crumbs={[{ label: "Hosts", href: "/" }, { label: current().hostID }]}
+                  title={heading().title}
+                  actions={
+                    <Show when={!current().action}>
+                      <Show when={current().section === "stacks" && selected()}>
+                        <A class="add-button solid" href={newStackPath(fleet.selectedHost)}>
+                          <PlusIcon />
+                          New stack
+                        </A>
+                        <button
+                          class="icon-button"
+                          type="button"
+                          aria-label="Refresh stacks"
+                          title="Refresh"
+                          disabled={fleet.stacksLoading}
+                          onClick={() => void loadStacks()}
+                        >
+                          <RefreshIcon />
+                        </button>
+                      </Show>
+                      {search()}
+                    </Show>
+                  }
+                >
+                  <Show when={selected()} fallback={<p class="subtitle">{heading().subtitle}</p>}>
+                    {(host) => (
+                      <dl class="host-chips">
+                        <div>
+                          <dt>Hostname</dt>
+                          <dd>{host().hostname}</dd>
+                        </div>
+                        <div>
+                          <dt>Podman</dt>
+                          <dd>{host().engine_version}</dd>
+                        </div>
+                        <div>
+                          <dt>Prefix</dt>
+                          <dd class="mono">{host().prefix}</dd>
+                        </div>
+                      </dl>
+                    )}
+                  </Show>
+                </PageHeader>
+              </Show>
+            )}
+          </Show>
         </Show>
         <Show when={fleet.notice}>
           <div class="notice" role="status">
@@ -159,7 +168,10 @@ function Dashboard() {
         <Show when={enrolling()}>
           <EnrollmentPage />
         </Show>
-        <Show when={!route() && !enrolling()}>
+        <Show when={location.pathname === registriesPath}>
+          <SettingsPage />
+        </Show>
+        <Show when={!route() && !enrolling() && !settings()}>
           <Overview />
         </Show>
         <Show when={route() && !selected()}>

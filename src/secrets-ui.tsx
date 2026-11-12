@@ -320,6 +320,19 @@ export function CreateStoreCard() {
  * or a pointer to the Hosts page while it isn't set up. Nothing otherwise.
  */
 export function StackStoreNotice() {
+  return (
+    <StoreNotice
+      locked="Unlock it to set values and deliver this stack’s secrets. Agents keep the secrets they already have until they restart."
+      setup="Create it on the Hosts page before setting secret values."
+    />
+  );
+}
+
+/**
+ * The unlock banner while the store is locked, or the pointer to the Hosts
+ * page while it isn't set up, with what the page needs the store for.
+ */
+export function StoreNotice(props: { locked: string; setup: string }) {
   const form = createUnlockForm();
   return (
     <Switch>
@@ -332,10 +345,7 @@ export function StackStoreNotice() {
             <div class="store-banner-copy">
               <strong>The secret store is locked</strong>
               <Show when={!form.error() && !form.waiting()}>
-                <span>
-                  Unlock it to set values and deliver this stack’s secrets. Agents keep the secrets they already have
-                  until they restart.
-                </span>
+                <span>{props.locked}</span>
               </Show>
             </div>
             <div class="store-banner-fields">
@@ -373,8 +383,7 @@ export function StackStoreNotice() {
         <div class="store-setup-line">
           <KeyIcon size={18} />
           <span>
-            <strong>The secret store isn’t set up yet.</strong> Create it on the Hosts page before setting secret
-            values.
+            <strong>The secret store isn’t set up yet.</strong> {props.setup}
           </span>
           <A class="add-button" href="/" onClick={() => requestStoreSetup()}>
             Set up

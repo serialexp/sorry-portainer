@@ -20,7 +20,18 @@ export type ServiceImage = {
   error?: string;
   /** Why the status is unknown, when the registry was asked and failed. */
   failure?: ImageFailure;
+  /** For a refused image, the saved login it would use (set by the master). */
+  login_key?: string;
+  /** For a refused image, whether a login is saved and on this host (set by the master). */
+  login_state?: LoginState;
 };
+
+/**
+ * Why a registry refused, as the master explains it: no saved login matches
+ * the image ("none"), one does but this host doesn't have it yet
+ * ("not_on_host"), or the host has it and the registry refused it ("refused").
+ */
+export type LoginState = "none" | "not_on_host" | "refused";
 
 /**
  * "denied": the registry refused the credentials or asked for some (Docker
@@ -169,8 +180,39 @@ export function registryChecked(status: ImageStatus): boolean {
 
 export type ImageStatusLine = { text: string; tone: "ok" | "warn" | "muted"; title: string };
 
+/** The line for an image a registry refused, once the master said why; undefined without its answer. */
+function loginStatusLine(img: ServiceImage, hostID: string): ImageStatusLine | undefined {
+  const registry = img.registry || "the registry";
+  const key = img.login_key ?? "";
+  switch (img.login_state) {
+    case "none":
+      return {
+        text: "No login for this registry",
+        tone: "muted",
+        title:
+          `${registry} refused the request and there is no saved login for it. Add one in Registry logins` +
+          (registry === "docker.io"
+            ? ", or check the name: Docker Hub answers the same way when a repository doesn’t exist."
+            : "."),
+      };
+    case "not_on_host":
+      return {
+        text: "Login not on this host yet",
+        tone: "muted",
+        title: `A login for ${key} is saved, but ${hostID} doesn’t have it yet (offline, delivery failed, or rebooted while the store was locked). Checked again once it arrives.`,
+      };
+    case "refused":
+      return {
+        text: "Login refused",
+        tone: "muted",
+        title: `${hostID} has the login for ${key}, but ${registry} refused it. The token may be expired or missing pull rights. Replace it in Registry logins.`,
+      };
+  }
+  return undefined;
+}
+
 /** The line under a service's image: whether it runs what its tag points to now. */
-export function imageStatusLine(img: ServiceImage, now: number): ImageStatusLine {
+export function imageStatusLine(img: ServiceImage, now: number, hostID = "this host"): ImageStatusLine {
   const image = img.image ?? "";
   switch (img.status) {
     case "current":
@@ -185,7 +227,13 @@ export function imageStatusLine(img: ServiceImage, now: number): ImageStatusLine
     case "unknown":
       switch (img.failure) {
         case "denied":
-          return { text: "No access", tone: "muted", title: img.error || "The registry refused access to the image" };
+          return (
+            loginStatusLine(img, hostID) ?? {
+              text: "No access",
+              tone: "muted",
+              title: img.error || "The registry refused access to the image",
+            }
+          );
         case "not_found":
           return { text: "Tag not found", tone: "muted", title: img.error || "The registry has no such tag" };
         default:
@@ -209,6 +257,8 @@ export function checkedText(images: ServiceImage[], now: number): string {
   const failed = images.find((img) => img.status === "unknown");
   if (failed) {
     const where = failed.registry || "the registry";
+    const login = failed.failure === "denied" ? loginCheckedText(failed, where) : "";
+    if (login) return failed.checked_at ? `${login} · checked ${timeAgo(now - failed.checked_at)}` : login;
     let text = `Couldn’t reach ${where}`;
     if (failed.failure === "denied") text = `${where} refused access`;
     if (failed.failure === "not_found") text = `Tag ${imageTag(failed.image)} not found on ${where}`;
@@ -217,6 +267,19 @@ export function checkedText(images: ServiceImage[], now: number): string {
   const times = images.flatMap((img) => (img.checked_at ? [img.checked_at] : []));
   if (!times.length) return "";
   return `Images checked ${timeAgo(now - Math.min(...times))}`;
+}
+
+/** The header's words for a refused image the master explained; "" without its answer. */
+function loginCheckedText(img: ServiceImage, where: string): string {
+  switch (img.login_state) {
+    case "none":
+      return `No login for ${where}`;
+    case "not_on_host":
+      return `Waiting for the ${img.login_key} login`;
+    case "refused":
+      return `${where} refused the login`;
+  }
+  return "";
 }
 
 /** "1 update", "3 updates"; empty without any. */

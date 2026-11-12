@@ -2,7 +2,7 @@ import { createEffect, For, Show } from "solid-js";
 import { A, useLocation } from "@solidjs/router";
 import { fleet, selectedHost, signOut } from "./fleet-store";
 import { loadTokenCount, outstandingTokenCount } from "./enrollment-store";
-import { enrollmentPath, hostPath, parseHostPath } from "./host-route";
+import { enrollmentPath, hostPath, parseHostPath, registriesPath } from "./host-route";
 import {
   BackIcon,
   BrandMark,
@@ -11,6 +11,7 @@ import {
   ImageIcon,
   KeyIcon,
   ServerIcon,
+  SettingsIcon,
   StackIcon,
   VolumeIcon,
 } from "./icons";
@@ -19,6 +20,7 @@ import { SecretStoreSidebar } from "./secrets-ui";
 // The dashboard's sidebar. Fleet pages list the hosts and enrollment; a
 // host's pages show that host and its resources instead. A resource link
 // stays highlighted on that resource's own pages (an image, a stack).
+// Settings sits at the bottom of every sidebar, above the secret store.
 
 /** The fleet: all hosts, each host, and enrollment with its unused tokens. */
 function FleetNav() {
@@ -123,6 +125,12 @@ export function Sidebar() {
         {(current) => <HostNav hostID={current().hostID} />}
       </Show>
       <div class="sidebar-bottom">
+        <nav class="side-nav" aria-label="Settings">
+          <A class="side-link" href={registriesPath}>
+            <SettingsIcon />
+            <span>Settings</span>
+          </A>
+        </nav>
         <SecretStoreSidebar />
         <div class="sidebar-status">
           <span class="pulse" aria-hidden="true"></span>All systems nominal

@@ -13,6 +13,12 @@ export type Stack = {
   desired?: "up" | "down";
   /** Why a stack that should be up has not come up since the host booted. */
   waiting?: string;
+  /** The repository whose pull a registry refused, when waiting for a registry login. */
+  waiting_login?: string;
+  /** The saved login that repository uses, if any (set by the master). */
+  waiting_login_key?: string;
+  /** Whether that login is saved and on the host (set by the master); see LoginState. */
+  waiting_login_state?: "none" | "not_on_host" | "refused";
   /** The active revision's environment (single-stack reads and saves only). */
   environment?: Record<string, string>;
   /** Each declared service with its containers' state, in file order. */

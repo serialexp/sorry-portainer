@@ -13,6 +13,14 @@ const sections: readonly string[] = ["containers", "images", "volumes", "stacks"
 /** The fleet-wide enrollment page. Host routes always have a section after the host ID, so it cannot clash with one. */
 export const enrollmentPath = "/enrollment";
 
+/**
+ * The fleet-wide Settings page and its sections. "/settings" opens the first
+ * section. A section name is never a host section, so these cannot clash
+ * with a host called "settings".
+ */
+export const settingsPath = "/settings";
+export const registriesPath = "/settings/registries";
+
 export function hostPath(hostID: string, section: HostSection): string {
   return `/${encodeURIComponent(hostID)}/${section}`;
 }

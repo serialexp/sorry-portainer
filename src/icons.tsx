@@ -9,6 +9,8 @@ import {
   PhArrowRightIcon,
   PhArrowUpIcon,
   PhCaretRightIcon,
+  PhCheckIcon,
+  PhCircleNotchIcon,
   PhClockIcon,
   PhCubeIcon,
   PhDatabaseIcon,
@@ -25,11 +27,13 @@ import {
   PhPlayIcon,
   PhPlusIcon,
   PhProhibitIcon,
+  PhSlidersHorizontalIcon,
   PhSquaresFourIcon,
   PhStackSimpleIcon,
   PhStopIcon,
   PhTrashIcon,
   PhWarningIcon,
+  PhXIcon,
 } from "solidjs-phosphor";
 
 type Props = { size?: number };
@@ -98,3 +102,18 @@ export const PencilIcon = (props: Props) => (
   <PhPencilSimpleIcon class="icon" size={props.size ?? 15} aria-hidden="true" />
 );
 export const TrashIcon = (props: Props) => <PhTrashIcon class="icon" size={props.size ?? 15} aria-hidden="true" />;
+/** The fleet-wide Settings page. */
+export const SettingsIcon = (props: Props) => (
+  <PhSlidersHorizontalIcon class="icon" size={props.size ?? 16} aria-hidden="true" />
+);
+export const CheckIcon = (props: Props) => (
+  <PhCheckIcon class="icon" size={props.size ?? 18} weight="bold" aria-hidden="true" />
+);
+/** Close or dismiss. */
+export const CloseIcon = (props: Props) => (
+  <PhXIcon class="icon" size={props.size ?? 14} weight="bold" aria-hidden="true" />
+);
+/** Turns while something is in progress; the "spinner" class stops under reduced motion. */
+export const SpinnerIcon = (props: Props) => (
+  <PhCircleNotchIcon class="icon spinner" size={props.size ?? 14} weight="bold" aria-hidden="true" />
+);

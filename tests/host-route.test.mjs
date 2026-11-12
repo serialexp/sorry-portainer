@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { editStackPath, hostPath, newStackPath, parseHostPath } from "../src/host-route.ts";
+import { editStackPath, hostPath, newStackPath, parseHostPath, registriesPath, settingsPath } from "../src/host-route.ts";
 
 test("host paths preserve the host and exactly one resource section", () => {
   for (const section of ["containers", "images", "volumes", "stacks"]) {
@@ -21,4 +21,10 @@ test("invalid, incomplete and unrelated paths are not host routes", () => {
   for (const path of ["/", "/local-a", "/local-a/stacks/%2F/edit", "/local-a/images/extra", "/%/images", "/%2F/images", "/../images"]) {
     assert.equal(parseHostPath(path), null, path);
   }
+});
+
+test("the Settings pages are not host routes, and a host called settings still is", () => {
+  assert.equal(parseHostPath(settingsPath), null);
+  assert.equal(parseHostPath(registriesPath), null);
+  assert.deepEqual(parseHostPath(hostPath("settings", "stacks")), { hostID: "settings", section: "stacks" });
 });

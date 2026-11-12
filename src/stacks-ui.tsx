@@ -1,7 +1,7 @@
 import { A, useLocation, useNavigate } from "@solidjs/router";
 import { createEffect, createSignal, For, Match, on, onCleanup, onMount, Show, Switch, untrack } from "solid-js";
 import { filteredStacks, fleet, loadStacks, searchTerm, sessionEnded } from "./fleet-store";
-import { editStackPath, hostPath, newStackPath, parseHostPath, stackPath } from "./host-route";
+import { editStackPath, hostPath, newStackPath, parseHostPath, registriesPath, stackPath } from "./host-route";
 import { HealthNote } from "./health-note";
 import {
   ArrowUpIcon,
@@ -35,6 +35,7 @@ import {
   updatesLabel,
 } from "./image-updates";
 import { hostCrumbs, PageHeader } from "./page-header";
+import { waitingLoginNote } from "./registry-logins";
 import { NoSecretStore, StackSecretsPanel, StackStoreNotice } from "./secrets-ui";
 import {
   type StackRunState,
@@ -129,6 +130,24 @@ function ServiceTable(props: { name: string; services: StackService[] }) {
   );
 }
 
+/**
+ * Why a stack that should be up isn't: the agent's reason, or, for a login
+ * the master knows is saved but not on the host yet, the design's sentence
+ * with a link to Registry logins.
+ */
+function WaitingNote(props: { stack: Stack; hostID: string }) {
+  const login = () => waitingLoginNote(props.stack, props.hostID);
+  return (
+    <p class="stack-row-note" role="status">
+      <InfoIcon />
+      <span>{login() ?? props.stack.waiting}</span>
+      <Show when={login()}>
+        <A href={registriesPath}>Registry logins</A>
+      </Show>
+    </p>
+  );
+}
+
 /** Under a service's image: whether it runs what its tag points to now. */
 function ImageStatus(props: { service: string }) {
   const line = () => {
@@ -138,7 +157,7 @@ function ImageStatus(props: { service: string }) {
     if (imageUpdates.checking && img && registryChecked(img.status))
       return { text: "Checking…", tone: "muted busy", title: "" };
     if (!img) return imageUpdates.loading ? { text: "Checking…", tone: "muted busy", title: "" } : undefined;
-    return imageStatusLine(img, imageUpdates.now);
+    return imageStatusLine(img, imageUpdates.now, fleet.selectedHost);
   };
   return (
     <Show when={line()}>
@@ -420,10 +439,7 @@ export function StackList() {
                         </p>
                       </Show>
                       <Show when={stack.waiting}>
-                        <p class="stack-row-note" role="status">
-                          <InfoIcon />
-                          <span>{stack.waiting}</span>
-                        </p>
+                        <WaitingNote stack={stack} hostID={fleet.selectedHost} />
                       </Show>
                       <Show when={rowResult()}>
                         {(current) => <RunResult result={current()} onHide={hideResult} />}
@@ -658,11 +674,8 @@ export function StackDetail() {
               </span>
             </p>
           </Show>
-          <Show when={stack()?.waiting}>
-            <p class="stack-row-note" role="status">
-              <InfoIcon />
-              <span>{stack()?.waiting}</span>
-            </p>
+          <Show when={stack()?.waiting ? stack() : undefined}>
+            {(waiting) => <WaitingNote stack={waiting()} hostID={hostID()} />}
           </Show>
         </div>
         <Show when={stack()?.services?.length}>
