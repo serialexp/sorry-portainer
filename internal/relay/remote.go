@@ -37,8 +37,9 @@ const RegistryTestTimeout = 40 * time.Second
 
 // Remote is the server's registry of connected agents.
 type Remote struct {
-	heartbeat time.Duration
-	onConnect func(protocol.HostInfo)
+	heartbeat    time.Duration
+	onConnect    func(protocol.HostInfo)
+	onDisconnect func(hostID string)
 
 	mu       sync.RWMutex
 	sessions map[string]*session
@@ -50,13 +51,16 @@ type RemoteOptions struct {
 	// OnConnect runs in its own goroutine once an agent's session is ready to
 	// take requests. The master uses it to push the host's secrets.
 	OnConnect func(protocol.HostInfo)
+	// OnDisconnect runs in its own goroutine when a host's session ends and
+	// no newer session replaced it.
+	OnDisconnect func(hostID string)
 }
 
 func NewRemote(options RemoteOptions) *Remote {
 	if options.Heartbeat <= 0 {
 		options.Heartbeat = DefaultHeartbeat
 	}
-	return &Remote{heartbeat: options.Heartbeat, onConnect: options.OnConnect, sessions: map[string]*session{}}
+	return &Remote{heartbeat: options.Heartbeat, onConnect: options.OnConnect, onDisconnect: options.OnDisconnect, sessions: map[string]*session{}}
 }
 
 // Serve runs one agent connection whose authenticated identity is hostID, until
@@ -100,10 +104,14 @@ func (r *Remote) Serve(conn *websocket.Conn, hostID string, admit func() error) 
 	err = current.run()
 
 	r.mu.Lock()
-	if r.sessions[hostID] == current {
+	gone := r.sessions[hostID] == current
+	if gone {
 		delete(r.sessions, hostID)
 	}
 	r.mu.Unlock()
+	if gone && r.onDisconnect != nil {
+		go r.onDisconnect(hostID)
+	}
 	return err
 }
 
@@ -115,6 +123,9 @@ func (r *Remote) Disconnect(hostID string, cause error) {
 	if s := r.sessions[hostID]; s != nil {
 		delete(r.sessions, hostID)
 		s.close(cause)
+		if r.onDisconnect != nil {
+			go r.onDisconnect(hostID)
+		}
 	}
 }
 

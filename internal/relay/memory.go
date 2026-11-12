@@ -207,3 +207,11 @@ func (m *Memory) SyncSecrets(context.Context, string, protocol.SecretSync) (prot
 func (m *Memory) RetainSecrets(context.Context, string, []string) error {
 	return errStacksUnsupported
 }
+
+func (m *Memory) SyncRegistries(context.Context, string, protocol.RegistrySync) (protocol.RegistrySynced, error) {
+	return protocol.RegistrySynced{}, errStacksUnsupported
+}
+
+func (m *Memory) TestRegistry(context.Context, string, protocol.RegistryLogin) (protocol.RegistryTestResult, error) {
+	return protocol.RegistryTestResult{}, errStacksUnsupported
+}

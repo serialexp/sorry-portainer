@@ -59,14 +59,17 @@ type Relay interface {
 	UpdateStackService(context.Context, string, string, string, func(string)) (protocol.StackOperation, error)
 	SyncSecrets(context.Context, string, protocol.SecretSync) (protocol.SecretSyncResult, error)
 	RetainSecrets(context.Context, string, []string) error
+	SyncRegistries(context.Context, string, protocol.RegistrySync) (protocol.RegistrySynced, error)
+	TestRegistry(context.Context, string, protocol.RegistryLogin) (protocol.RegistryTestResult, error)
 }
 
 type Server struct {
 	sessions *Sessions
 	relay    Relay
-	// secrets and pusher are nil when no secret store is configured.
+	// secrets, pusher and logins are nil when no secret store is configured.
 	secrets *secretstore.Store
 	pusher  *secretPusher
+	logins  *loginPusher
 	// passphrases limits wrong secret-store passphrases (unlock and reveal)
 	// per client, as sessions limit sign-ins: a stolen session must not be
 	// able to guess the passphrase at the speed of the key derivation.
@@ -80,7 +83,9 @@ type Server struct {
 func New(sessions SessionOptions, relay Relay, store *secretstore.Store) *Server {
 	s := &Server{sessions: NewSessions(sessions), relay: relay, secrets: store, passphrases: newLoginLimiter(maxLoginClients)}
 	if store != nil {
-		s.pusher = newSecretPusher(store, relay)
+		locks := newHostLocks()
+		s.pusher = newSecretPusher(store, relay, locks)
+		s.logins = newLoginPusher(store, relay, locks)
 	}
 	return s
 }
@@ -95,6 +100,8 @@ func (s *Server) Handler(ui http.Handler) http.Handler {
 	m.HandleFunc("/api/session/logout", s.sessions.Logout)
 	m.Handle("/api/secrets/", s.sessions.Require(http.HandlerFunc(s.secretStoreRoute)))
 	m.Handle("/api/enrollment/", s.sessions.Require(http.HandlerFunc(s.enrollmentRoute)))
+	m.Handle("/api/registries", s.sessions.Require(http.HandlerFunc(s.registriesRoute)))
+	m.Handle("/api/registries/", s.sessions.Require(http.HandlerFunc(s.registriesRoute)))
 	m.Handle("/api/hosts", s.sessions.Require(http.HandlerFunc(s.hosts)))
 	m.Handle("/api/hosts/", s.sessions.Require(http.HandlerFunc(s.hostOperation)))
 	m.Handle("/api/", http.NotFoundHandler())
@@ -144,6 +151,9 @@ func (s *Server) hostOperation(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(parts) == 2 && parts[1] == "stacks" && r.Method == http.MethodGet {
 		stacks, err := s.relay.ListStacks(ctx, parts[0])
+		if err == nil {
+			s.explainWaiting(parts[0], stacks)
+		}
 		respond(w, stacks, err, http.StatusBadGateway)
 		return
 	}
@@ -159,6 +169,11 @@ func (s *Server) hostOperation(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(parts) == 3 && parts[1] == "stacks" && r.Method == http.MethodGet {
 		stack, err := s.relay.InspectStack(ctx, parts[0], parts[2])
+		if err == nil {
+			one := []protocol.Stack{stack}
+			s.explainWaiting(parts[0], one)
+			stack = one[0]
+		}
 		respond(w, stack, err, http.StatusNotFound)
 		return
 	}
@@ -212,6 +227,9 @@ func (s *Server) hostOperation(w http.ResponseWriter, r *http.Request) {
 	if len(parts) == 4 && parts[1] == "stacks" {
 		if r.Method == http.MethodGet && parts[3] == "images" {
 			images, err := s.relay.StackImages(ctx, parts[0], parts[2], r.URL.Query().Get("force") == "1")
+			if err == nil {
+				s.explainImages(parts[0], &images)
+			}
 			respond(w, images, err, http.StatusBadGateway)
 			return
 		}

@@ -35,26 +35,18 @@ type Delivery struct {
 type secretPusher struct {
 	store *secretstore.Store
 	relay Relay
+	// locks is shared with the registry login pusher.
+	locks *hostLocks
 
-	mu        sync.Mutex
-	hostLocks map[string]*sync.Mutex
-	status    map[string]map[string]Delivery
+	mu     sync.Mutex
+	status map[string]map[string]Delivery
 }
 
-func newSecretPusher(store *secretstore.Store, relay Relay) *secretPusher {
-	return &secretPusher{store: store, relay: relay, hostLocks: map[string]*sync.Mutex{}, status: map[string]map[string]Delivery{}}
+func newSecretPusher(store *secretstore.Store, relay Relay, locks *hostLocks) *secretPusher {
+	return &secretPusher{store: store, relay: relay, locks: locks, status: map[string]map[string]Delivery{}}
 }
 
-func (p *secretPusher) hostLock(host string) *sync.Mutex {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	l := p.hostLocks[host]
-	if l == nil {
-		l = &sync.Mutex{}
-		p.hostLocks[host] = l
-	}
-	return l
-}
+func (p *secretPusher) hostLock(host string) *sync.Mutex { return p.locks.lock(host) }
 
 func (p *secretPusher) record(host, stack string, d Delivery) {
 	p.mu.Lock()
@@ -147,7 +139,9 @@ func (p *secretPusher) pushHost(ctx context.Context, host string) {
 	}
 }
 
-// HostConnected pushes a newly connected host's secrets. It is the relay's
+// HostConnected pushes a newly connected host's registry logins, then its
+// stack secrets, so a stack a secret push starts already has its logins;
+// then it tests logins that no host has tested yet. It is the relay's
 // OnConnect callback.
 func (s *Server) HostConnected(info protocol.HostInfo) {
 	if s.pusher == nil {
@@ -155,13 +149,34 @@ func (s *Server) HostConnected(info protocol.HostInfo) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), pushTimeout)
 	defer cancel()
+	s.logins.connected(ctx, info)
 	s.pusher.pushHost(ctx, info.HostID)
+	s.testUntested(ctx, info.HostID)
 }
 
-func (s *Server) pushAllHosts() {
-	for _, info := range s.relay.Hosts() {
-		go s.HostConnected(info)
+// HostDisconnected is the relay's OnDisconnect callback.
+func (s *Server) HostDisconnected(host string) {
+	if s.logins != nil {
+		s.logins.disconnected(host)
 	}
+}
+
+// pushAllHosts runs after an unlock: one round of registry logins to every
+// connected host, then each host's stack secrets.
+func (s *Server) pushAllHosts() {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), pushTimeout)
+		defer cancel()
+		s.logins.push(ctx, onlineHosts(s.relay))
+		for _, info := range s.relay.Hosts() {
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), pushTimeout)
+				defer cancel()
+				s.pusher.pushHost(ctx, info.HostID)
+				s.testUntested(ctx, info.HostID)
+			}()
+		}
+	}()
 }
 
 type passphraseRequest struct {

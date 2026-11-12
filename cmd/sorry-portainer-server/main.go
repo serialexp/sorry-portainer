@@ -102,7 +102,10 @@ func serve(cfg config.Server, control config.ControlTLS) error {
 
 	// api is assigned before any listener starts, so OnConnect never sees nil.
 	var api *server.Server
-	remote := relay.NewRemote(relay.RemoteOptions{OnConnect: func(info protocol.HostInfo) { api.HostConnected(info) }})
+	remote := relay.NewRemote(relay.RemoteOptions{
+		OnConnect:    func(info protocol.HostInfo) { api.HostConnected(info) },
+		OnDisconnect: func(host string) { api.HostDisconnected(host) },
+	})
 	api = server.New(server.SessionOptions{Password: cfg.AdminPassword, TTL: cfg.SessionTTL,
 		InsecureCookie: cfg.InsecureCookie, TrustedProxies: cfg.TrustedProxies}, remote, store)
 	if cfg.InsecureCookie {

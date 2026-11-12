@@ -97,6 +97,12 @@ func (r *stackRelay) SyncSecrets(context.Context, string, protocol.SecretSync) (
 	return protocol.SecretSyncResult{}, r.err
 }
 func (r *stackRelay) RetainSecrets(context.Context, string, []string) error { return r.err }
+func (r *stackRelay) SyncRegistries(_ context.Context, _ string, set protocol.RegistrySync) (protocol.RegistrySynced, error) {
+	return protocol.RegistrySynced{SetID: set.SetID}, r.err
+}
+func (r *stackRelay) TestRegistry(context.Context, string, protocol.RegistryLogin) (protocol.RegistryTestResult, error) {
+	return protocol.RegistryTestResult{OK: true}, r.err
+}
 
 func authenticatedStackRequest(t *testing.T, s *Server, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()

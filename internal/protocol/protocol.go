@@ -271,9 +271,14 @@ type Stack struct {
 	// up since the host booted, for example because its secrets have not
 	// arrived.
 	Waiting string `json:"waiting,omitempty"`
-	// WaitingLogin is the registry login key a waiting stack needs, when it
-	// waits because a pull was refused.
+	// WaitingLogin is the repository whose pull a registry refused, when the
+	// stack waits for a registry login (registries.Repository spelling).
 	WaitingLogin string `json:"waiting_login,omitempty"`
+	// WaitingLoginKey and WaitingLoginState are set by the master for a
+	// stack waiting for a login: the saved login that matches, and a Login*
+	// state.
+	WaitingLoginKey   string `json:"waiting_login_key,omitempty"`
+	WaitingLoginState string `json:"waiting_login_state,omitempty"`
 	// Environment is the active revision's environment (Inspect and saves
 	// only). Values are configuration, shown and edited in the dashboard;
 	// secrets belong in stack secrets.
@@ -384,7 +389,24 @@ type ServiceImage struct {
 	// Login is the key of the registry login the agent signed in with, empty
 	// when it holds none for this image.
 	Login string `json:"login,omitempty"`
+	// LoginKey and LoginState are set by the master when the registry
+	// refused (Failure denied): the saved login that matches the image, and
+	// which of the Login* states explains the refusal.
+	LoginKey   string `json:"login_key,omitempty"`
+	LoginState string `json:"login_state,omitempty"`
 }
+
+// Why a registry refused a host, as the master works it out from its saved
+// logins and the host's set.
+const (
+	// LoginNone: no saved login matches the image.
+	LoginNone = "none"
+	// LoginNotOnHost: a saved login matches, but the host doesn't have the
+	// current set.
+	LoginNotOnHost = "not_on_host"
+	// LoginRefused: the host has the login and the registry refused it.
+	LoginRefused = "refused"
+)
 
 // Kinds of a ServiceImage's Failure.
 const (
