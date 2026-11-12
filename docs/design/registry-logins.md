@@ -1,6 +1,6 @@
 # Registry logins — Design
 
-Status: draft, not yet implemented; reviewed (Codex, Antigravity); waiting for the design agent's board
+Status: designed (doc reviewed by Codex and Antigravity; design board in hand), implementation in progress
 Owner: Bart
 Last updated: 2026-11-12
 
@@ -44,12 +44,13 @@ Tick items as they land and move them to Done.
   logins"; the master pushes once unlocked.
 - [x] **Review.** Codex and Antigravity, 2026-11-12. Findings and what was
   done with them are in [Review](#review).
+- [x] **Design board.** The design agent's "Settings · Registry logins" board
+  (`project/RegistryLogins.dc.html`) and the new rows on "Warnings and empty
+  states" and "Stacks", 2026-11-12. What it adds is in
+  [Follow-up: the design board](#follow-up-2026-11-12-the-design-board).
 
 ### Outstanding
 
-- [ ] **Design board.** The design agent's board for the logins page and the
-  states listed under [Dashboard](#dashboard). Nothing in the UI is built
-  before it exists.
 - [ ] **Phase 1 — store.** Registry logins in `internal/secretstore`: put,
   delete, list (works while locked), reveal with passphrase, one decrypted
   set per push, the set ID.
@@ -71,7 +72,17 @@ Tick items as they land and move them to Done.
 - [ ] **Phase 1 — stack environment.** `REGISTRY_AUTH_FILE` and
   `DOCKER_CONFIG` refused as stack environment keys and pinned after the
   stack's environment.
-- [ ] **Phase 2 — dashboard page** per the design board.
+- [ ] **Phase 1 — last test per login.** Result, host and time kept with
+  the login (clear fields); a login saved with no host online is tested by
+  the first host that connects.
+- [ ] **Phase 1 — retry a host now.** `POST /api/registries/retry` `{host}`
+  skips the backoff.
+- [ ] **Phase 2 — Settings page.** `/settings/registries` (`/settings` opens
+  the first section), Settings at the bottom of every sidebar, the section
+  tabs, the logins list, form, Show (30 s), Replace, Delete, the locked
+  state and the "On each host" card.
+- [ ] **Phase 2 — stack pages.** The three login states on image rows and
+  headers, and "Waiting for a registry login" on the stacks list.
 - [ ] **Tests.** Listed under [Tests](#tests).
 - [ ] **Benchmark — push fan-out.** 1000 fake hosts, 64 logins at the limits:
   one decryption per push, bounded memory (one decrypted set plus at most
@@ -323,11 +334,13 @@ path, so the key never goes in the path:
 
 | Method and path | Works locked | Does |
 | --- | --- | --- |
-| `GET /api/registries` | yes | logins (key, username, `updated_at`), the current set ID, and per host `{set_id, state, at, error}` |
-| `PUT /api/registries` | no | `{key, username, password}`; stores, starts the push, then runs the test and returns `{login, test}` |
+| `GET /api/registries` | yes | logins (key, username, `updated_at`, last test), the current set ID, and per host `{online, set_id, state, at, error, retry_at}` |
+| `POST /api/registries` | no | `{key, username, password}`; 409 if the key exists; stores, starts the push, runs the test, returns `{login, test}` |
+| `POST /api/registries/replace` | no | `{key, username, password?}`; 404 if missing; an empty password keeps the stored one; as above |
 | `POST /api/registries/test` | no | `{key}`; tests the stored login again |
 | `POST /api/registries/reveal` | no | `{key, passphrase}` → `{password}`, passphrase-limited |
 | `POST /api/registries/delete` | no | `{key}`; deletes and starts the push |
+| `POST /api/registries/retry` | no | `{host}`; pushes to that host now |
 
 `test` is `{state: ok|failed|no_agent, failure, message, host}`. The server
 tries online hosts in host-ID order and moves on from a host that is busy or
@@ -400,6 +413,44 @@ only for images that are missing, which compose would have pulled anyway.
 ## Questions only building can answer
 
 - Whether podman-compose passes `REGISTRY_AUTH_FILE` on (bullet above).
+
+## Follow-up 2026-11-12: the design board
+
+The board settles the page and adds a few behaviours the first draft did
+not have:
+
+- **Where it lives.** A Settings page for fleet-wide settings: Settings sits
+  at the bottom of every sidebar (fleet and host pages), above the secret
+  store status. The page has section tabs; Registry logins is the first and
+  only one for now. Routes: `/settings/registries`; `/settings` opens the
+  first section.
+- **Add and Replace are different actions.** Add refuses a key that already
+  exists ("Use Replace on its row instead"); Replace keeps the key fixed, and
+  an empty password keeps the stored one. So the API has a create and a
+  replace call rather than one `PUT`.
+- **Last test per login.** The list has a "Last test" column (Works,
+  Refused, Unreachable, Certificate problem, Not tested yet) and names the
+  host it was tested on. The result, host and time are stored with the
+  login, in the clear: they describe the login, not its secret.
+- **Testing later.** A login saved while no host is online is tested by the
+  first host that connects ("The first host that connects tests it and gets
+  it").
+- **Retry now.** A host whose delivery failed has a Retry now button, which
+  skips the backoff.
+- **Host rows.** "Has the current logins · Received X ago", "Sending…",
+  "Delivery failed · Trying again in N s", "Offline · Last seen X ago",
+  "Missing the logins" (the host reports no set while the store is locked).
+  The card header counts "N of M hosts up to date".
+- **Show** hides the password again after 30 seconds, and has Copy.
+- **Stack pages.** "No access" splits in three, on rows and headers: "No
+  login for this registry" (refused, no saved login matches), "Login not on
+  this host yet" (a saved login matches but the host doesn't have the
+  current set), "Login refused" (the host has the login and the registry
+  refused it). The server works out which by matching the image against the
+  stored keys (the same matcher as the agent) and comparing the host's set
+  ID; the agent reports which login it used. The stacks list shows
+  "Waiting for a registry login: <host> doesn't have the login for <key>
+  yet. The stack starts as soon as it arrives.", linking to Registry logins.
 
 ## Review
 
