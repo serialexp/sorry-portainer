@@ -1,9 +1,9 @@
 # The release the hosts run. Gothab release assets have no by-tag URL, so
 # each binary is pinned by its asset URL and the SHA-256 from SHA256SUMS.
-sorry_portainer_version: v0.2.9
-sorry_portainer_server_binary_url: "https://gothab.io/api/v1/repos/serialexp/sorry-portainer/releases/c7d0b7dd-cfad-485c-aa25-22f1a068be68/assets/b6585e74-f7a7-4e32-ae9c-7932313dec97"
-sorry_portainer_server_binary_sha256: 37c10457d09251c9c4d1ad4810a4a4cce44f4abfb38cce1956ba2b55a1acc130
-sorry_portainer_agent_binary_url: "https://gothab.io/api/v1/repos/serialexp/sorry-portainer/releases/c7d0b7dd-cfad-485c-aa25-22f1a068be68/assets/84b91320-ecba-46ce-b9b5-ed825863d256"
-sorry_portainer_agent_binary_sha256: 69b3551cf18d0c46ec922e0a4985dbd2582b4df03a2efa7363bfddf75f337bf5
-sorry_portainer_cli_binary_url: "https://gothab.io/api/v1/repos/serialexp/sorry-portainer/releases/c7d0b7dd-cfad-485c-aa25-22f1a068be68/assets/5bafb6d7-9bc6-4a4f-b310-7a146575531b"
-sorry_portainer_cli_binary_sha256: e476e328d0fc5f7c4731cc27be98dec03a34ba2fed6cb3cc5e45f7bf2958dea4
+sorry_portainer_version: v0.2.10
+sorry_portainer_server_binary_url: "https://gothab.io/api/v1/repos/serialexp/sorry-portainer/releases/4d85a5f1-6078-411f-be52-957ae5458e5d/assets/07793abd-abcf-4bc4-bbff-a50941f68eba"
+sorry_portainer_server_binary_sha256: 4cdde7361c1fdbfa7d0963040230fe803db1e29d3b2ab5171df26c1556ef455e
+sorry_portainer_agent_binary_url: "https://gothab.io/api/v1/repos/serialexp/sorry-portainer/releases/4d85a5f1-6078-411f-be52-957ae5458e5d/assets/ccd7e644-62f7-46fb-adf9-695d6751516d"
+sorry_portainer_agent_binary_sha256: 777ec7c8b16abfcc4425d1222f4e1975cef470a3c29383aa037f79dca81e7438
+sorry_portainer_cli_binary_url: "https://gothab.io/api/v1/repos/serialexp/sorry-portainer/releases/4d85a5f1-6078-411f-be52-957ae5458e5d/assets/8f0e98e9-9431-4ca2-b6ba-91cc9dc87aec"
+sorry_portainer_cli_binary_sha256: a7475a2f3404dd6d77ee4acc18ab53a7e0c7b77ca4bfaae670e15d7988e4f96d
