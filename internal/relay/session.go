@@ -161,15 +161,26 @@ func (s *session) close(cause error) error {
 	return cause
 }
 
-// writeFrame sends one encoded message. Callers close the session on failure,
+// writeFrame sends one encoded message, writing its parts in turn so a
+// shared payload is never copied. Callers close the session on failure,
 // because a partly written frame leaves the stream unusable.
-func (s *session) writeFrame(data []byte) error {
+func (s *session) writeFrame(f protocol.Frame) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	if err := s.conn.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
 		return err
 	}
-	return s.conn.WriteMessage(websocket.TextMessage, data)
+	w, err := s.conn.NextWriter(websocket.TextMessage)
+	if err != nil {
+		return err
+	}
+	for _, part := range [...][]byte{f.Head, f.Payload, f.Tail} {
+		if _, err := w.Write(part); err != nil {
+			_ = w.Close()
+			return err
+		}
+	}
+	return w.Close()
 }
 
 func newRequestID() (string, error) {
@@ -190,13 +201,24 @@ func (s *session) call(ctx context.Context, operation string, payload, result an
 // when not nil, runs in the caller's goroutine with each step the agent
 // reports, before the response. A slow onStep sees only the latest step.
 func (s *session) callWithProgress(ctx context.Context, operation string, payload, result any, timeout time.Duration, onStep func(string)) error {
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
+	return s.send(ctx, operation, body, result, timeout, onStep)
+}
+
+// callEncoded is call with a payload already encoded as JSON by
+// encoding/json, sent as is: many sessions can send the same bytes, which
+// must not change until the call returns.
+func (s *session) callEncoded(ctx context.Context, operation string, body json.RawMessage, result any, timeout time.Duration) error {
+	return s.send(ctx, operation, body, result, timeout, nil)
+}
+
+func (s *session) send(ctx context.Context, operation string, body json.RawMessage, result any, timeout time.Duration, onStep func(string)) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
 	id, err := newRequestID()
 	if err != nil {
 		return err
@@ -204,7 +226,7 @@ func (s *session) callWithProgress(ctx context.Context, operation string, payloa
 	deadline, _ := ctx.Deadline()
 	// Encode before registering so an oversized request fails alone rather than
 	// taking the session down.
-	data, err := protocol.Encode(protocol.Message{
+	frame, err := protocol.EncodeFrame(protocol.Message{
 		Version:   protocol.Version,
 		ID:        id,
 		Type:      protocol.TypeRequest,
@@ -234,7 +256,7 @@ func (s *session) callWithProgress(ctx context.Context, operation string, payloa
 	s.mu.Unlock()
 	defer s.forget(id)
 
-	if err := s.writeFrame(data); err != nil {
+	if err := s.writeFrame(frame); err != nil {
 		s.close(err)
 		return fmt.Errorf("%w: %v", ErrDisconnected, err)
 	}
@@ -257,7 +279,7 @@ func (s *session) callWithProgress(ctx context.Context, operation string, payloa
 		case <-ctx.Done():
 			// Best effort: the agent may already be finishing. Its late response is
 			// dropped because this request is no longer pending.
-			if cancel, err := protocol.Encode(protocol.Message{Version: protocol.Version, ID: id, Type: protocol.TypeCancel}); err == nil {
+			if cancel, err := protocol.EncodeFrame(protocol.Message{Version: protocol.Version, ID: id, Type: protocol.TypeCancel}); err == nil {
 				if err := s.writeFrame(cancel); err != nil {
 					s.close(err)
 				}

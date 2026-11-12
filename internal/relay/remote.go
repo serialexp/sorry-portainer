@@ -304,9 +304,15 @@ func (r *Remote) RetainSecrets(ctx context.Context, hostID string, stacks []stri
 
 // SyncRegistries replaces the host's registry logins. The agent answers
 // once the set is committed; stacks waiting for a login start afterwards.
-func (r *Remote) SyncRegistries(ctx context.Context, hostID string, sync protocol.RegistrySync) (protocol.RegistrySynced, error) {
+// The encoded set is sent as is, so one encoding serves a whole round of
+// hosts; it must not be cleared until every call using it has returned.
+func (r *Remote) SyncRegistries(ctx context.Context, hostID string, sync protocol.EncodedRegistrySync) (protocol.RegistrySynced, error) {
+	s, err := r.session(hostID)
+	if err != nil {
+		return protocol.RegistrySynced{}, err
+	}
 	var out protocol.RegistrySynced
-	err := r.call(ctx, hostID, opRegistriesSync, sync, &out, DefaultRequestTimeout)
+	err = s.callEncoded(ctx, opRegistriesSync, sync.JSON, &out, DefaultRequestTimeout)
 	return out, err
 }
 

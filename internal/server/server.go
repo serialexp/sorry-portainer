@@ -59,7 +59,7 @@ type Relay interface {
 	UpdateStackService(context.Context, string, string, string, func(string)) (protocol.StackOperation, error)
 	SyncSecrets(context.Context, string, protocol.SecretSync) (protocol.SecretSyncResult, error)
 	RetainSecrets(context.Context, string, []string) error
-	SyncRegistries(context.Context, string, protocol.RegistrySync) (protocol.RegistrySynced, error)
+	SyncRegistries(context.Context, string, protocol.EncodedRegistrySync) (protocol.RegistrySynced, error)
 	TestRegistry(context.Context, string, protocol.RegistryLogin) (protocol.RegistryTestResult, error)
 }
 

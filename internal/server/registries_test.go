@@ -78,7 +78,7 @@ func (r *loginRelay) SyncSecrets(ctx context.Context, host string, sync protocol
 	return r.secretRelay.SyncSecrets(ctx, host, sync)
 }
 
-func (r *loginRelay) SyncRegistries(_ context.Context, host string, set protocol.RegistrySync) (protocol.RegistrySynced, error) {
+func (r *loginRelay) SyncRegistries(_ context.Context, host string, set protocol.EncodedRegistrySync) (protocol.RegistrySynced, error) {
 	if r.gate != nil {
 		<-r.gate
 	}

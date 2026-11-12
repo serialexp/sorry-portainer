@@ -208,7 +208,7 @@ func (m *Memory) RetainSecrets(context.Context, string, []string) error {
 	return errStacksUnsupported
 }
 
-func (m *Memory) SyncRegistries(context.Context, string, protocol.RegistrySync) (protocol.RegistrySynced, error) {
+func (m *Memory) SyncRegistries(context.Context, string, protocol.EncodedRegistrySync) (protocol.RegistrySynced, error) {
 	return protocol.RegistrySynced{}, errStacksUnsupported
 }
 

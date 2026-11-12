@@ -188,7 +188,7 @@ func onlineHosts(r Relay) []string {
 }
 
 // push sends the current set to each of hosts that lacks it, at most
-// fanOut at a time, decrypting the set once for all of them, and returns
+// fanOut at a time, decrypting and encoding the set once for all of them, and returns
 // how many times it decrypted (more than once only when the set changed
 // during the round). It does nothing while the store is locked: agents keep
 // what they have.
@@ -362,19 +362,21 @@ func (p *loginPusher) statuses(hosts []string, online map[string]bool, current s
 	return out
 }
 
-// loginSnapshot is the set a round sends, decrypted once. A change during
-// the round makes a host's current set ID newer than the snapshot's; that
-// host gets a freshly read set instead. Every decrypted set is cleared when
-// the round ends, not before: other workers may still be sending it.
+// loginSnapshot is the set a round sends, decrypted and encoded once: every
+// host of the round is sent the same bytes. A change during the round makes a
+// host's current set ID newer than the snapshot's; that host gets a freshly
+// read set instead. The decrypted set is cleared as soon as it is encoded;
+// the encoded sets are cleared when the round ends, not before, because other
+// workers may still be sending them.
 type loginSnapshot struct {
 	store *secretstore.Store
 	mu    sync.Mutex
-	sets  []protocol.RegistrySync
-	// decrypts counts LoginSet calls, for the benchmark.
+	sets  []protocol.EncodedRegistrySync
+	// decrypts counts LoginSet calls, for the tests and the benchmark.
 	decrypts int
 }
 
-func (s *loginSnapshot) get(current string) (protocol.RegistrySync, error) {
+func (s *loginSnapshot) get(current string) (protocol.EncodedRegistrySync, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if n := len(s.sets); n > 0 && s.sets[n-1].SetID == current {
@@ -382,18 +384,23 @@ func (s *loginSnapshot) get(current string) (protocol.RegistrySync, error) {
 	}
 	set, err := s.store.LoginSet()
 	if err != nil {
-		return protocol.RegistrySync{}, err
+		return protocol.EncodedRegistrySync{}, err
 	}
 	s.decrypts++
-	s.sets = append(s.sets, set)
-	return set, nil
+	encoded, err := protocol.EncodeRegistrySync(set)
+	secretstore.ClearLoginSet(set)
+	if err != nil {
+		return protocol.EncodedRegistrySync{}, err
+	}
+	s.sets = append(s.sets, encoded)
+	return encoded, nil
 }
 
 func (s *loginSnapshot) clear() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, set := range s.sets {
-		secretstore.ClearLoginSet(set)
+		set.Clear()
 	}
 	s.sets = nil
 }

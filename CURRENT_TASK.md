@@ -6,7 +6,7 @@
 - Phase 1 (backend) is captured in Wheat: "Registry logins: agent vault, pre-pull and relay operations", "Registry logins: master store, background pusher and /api/registries", "Relay: report a requested reconnect even when the server's close arrives first", "Registry logins: live Podman test against a private TLS registry". The race suite passes; the live test (`SORRY_PORTAINER_TEST_PODMAN=1 go test -run TestRealPodmanPrivateRegistry ./internal/stacks/`) passes against real Podman and podman-compose. The doc's checklist is ticked (Mode B).
 - Open for Bart: encoding a round's set once instead of per host (benchmark numbers in the doc); what the stacks list says for a stack waiting on a registry with no saved login (`waiting_login_state: none`), which the board doesn't show.
 - Phase 2 (UI) is captured in Wheat: "Registry logins: Settings page and login states on stack pages". 111 frontend tests, tsc and the build pass. Checked in the browser against a throwaway unlocked master (state was in `/run/user/1000/sp-ui-scratch`, now removed): add, duplicate key, scope hint (trailing slashes dropped), Show with wrong/right passphrase, Replace with an empty password, lock/unlock, Delete, restart → locked read-only list. The stack-page login states are unit-tested only (the dev store is locked).
-- Open for Bart: the board gaps listed in the doc's Outstanding section (interim choices made), and the encoding option.
+- Encoding a round's set once: done (Bart said yes); see the doc's Done list. Board gaps: Bart is taking them to the design agent; implement its answers. Bart: no release until the design and the open questions are settled.
 - Next: ask before releasing v0.2.11 (server and agents deploy together; protocol version 5).
 
 

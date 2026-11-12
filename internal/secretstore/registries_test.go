@@ -90,8 +90,17 @@ func TestLoginLifecycle(t *testing.T) {
 	if err := s.DeleteLogin("ghcr.io"); !errors.Is(err, ErrLoginNotFound) {
 		t.Fatalf("second delete = %v", err)
 	}
-	if fourth, _ := s.RegistrySetID(); fourth == third {
+	fourth, _ := s.RegistrySetID()
+	if fourth == third {
 		t.Fatal("the set ID did not change on delete")
+	}
+	// The ID is cached; a store opened afresh reads the same one from disk.
+	reopened, err := OpenWithKDF(dir, testKDF)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id, err := reopened.RegistrySetID(); err != nil || id != fourth {
+		t.Fatalf("reopened set ID = %q, %v, want %q", id, err, fourth)
 	}
 
 	// Nothing on disk holds the password in the clear.

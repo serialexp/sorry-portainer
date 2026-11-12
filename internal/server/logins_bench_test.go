@@ -1,10 +1,12 @@
 package server
 
 import (
+	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -14,24 +16,41 @@ import (
 	"github.com/serialexp/sorry-portainer/internal/secretstore"
 )
 
-// encodingRelay stands in for 1000 connected agents: each push is encoded
-// as the relay would and then dropped.
+// encodingRelay stands in for 1000 connected agents: each push is framed
+// and written as relay.Remote does, to io.Discard.
 type encodingRelay struct {
 	stackRelay
 	hosts      []protocol.HostInfo
 	pushes     atomic.Int64
 	maxMessage atomic.Int64
+	// keep makes kept collect every encoding pushed, to check it is cleared.
+	keep bool
+	mu   sync.Mutex
+	kept [][]byte
 }
 
 func (r *encodingRelay) Hosts() []protocol.HostInfo { return r.hosts }
 
-func (r *encodingRelay) SyncRegistries(_ context.Context, _ string, set protocol.RegistrySync) (protocol.RegistrySynced, error) {
-	data, err := json.Marshal(set)
+func (r *encodingRelay) SyncRegistries(_ context.Context, host string, set protocol.EncodedRegistrySync) (protocol.RegistrySynced, error) {
+	frame, err := protocol.EncodeFrame(protocol.Message{
+		ID: "0123456789abcdef0123456789abcdef", Type: protocol.TypeRequest, Operation: "registries.sync",
+		HostID: host, TimeoutMS: 30_000, Payload: set.JSON,
+	})
 	if err != nil {
 		return protocol.RegistrySynced{}, err
 	}
+	for _, part := range [...][]byte{frame.Head, frame.Payload, frame.Tail} {
+		if _, err := io.Discard.Write(part); err != nil {
+			return protocol.RegistrySynced{}, err
+		}
+	}
+	if r.keep {
+		r.mu.Lock()
+		r.kept = append(r.kept, set.JSON)
+		r.mu.Unlock()
+	}
 	r.pushes.Add(1)
-	for n := int64(len(data)); ; {
+	for n := int64(frame.Len()); ; {
 		old := r.maxMessage.Load()
 		if n <= old || r.maxMessage.CompareAndSwap(old, n) {
 			break
@@ -88,6 +107,27 @@ func TestLargestRoundDecryptsOnceAndFitsAMessage(t *testing.T) {
 	}
 }
 
+// TestRoundSendsOneEncodingAndClearsIt: every host of a round is sent the
+// same encoded bytes, and the round overwrites them once it is done.
+func TestRoundSendsOneEncodingAndClearsIt(t *testing.T) {
+	store := fullLoginStore(t)
+	r := &encodingRelay{hosts: thousandHosts()[:50], keep: true}
+	p := newLoginPusher(store, r, newHostLocks())
+	p.push(context.Background(), onlineHosts(r))
+	if len(r.kept) != 50 {
+		t.Fatalf("kept %d encodings, want 50", len(r.kept))
+	}
+	first := r.kept[0]
+	for _, data := range r.kept {
+		if len(data) == 0 || &data[0] != &first[0] {
+			t.Fatal("hosts of one round were sent different encodings")
+		}
+	}
+	if bytes.ContainsFunc(first, func(c rune) bool { return c != 0 }) {
+		t.Fatal("the round left the encoded passwords in memory")
+	}
+}
+
 // TestRapidChangesToThousandHosts: 20 changes in a row cost at most two
 // pushes per host.
 func TestRapidChangesToThousandHosts(t *testing.T) {
@@ -108,7 +148,7 @@ func TestRapidChangesToThousandHosts(t *testing.T) {
 
 // BenchmarkLoginRound pushes the largest set to 1000 hosts once per
 // iteration. Run with -benchmem: allocations per round are one decrypted
-// set plus the encoded messages in flight.
+// and encoded set plus a small envelope per host.
 func BenchmarkLoginRound(b *testing.B) {
 	store := fullLoginStore(b)
 	r := &encodingRelay{hosts: thousandHosts()}

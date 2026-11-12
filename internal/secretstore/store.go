@@ -103,6 +103,12 @@ type Store struct {
 
 	// writeMu serializes mutations so per-stack limits hold under concurrency.
 	writeMu sync.Mutex
+
+	// setIDMu guards the cached registry set ID (RegistrySetID), which every
+	// login push reads for every host.
+	setIDMu     sync.Mutex
+	setID       string
+	setIDLoaded bool
 }
 
 // Open opens or prepares the store in dir, which is created with mode 0700.

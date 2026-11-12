@@ -1,6 +1,6 @@
 # Registry logins — Design
 
-Status: partial — phases 1 and 2 landed (phase 1 tested live, phase 2 in the browser); open board gaps and the encoding option wait on Bart; not released
+Status: partial — phases 1 and 2 landed (phase 1 tested live, phase 2 in the browser); open board gaps wait on the design agent; not released
 Owner: Bart
 Last updated: 2026-11-12
 
@@ -87,7 +87,7 @@ Tick items as they land and move them to Done.
   largest message 384,634 bytes, 20 rapid changes coalesced into at most 2
   rounds. `BenchmarkLoginRound`: about 67 ms, 506 MB allocated and 19,908
   allocations per round, nearly all of it encoding the same set once per
-  host (see the encoding bullet below).
+  host (see the encoding bullet below; since then about 5 ms and 3.2 MB).
 - [x] **Verify — podman-compose passes `REGISTRY_AUTH_FILE` to the `podman`
   it runs.** Settled by the live test: `podman-compose pull` of an image
   that is not local works with the agent's logins, and fails when the
@@ -104,6 +104,18 @@ Tick items as they land and move them to Done.
 - [x] **Extended beyond the original plan — relay drain race.** A requested
   reconnect is reported even when the server's close arrives first
   (separate change; it made `TestDrainTimeoutEndsStuckSession` flaky).
+- [x] **Encode a round's set once.** Bart (2026-11-12): "Lets do that".
+  The pusher's snapshot encodes the decrypted set once
+  (`protocol.EncodedRegistrySync`) and clears the decrypted set at once and
+  the encoding when the round ends. The server session writes every request
+  as a `protocol.Frame` (envelope head, the payload as given, `}`), so a
+  payload is no longer copied into the envelope, and the login push sends
+  the one encoding to every host. The store also keeps the set ID in memory
+  instead of reading `set-id` for every host. `BenchmarkLoginRound`, 1000
+  hosts at the limits (the fake relay now frames and writes as
+  `relay.Remote` does): 66–77 ms, 470–497 MB and about 19,000 allocations
+  per round before; about 5 ms, 3.2 MB and 9,240 allocations after. The
+  wire format is unchanged, so agents need no update for it.
 - [x] **Phase 2 — Settings page.** `src/registries-ui.tsx` (page),
   `src/registries-store.ts` (Solid store, 5 s poll while visible),
   `src/registries-api.ts`, `src/registry-logins.ts` (the board's copy as
@@ -139,10 +151,6 @@ Tick items as they land and move them to Done.
   - the logins table needs 940 px (the board's column minimums), so at a
     1200 px window it scrolls sideways; fitting it means narrower minimums
     than the board's.
-- [ ] **Option — encode a round's set once.** The relay encodes the same
-  `registries.sync` message once per host. Accepting a pre-encoded payload
-  would cut a 1000-host round's allocations from about 506 MB to one
-  encoding (about 0.5 MB) plus per-host framing. For Bart to decide.
 - [ ] **Defer — logins per host.** Bart chose one set for all hosts.
 - [ ] **Defer — insecure (HTTP) registries.** Logins are sent over HTTPS only
   (below).

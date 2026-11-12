@@ -139,26 +139,46 @@ func (s *Store) writeLoginLocked(file loginFile) error {
 	return s.newSetIDLocked()
 }
 
-// newSetIDLocked replaces the set ID. The caller holds writeMu.
+// newSetIDLocked replaces the set ID. The caller holds writeMu. The cached
+// ID is replaced under setIDMu together with the file, so a reader never
+// caches an ID older than the file; a failed write drops the cache, and the
+// next read goes back to the file.
 func (s *Store) newSetIDLocked() error {
 	id := make([]byte, 16)
 	if _, err := rand.Read(id); err != nil {
 		return err
 	}
-	return writeFileAtomic(filepath.Join(s.registriesPath(), setIDFile), []byte(hex.EncodeToString(id)))
+	setID := hex.EncodeToString(id)
+	s.setIDMu.Lock()
+	defer s.setIDMu.Unlock()
+	if err := writeFileAtomic(filepath.Join(s.registriesPath(), setIDFile), []byte(setID)); err != nil {
+		s.setIDLoaded = false
+		return err
+	}
+	s.setID, s.setIDLoaded = setID, true
+	return nil
 }
 
 // RegistrySetID is the ID of the current login set, empty while no login was
-// ever saved. It works while the store is locked.
+// ever saved. It works while the store is locked. The file is read once:
+// only this store changes it, and the master is its only process.
 func (s *Store) RegistrySetID() (string, error) {
+	s.setIDMu.Lock()
+	defer s.setIDMu.Unlock()
+	if s.setIDLoaded {
+		return s.setID, nil
+	}
 	data, err := readLimited(filepath.Join(s.registriesPath(), setIDFile), 64)
-	if errors.Is(err, fs.ErrNotExist) {
-		return "", nil
-	}
-	if err != nil {
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		s.setID = ""
+	case err != nil:
 		return "", err
+	default:
+		s.setID = strings.TrimSpace(string(data))
 	}
-	return strings.TrimSpace(string(data)), nil
+	s.setIDLoaded = true
+	return s.setID, nil
 }
 
 // AddLogin stores a new login. The key is normalized; a key already saved

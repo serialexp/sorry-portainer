@@ -48,3 +48,4 @@
 - [ ] Image updates: an update leaves the image the service ran before on the host, unused. Image pruning (above) would reclaim it.
 
 - Found while building registry logins (2026-11-12): after an unlock, `Server.pushAllHosts` (`internal/server/secrets.go`) starts one goroutine per connected host for the stack-secret push and `testUntested`, with no bound. The registry login round before it is 8-wide; the secret push should use the same bounded fan-out.
+- Found while encoding registry logins once (2026-11-12): the agent still encodes each response twice (`json.Marshal` of the result, then `protocol.Encode` copies it into the envelope; `internal/relay/agent.go`). Large answers (container lists, stack output, logs) would halve their allocations by writing a `protocol.Frame` as the server session now does.
