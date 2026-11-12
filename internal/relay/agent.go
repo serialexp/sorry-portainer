@@ -129,8 +129,15 @@ func (a *Agent) Serve(ctx context.Context, conn *websocket.Conn) error {
 			return
 		case <-a.reconnectSignal():
 		}
-		s.drain(sessionCtx, a.drainTimeout())
+		closing := s.drain(sessionCtx, a.drainTimeout())
+		// Marked drained before the close frame goes out: the server's
+		// answering close ends the read loop, which must then report the
+		// reconnect.
 		close(drained)
+		if closing {
+			// WriteControl may run concurrently with other writes.
+			_ = s.conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "reconnecting"), time.Now().Add(writeTimeout))
+		}
 		cancel()
 	}()
 	ended := func(err error) error {
@@ -187,9 +194,10 @@ func (a *Agent) drainTimeout() time.Duration {
 	return DefaultDrainTimeout
 }
 
-// drain stops new requests, waits for the running ones up to timeout, and
-// closes the connection with a normal close frame.
-func (s *agentSession) drain(ctx context.Context, timeout time.Duration) {
+// drain stops new requests and waits for the running ones up to timeout. It
+// reports whether the session should close with a normal close frame: not
+// when ctx ended first.
+func (s *agentSession) drain(ctx context.Context, timeout time.Duration) bool {
 	s.mu.Lock()
 	s.draining = true
 	s.mu.Unlock()
@@ -204,10 +212,9 @@ func (s *agentSession) drain(ctx context.Context, timeout time.Duration) {
 	case <-idle:
 	case <-timer.C:
 	case <-ctx.Done():
-		return
+		return false
 	}
-	// WriteControl may run concurrently with other writes.
-	_ = s.conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "reconnecting"), time.Now().Add(writeTimeout))
+	return true
 }
 
 func (s *agentSession) start(ctx context.Context, request protocol.Message) {
