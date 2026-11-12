@@ -1,6 +1,6 @@
 # Registry logins — Design
 
-Status: partial — phase 1 (store, protocol, agent, pusher, web API) landed and tested live; phase 2 (dashboard) outstanding
+Status: partial — phases 1 and 2 landed (phase 1 tested live, phase 2 in the browser); open board gaps and the encoding option wait on Bart; not released
 Owner: Bart
 Last updated: 2026-11-12
 
@@ -104,15 +104,41 @@ Tick items as they land and move them to Done.
 - [x] **Extended beyond the original plan — relay drain race.** A requested
   reconnect is reported even when the server's close arrives first
   (separate change; it made `TestDrainTimeoutEndsStuckSession` flaky).
+- [x] **Phase 2 — Settings page.** `src/registries-ui.tsx` (page),
+  `src/registries-store.ts` (Solid store, 5 s poll while visible),
+  `src/registries-api.ts`, `src/registry-logins.ts` (the board's copy as
+  pure functions): `/settings/registries` (`/settings` and any other
+  `/settings/…` open it), Settings at the bottom of every sidebar, the
+  section tab with its count, the logins list, the scope hint, the form,
+  Show (passphrase, 30 s, Copy, Hide; locking hides it), Replace (an empty
+  password keeps the stored one), Delete, the locked state and the "On each
+  host" card with Retry now. Checked in the browser against a throwaway
+  unlocked master.
+- [x] **Phase 2 — stack pages.** The three login states (`none`,
+  `not_on_host`, `refused`) on image rows and the checked line, and the
+  "Waiting for a registry login" note with a Registry logins link on the
+  stacks list and stack page. Unit-tested; the dev master's store is
+  locked, so these states were not seen live.
 
 ### Outstanding
 
-- [ ] **Phase 2 — Settings page.** `/settings/registries` (`/settings` opens
-  the first section), Settings at the bottom of every sidebar, the section
-  tabs, the logins list, form, Show (30 s), Replace, Delete, the locked
-  state and the "On each host" card.
-- [ ] **Phase 2 — stack pages.** The three login states on image rows and
-  headers, and "Waiting for a registry login" on the stacks list.
+- [ ] **Board gaps — for Bart / the design agent.** Interim choices made
+  where the board says nothing:
+  - the waiting note for `waiting_login_state` `none` or `refused` (shows
+    the agent's reason for now);
+  - a host row while locked when the host holds an older set ("It gets the
+    current logins when you unlock.");
+  - the page when the store is not set up ("Create it on the Hosts page
+    before adding registry logins.") or not configured;
+  - "No hosts are enrolled yet." in the "On each host" card;
+  - "Couldn’t copy" after a failed copy, and the error text in Retry now's
+    tooltip;
+  - an empty detail when a host's current set has no time;
+  - login states on image rows use the muted tone, as the other check
+    states do, where the board uses its problem colour;
+  - the logins table needs 940 px (the board's column minimums), so at a
+    1200 px window it scrolls sideways; fitting it means narrower minimums
+    than the board's.
 - [ ] **Option — encode a round's set once.** The relay encodes the same
   `registries.sync` message once per host. Accepting a pre-encoded payload
   would cut a 1000-host round's allocations from about 506 MB to one
