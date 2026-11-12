@@ -46,3 +46,5 @@
 - [ ] Images page (found 2026-11-10): on Podman 4.9 every image shows as "untagged image". `podman images --format json` leaves `RepoTags` null and lists the tags under `Names`; `podman.Client.Images` reads only `RepoTags`. Check what Podman 6.1 (jp1) returns, then read `Names` too.
 - [ ] Stack editor (found 2026-11-10): after a successful "Save and start" the page stays with the output, says "Changes saved. You can retry Start without saving another version." and offers "Retry start", which reads as a failure. Ask Bart what a successful start should do (go to the stack page?).
 - [ ] Image updates: an update leaves the image the service ran before on the host, unused. Image pruning (above) would reclaim it.
+
+- Found while building registry logins (2026-11-12): after an unlock, `Server.pushAllHosts` (`internal/server/secrets.go`) starts one goroutine per connected host for the stack-secret push and `testUntested`, with no bound. The registry login round before it is 8-wide; the secret push should use the same bounded fan-out.

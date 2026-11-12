@@ -1,6 +1,6 @@
 # Registry logins — Design
 
-Status: designed (doc reviewed by Codex and Antigravity; design board in hand), implementation in progress
+Status: partial — phase 1 (store, protocol, agent, pusher, web API) landed and tested live; phase 2 (dashboard) outstanding
 Owner: Bart
 Last updated: 2026-11-12
 
@@ -48,49 +48,75 @@ Tick items as they land and move them to Done.
   (`project/RegistryLogins.dc.html`) and the new rows on "Warnings and empty
   states" and "Stacks", 2026-11-12. What it adds is in
   [Follow-up: the design board](#follow-up-2026-11-12-the-design-board).
+- [x] **Phase 1 — store.** `internal/secretstore/registries.go`: one
+  sealed file per login (AAD binds key and username), add, replace (an
+  empty password keeps the stored one), delete, list while locked, reveal
+  with the passphrase, one decrypted set per push, the set ID.
+- [x] **Phase 1 — protocol and relay.** `registries.sync`,
+  `registries.test`, `HostInfo.RegistrySetID` in the hello; protocol
+  version 5.
+- [x] **Phase 1 — agent file and vault.** `internal/registryvault`: memory
+  vault, per-host tmpfs file written with the checks below, read back at
+  start (empty on corruption), `REGISTRY_AUTH_FILE` set before the first
+  Podman command.
+- [x] **Phase 1 — agent image check.** Keychain from the vault with
+  longest-prefix matching, HTTPS-only transport, cache generation (`Flush`
+  on every commit), the matched key in `ServiceImage`.
+- [x] **Phase 1 — agent pre-pull and waiting for logins.** Missing images
+  are pulled before `up`; a refused pull leaves the stack "waiting for
+  registry login for <registry>"; `LoginsChanged` starts waiting stacks in
+  coalesced background rounds when a set arrives. A refused pull during
+  Update is reported as a failed pull, not as waiting.
+- [x] **Phase 1 — server push.** `internal/server/logins.go`: per-host
+  serialized (the host lock shared with the secret pusher), coalesced,
+  background, 8-wide, backoff from 5 s doubling to 5 min; registries before
+  secrets on connect and unlock.
+- [x] **Phase 1 — web API.** `/api/registries` routes (below).
+- [x] **Phase 1 — stack environment.** `REGISTRY_AUTH_FILE` and
+  `DOCKER_CONFIG` refused as stack environment keys and pinned to the
+  agent's own after the stack's environment.
+- [x] **Phase 1 — last test per login.** Result, host and time kept with
+  the login and recorded only if the login has not changed since; a login
+  saved with no host online is tested by the first host that connects.
+- [x] **Phase 1 — retry a host now.** `POST /api/registries/retry` `{host}`
+  skips the backoff.
+- [x] **Tests.** Listed under [Tests](#tests), with the differences noted
+  there.
+- [x] **Benchmark — push fan-out.** `internal/server/logins_bench_test.go`:
+  1000 fake hosts, 64 logins at the limits. One decryption per round, the
+  largest message 384,634 bytes, 20 rapid changes coalesced into at most 2
+  rounds. `BenchmarkLoginRound`: about 67 ms, 506 MB allocated and 19,908
+  allocations per round, nearly all of it encoding the same set once per
+  host (see the encoding bullet below).
+- [x] **Verify — podman-compose passes `REGISTRY_AUTH_FILE` to the `podman`
+  it runs.** Settled by the live test: `podman-compose pull` of an image
+  that is not local works with the agent's logins, and fails when the
+  variable is withheld (checked by mutation). podman-compose 1.x exits 0
+  when that pull fails, so the test checks for the image, not the exit
+  code.
+- [x] **Extended beyond the original plan — offline hosts' last seen.**
+  `relay.OnDisconnect` reports a session that ends without a replacement,
+  so the "On each host" card can say when an offline host was last seen.
+- [x] **Extended beyond the original plan — why an image has no login.**
+  `ServiceImage.login_key` and `login_state` (`none`, `not_on_host`,
+  `refused`), and `Stack.waiting_login_key` / `waiting_login_state`, filled
+  in by the master from its own set for the stack pages.
+- [x] **Extended beyond the original plan — relay drain race.** A requested
+  reconnect is reported even when the server's close arrives first
+  (separate change; it made `TestDrainTimeoutEndsStuckSession` flaky).
 
 ### Outstanding
 
-- [ ] **Phase 1 — store.** Registry logins in `internal/secretstore`: put,
-  delete, list (works while locked), reveal with passphrase, one decrypted
-  set per push, the set ID.
-- [ ] **Phase 1 — protocol and relay.** `registries.sync`, `registries.test`,
-  the login state in the hello; protocol version 5.
-- [ ] **Phase 1 — agent file and vault.** Memory vault, per-host tmpfs file
-  written with the checks below, read back at start (empty on corruption),
-  `REGISTRY_AUTH_FILE` pinned for every Podman command.
-- [ ] **Phase 1 — agent image check.** Keychain from the vault with
-  longest-prefix matching, HTTPS only, cache generation, the matched key in
-  `ServiceImage`.
-- [ ] **Phase 1 — agent pre-pull and waiting for logins.** Pull missing
-  images before `up`; "waiting for registry login"; background start when a
-  push arrives.
-- [ ] **Phase 1 — server push.** Per-host serialized, coalesced, background
-  pusher with bounded fan-out and retry; registries before secrets on
-  connect and unlock.
-- [ ] **Phase 1 — web API.** `/api/registries` routes (below).
-- [ ] **Phase 1 — stack environment.** `REGISTRY_AUTH_FILE` and
-  `DOCKER_CONFIG` refused as stack environment keys and pinned after the
-  stack's environment.
-- [ ] **Phase 1 — last test per login.** Result, host and time kept with
-  the login (clear fields); a login saved with no host online is tested by
-  the first host that connects.
-- [ ] **Phase 1 — retry a host now.** `POST /api/registries/retry` `{host}`
-  skips the backoff.
 - [ ] **Phase 2 — Settings page.** `/settings/registries` (`/settings` opens
   the first section), Settings at the bottom of every sidebar, the section
   tabs, the logins list, form, Show (30 s), Replace, Delete, the locked
   state and the "On each host" card.
 - [ ] **Phase 2 — stack pages.** The three login states on image rows and
   headers, and "Waiting for a registry login" on the stacks list.
-- [ ] **Tests.** Listed under [Tests](#tests).
-- [ ] **Benchmark — push fan-out.** 1000 fake hosts, 64 logins at the limits:
-  one decryption per push, bounded memory (one decrypted set plus at most
-  the fan-out's encoded messages), coalescing of 20 rapid changes into at
-  most 2 pushes per host.
-- [ ] **Verify — podman-compose passes `REGISTRY_AUTH_FILE` to the `podman`
-  it runs.** With pre-pull it matters only for images compose pulls itself
-  (none should remain); settled by the live test.
+- [ ] **Option — encode a round's set once.** The relay encodes the same
+  `registries.sync` message once per host. Accepting a pre-encoded payload
+  would cut a 1000-host round's allocations from about 506 MB to one
+  encoding (about 0.5 MB) plus per-host framing. For Bart to decide.
 - [ ] **Defer — logins per host.** Bart chose one set for all hosts.
 - [ ] **Defer — insecure (HTTP) registries.** Logins are sent over HTTPS only
   (below).
@@ -393,6 +419,21 @@ cover:
   base64 form.
 - The benchmark in the checklist.
 
+Built 2026-11-12, `internal/stacks/podman_registry_integration_test.go`. It
+differs from the plan in three ways:
+
+- The registry is go-containerregistry's in-process `pkg/registry` behind a
+  Basic-auth handler and TLS, not a `registry:2` container. The test needs
+  no image pull or published port.
+- Rootless Podman reads `certs.d` from `$HOME/.config` only, and moving
+  `HOME` would move the image storage, so instead of trusting the test CA
+  the test points `CONTAINERS_REGISTRIES_CONF` at a private file that marks
+  just that registry `insecure` (TLS without verification).
+- The canary scan covers every output and log line the agent side
+  produces, the stack directory, the test's config directory and the
+  compose project directory, not the whole disk. The master's side is
+  covered by the scrubber and HTTP tests.
+
 ## Performance
 
 A push is one message per host on rare events (connect, unlock, change),
@@ -412,7 +453,8 @@ only for images that are missing, which compose would have pulled anyway.
 
 ## Questions only building can answer
 
-- Whether podman-compose passes `REGISTRY_AUTH_FILE` on (bullet above).
+- ~~Whether podman-compose passes `REGISTRY_AUTH_FILE` on.~~ It does;
+  settled by the live test (checklist).
 
 ## Follow-up 2026-11-12: the design board
 
