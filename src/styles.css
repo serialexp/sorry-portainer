@@ -38,6 +38,8 @@
   --danger: #a3341f;
   --danger-line: #e8c9c2;
   --danger-chip: #fbeae6;
+  /* A check that failed and needs action (no login, a missing tag, ...). */
+  --problem-ink: #8a3b12;
   --mono: "JetBrains Mono", ui-monospace, monospace;
   --display: "Bricolage Grotesque", system-ui, sans-serif;
   --body: "Instrument Sans", system-ui, -apple-system, sans-serif;
@@ -1577,6 +1579,13 @@ h2 {
 .image-status.muted {
   color: var(--muted);
 }
+/* A failed check shows a warning triangle instead of the dot. */
+.image-status.problem {
+  color: var(--problem-ink);
+}
+.image-status.problem::before {
+  display: none;
+}
 .image-status.busy::before {
   animation: pulse 1.2s ease-in-out infinite;
 }
@@ -1609,8 +1618,14 @@ h2 {
   gap: 10px;
 }
 .stack-services-checked {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: 13px;
   color: var(--muted);
+}
+.stack-services-checked.problem {
+  color: var(--problem-ink);
 }
 .stack-services-tools .small-button {
   display: inline-flex;
@@ -2867,10 +2882,33 @@ h2 {
 .add-button.solid.login-add:disabled .icon {
   color: #6b756f;
 }
+/* Fits a 1200 px window; a narrower box stacks each row (below). */
 .data-table.cols-logins {
-  --cols: minmax(210px, 1.5fr) minmax(120px, 1fr) 110px 150px 250px;
-  /* The column minimums (840), the gaps (4 × 14) and the padding (2 × 22). */
-  min-width: 940px;
+  --cols: minmax(160px, 1.5fr) minmax(96px, 1fr) 96px 140px auto;
+}
+.logins-box {
+  container-type: inline-size;
+}
+/* Below 820 px the head goes and each row stacks: the details in one column,
+   Show, Replace and Delete on their own line under them. */
+@container (max-width: 820px) {
+  .cols-logins .data-head {
+    display: none;
+  }
+  .cols-logins .login-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    row-gap: 8px;
+  }
+  .login-row > .login-user,
+  .login-row > .login-set,
+  .login-row > .login-test {
+    grid-column: 1;
+  }
+  .login-row > .login-actions {
+    grid-column: 1 / -1;
+    justify-self: start;
+    justify-content: flex-start;
+  }
 }
 .cols-logins .data-head,
 .cols-logins .data-row {
@@ -2891,10 +2929,17 @@ h2 {
   gap: 3px;
   min-width: 0;
 }
+/* Wraps at the <wbr> after each "/". Each segment is an inline block, so a
+   hyphen inside one is no break point; a segment wider than the column still
+   breaks, anywhere, as the last resort. */
 .login-key strong {
   font-size: 14px;
   font-weight: 500;
   overflow-wrap: anywhere;
+}
+.login-key .key-part {
+  display: inline-block;
+  max-width: 100%;
 }
 .login-key small {
   font-size: 12.5px;
@@ -2948,6 +2993,7 @@ h2 {
 }
 .login-actions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 6px;
 }
@@ -2990,6 +3036,7 @@ h2 {
 }
 .login-prompt-fields {
   flex: 1 1 320px;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -3000,6 +3047,8 @@ h2 {
 }
 .login-prompt-fields input {
   flex: 1;
+  /* No intrinsic width, so the row fits a phone-wide strip. */
+  width: 0;
   min-width: 0;
   min-height: 42px;
   box-sizing: border-box;
@@ -3035,6 +3084,8 @@ h2 {
   font: 14px var(--mono);
   color: var(--amber-soft);
   overflow-wrap: anywhere;
+  /* One click selects it all, for when copying fails. */
+  user-select: all;
 }
 .login-shown-timer {
   font-size: 12.5px;
@@ -3110,7 +3161,83 @@ h2 {
   color: var(--muted);
 }
 
+/* No usable secret store: the section's body. */
+.login-no-store {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 24px 22px;
+  color: var(--muted);
+}
+.login-no-store > .icon {
+  flex: none;
+  margin-top: 2px;
+}
+.login-no-store > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.login-no-store strong {
+  font-size: 15px;
+  color: var(--ink);
+}
+.login-no-store span {
+  max-width: 600px;
+  font-size: 14px;
+  line-height: 1.55;
+}
+.login-setup {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 32px 22px;
+}
+.login-setup-icon {
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: var(--sidebar);
+  color: var(--amber);
+}
+.login-setup h3 {
+  margin: 0;
+  font: 700 19px var(--display);
+}
+.login-setup p {
+  margin: 0;
+  max-width: 520px;
+  font-size: 14.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+.login-setup-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 16px;
+  text-decoration: none;
+}
+
 /* On each host */
+.login-no-hosts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 20px 22px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.login-no-hosts .add-button {
+  min-height: 40px;
+  text-decoration: none;
+}
 .data-table.cols-login-hosts {
   --cols: 150px minmax(0, 1fr) auto;
 }

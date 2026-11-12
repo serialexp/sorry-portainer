@@ -1,6 +1,6 @@
 # Registry logins — Design
 
-Status: partial — phases 1 and 2 landed (phase 1 tested live, phase 2 in the browser); open board gaps wait on the design agent; not released
+Status: partial — phases 1 and 2 and the design agent's answers landed (phase 1 tested live, phase 2 in the browser); not released
 Owner: Bart
 Last updated: 2026-11-12
 
@@ -131,26 +131,51 @@ Tick items as they land and move them to Done.
   "Waiting for a registry login" note with a Registry logins link on the
   stacks list and stack page. Unit-tested; the dev master's store is
   locked, so these states were not seen live.
+- [x] **Board gaps — answered by the design agent (2026-11-12) and
+  implemented.** Bart took the nine interim choices to the design agent:
+  - the waiting note names the matching login key, or the image's registry
+    when there is none, and never shows the agent's raw reason ("there’s no
+    saved login for docker.io. Add one in Settings, or check the image name
+    if it’s meant to be public." / "ghcr.io refused the saved login for
+    ghcr.io/myorg. Replace it in Settings, and the stack starts once it
+    works."), always with the Registry logins link. A master with no
+    secret store gives no login state; that reads as "no saved login";
+  - a host holding an older set while locked: "Has older logins" (amber),
+    "It still uses the logins from before your last change. It gets the
+    current set when you unlock.";
+  - no usable store: the section replaces its list. Not set up: "Set up
+    the secret store first", the board's sentence and a "Set up the secret
+    store" button (opens the Hosts page's create card); no store: "This
+    server has no secret store configured" without an action. The "On each
+    host" card is hidden in both. Add login stays visible but disabled, as
+    the board draws it (the answer's text said hidden);
+  - no hosts: "No hosts are enrolled yet. Each host gets the logins when it
+    joins." with "Enroll a host"; the pill reads "No hosts yet";
+  - a failed copy: "Couldn’t copy · select the text", the password selects
+    with one click (`user-select: all`), the label resets after 2.5 s;
+  - a failed push: the reason in the row's detail line ("The agent couldn’t
+    save the logins: <reason>. Trying again in 40 s."), no tooltip;
+  - a current set with no time: "Confirmed by the agent.";
+  - login states, "No access", "Tag not found" and "Couldn’t check" on image
+    rows and the checked line use the problem tone (warning triangle,
+    `#8A3B12`), as the board marks them; muted stays for facts such as
+    pinned or local. The checked line says "checked" for a refusal or a
+    missing tag, "last checked" otherwise, and "N images couldn’t be
+    checked" when the failures differ;
+  - the table's columns are `minmax(160px,1.5fr) minmax(96px,1fr) 96px 140px
+    auto` with no minimum width; below 820 px (a container query on the
+    list) each row stacks with Show/Replace/Delete on their own line. A key
+    wraps only after a "/" (each segment is an inline block followed by
+    `<wbr>`); a segment wider than the column breaks inside as the last
+    resort.
+  Checked in the browser on a throwaway master (not set up, no hosts, the
+  table at 1200 px and phone width, Show, a failed Copy and its reset) and
+  on the dev master (locked host rows, the "no saved login" note and the
+  problem tone on a stack whose ghcr.io image is refused). Host rows with an
+  older set or a failed push were not reproduced; they are unit-tested.
 
 ### Outstanding
 
-- [ ] **Board gaps — for Bart / the design agent.** Interim choices made
-  where the board says nothing:
-  - the waiting note for `waiting_login_state` `none` or `refused` (shows
-    the agent's reason for now);
-  - a host row while locked when the host holds an older set ("It gets the
-    current logins when you unlock.");
-  - the page when the store is not set up ("Create it on the Hosts page
-    before adding registry logins.") or not configured;
-  - "No hosts are enrolled yet." in the "On each host" card;
-  - "Couldn’t copy" after a failed copy, and the error text in Retry now's
-    tooltip;
-  - an empty detail when a host's current set has no time;
-  - login states on image rows use the muted tone, as the other check
-    states do, where the board uses its problem colour;
-  - the logins table needs 940 px (the board's column minimums), so at a
-    1200 px window it scrolls sideways; fitting it means narrower minimums
-    than the board's.
 - [ ] **Defer — logins per host.** Bart chose one set for all hosts.
 - [ ] **Defer — insecure (HTTP) registries.** Logins are sent over HTTPS only
   (below).

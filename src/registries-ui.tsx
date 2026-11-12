@@ -1,12 +1,13 @@
 import { A } from "@solidjs/router";
 import { createEffect, createSignal, For, Match, on, onCleanup, Show, Switch } from "solid-js";
-import { hostPath, registriesPath } from "./host-route";
+import { enrollmentPath, hostPath, registriesPath } from "./host-route";
 import {
   CheckIcon,
   CloseIcon,
   EyeIcon,
   EyeSlashIcon,
   InfoIcon,
+  KeyIcon,
   LockIcon,
   NoLockIcon,
   PlusIcon,
@@ -33,14 +34,20 @@ import {
   showPassword,
   submitForm,
 } from "./registries-store";
-import { fleetLabel, hostLook, loginScope, scopeLabel, testBadge } from "./registry-logins";
+import { fleetLabel, hostLook, keyParts, loginScope, scopeLabel, testBadge } from "./registry-logins";
 import { StoreNotice } from "./secrets-ui";
-import { secrets } from "./secrets-store";
+import { requestStoreSetup, secrets } from "./secrets-store";
 
 // The fleet-wide Settings page, per the design board "Settings · Registry
 // logins". Registry logins is its only section so far.
 
 const unlocked = () => secrets.store === "unlocked";
+/** The master has no secret store, so no login can be saved. */
+const storeNone = () => registries.phase === "unavailable" || secrets.store === "unavailable";
+/** The store exists in the configuration but isn't created yet. */
+const storeNotSetUp = () => !storeNone() && secrets.store === "uninitialized";
+/** Logins can be listed (and, once unlocked, changed). */
+const storeReady = () => !storeNone() && !storeNotSetUp();
 
 /** /settings/registries: the header, the section tabs and the Registry logins section. */
 export function SettingsPage() {
@@ -64,22 +71,8 @@ export function SettingsPage() {
           <span class="resource-count">{registries.logins.length}</span>
         </A>
       </nav>
-      <Show
-        when={registries.phase !== "unavailable"}
-        fallback={
-          <div class="no-store">
-            <NoLockIcon />
-            <div>
-              <strong>This server has no secret store configured</strong>
-              <span>Registry logins are kept in the secret store, so none can be saved on this server.</span>
-            </div>
-          </div>
-        }
-      >
-        <StoreNotice
-          locked="Unlock it to add, change or show logins and to send them to hosts. Hosts keep the logins they already have until they reboot."
-          setup="Create it on the Hosts page before adding registry logins."
-        />
+      <Show when={storeReady()}>
+        <StoreNotice locked="Unlock it to add, change or show logins and to send them to hosts. Hosts keep the logins they already have until they reboot." />
         <Show when={unlocked() && registries.form} keyed>
           <LoginForm />
         </Show>
@@ -111,7 +104,9 @@ export function SettingsPage() {
             {registries.error}
           </p>
         </Show>
-        <LoginsPanel />
+      </Show>
+      <LoginsPanel />
+      <Show when={storeReady()}>
         <HostsPanel />
       </Show>
     </div>
@@ -329,14 +324,22 @@ function LoginsPanel() {
     const current = shown();
     return current ? Math.max(0, Math.ceil((current.hideAt - clock()) / 1000)) : 0;
   };
+  // "Copied" or "Couldn’t copy" goes back to "Copy" after 2.5 s.
+  let copyReset: ReturnType<typeof setTimeout> | undefined;
+  onCleanup(() => clearTimeout(copyReset));
+  function copyResult(result: "copied" | "failed") {
+    setCopied(result);
+    clearTimeout(copyReset);
+    copyReset = setTimeout(() => setCopied(""), 2500);
+  }
   function copy(value: string) {
     if (!navigator.clipboard) {
-      setCopied("failed");
+      copyResult("failed");
       return;
     }
     navigator.clipboard.writeText(value).then(
-      () => setCopied("copied"),
-      () => setCopied("failed"),
+      () => copyResult("copied"),
+      () => copyResult("failed"),
     );
   }
 
@@ -362,11 +365,37 @@ function LoginsPanel() {
         </button>
       </div>
       <Switch>
+        <Match when={storeNone()}>
+          <div class="login-no-store">
+            <NoLockIcon />
+            <div>
+              <strong>This server has no secret store configured</strong>
+              <span>
+                Registry logins need a secret store, so none can be saved here. Hosts can still pull public images.
+              </span>
+            </div>
+          </div>
+        </Match>
+        <Match when={storeNotSetUp()}>
+          <div class="login-setup">
+            <span class="login-setup-icon" aria-hidden="true">
+              <KeyIcon size={20} />
+            </span>
+            <h3>Set up the secret store first</h3>
+            <p>
+              Registry logins are kept in the secret store, and it isn’t set up yet. Create it on the Hosts page, then
+              come back to add logins.
+            </p>
+            <A class="store-solid login-setup-link" href="/" onClick={() => requestStoreSetup()}>
+              Set up the secret store
+            </A>
+          </div>
+        </Match>
         <Match when={registries.phase === "loading"}>
           <div class="resource-empty">Loading registry logins…</div>
         </Match>
         <Match when={registries.logins.length}>
-          <div class="data-scroll">
+          <div class="logins-box">
             <div class="data-table cols-logins">
               <div class="data-head">
                 <span>Registry or namespace</span>
@@ -382,14 +411,26 @@ function LoginsPanel() {
                   const isShown = () => shown()?.key === login.key;
                   return (
                     <div class="login-group">
-                      <div class="data-row">
+                      <div class="data-row login-row">
                         <div class="login-key">
-                          <strong class="mono">{login.key}</strong>
+                          <strong class="mono">
+                            {/* Wraps only after a "/"; one segment too long for the column breaks anywhere. */}
+                            <For each={keyParts(login.key)}>
+                              {(part) => (
+                                <>
+                                  <span class="key-part">{part}</span>
+                                  <wbr />
+                                </>
+                              )}
+                            </For>
+                          </strong>
                           <small>{scopeLabel(login.key)}</small>
                         </div>
                         <span class="login-user">{login.username}</span>
-                        <span class="cell-value">{timeAgo(registries.now - Date.parse(login.updated_at) / 1000)}</span>
-                        <span class={`login-pill ${badge().tone}`} title={badge().title}>
+                        <span class="cell-value login-set">
+                          {timeAgo(registries.now - Date.parse(login.updated_at) / 1000)}
+                        </span>
+                        <span class={`login-pill login-test ${badge().tone}`} title={badge().title}>
                           <i class="dot" aria-hidden="true"></i>
                           {badge().label}
                         </span>
@@ -467,7 +508,11 @@ function LoginsPanel() {
                             <code aria-label={`Password for ${login.key}`}>{current().value}</code>
                             <span class="login-shown-timer">Hides in {hideIn()} s</span>
                             <button class="login-shown-copy" type="button" onClick={() => copy(current().value)}>
-                              {copied() === "copied" ? "Copied" : copied() === "failed" ? "Couldn’t copy" : "Copy"}
+                              {copied() === "copied"
+                                ? "Copied"
+                                : copied() === "failed"
+                                  ? "Couldn’t copy · select the text"
+                                  : "Copy"}
                             </button>
                             <button class="login-shown-hide" type="button" onClick={hide}>
                               Hide
@@ -530,7 +575,7 @@ function HostsPanel() {
           <h2 id="login-hosts-heading">On each host</h2>
           <span class="subtitle">Hosts hold the logins in memory and in a file that a reboot clears.</span>
         </div>
-        <Show when={registries.hosts.length}>
+        <Show when={registries.phase === "ready"}>
           <span class={`login-pill ${fleet().tone}`}>
             <i class="dot" aria-hidden="true"></i>
             {fleet().text}
@@ -542,7 +587,12 @@ function HostsPanel() {
           each={registries.hosts}
           fallback={
             <Show when={registries.phase === "ready"}>
-              <div class="resource-empty">No hosts are enrolled yet.</div>
+              <div class="login-no-hosts">
+                <span>No hosts are enrolled yet. Each host gets the logins when it joins.</span>
+                <A class="add-button" href={enrollmentPath}>
+                  Enroll a host
+                </A>
+              </div>
             </Show>
           }
         >
@@ -568,7 +618,6 @@ function HostsPanel() {
                   <button
                     class="add-button"
                     type="button"
-                    title={row.error}
                     disabled={!!registries.busy}
                     onClick={() => void retryNow(row.host)}
                   >

@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { UnauthorizedError } from "../src/fleet-api.ts";
 import {
+  checkFailed,
   checkedText,
   getStackImages,
   imageStatusLine,
@@ -157,10 +158,12 @@ test("each status has its line", () => {
     title: "Running the image postgres:16 points to now",
   });
   const unknown = imageStatusLine({ service: "x", status: "unknown", error: "dial tcp: i/o timeout" }, now);
-  assert.deepEqual([unknown.text, unknown.tone, unknown.title], ["Couldn’t check", "muted", "dial tcp: i/o timeout"]);
+  assert.deepEqual([unknown.text, unknown.tone, unknown.title], ["Couldn’t check", "problem", "dial tcp: i/o timeout"]);
   const failedAs = (failure) => imageStatusLine({ service: "x", status: "unknown", failure }, now);
-  assert.deepEqual([failedAs("denied").text, failedAs("denied").tone], ["No access", "muted"]);
-  assert.deepEqual([failedAs("not_found").text, failedAs("not_found").tone], ["Tag not found", "muted"]);
+  assert.deepEqual([failedAs("denied").text, failedAs("denied").tone], ["No access", "problem"]);
+  assert.deepEqual([failedAs("not_found").text, failedAs("not_found").tone], ["Tag not found", "problem"]);
+  // Facts, not failures, stay muted.
+  assert.equal(imageStatusLine({ service: "x", status: "pinned" }, now).tone, "muted");
   assert.equal(failedAs("unreachable").text, "Couldn’t check");
   assert.equal(imageStatusLine({ service: "x", status: "pinned" }, now).text, "Pinned by digest");
   assert.equal(imageStatusLine({ service: "x", status: "local", error: "no image" }, now).title, "no image");
@@ -177,11 +180,21 @@ test("the header says when images were checked, or which registry failed", () =>
   assert.equal(checkedText([{ ...down, checked_at: undefined }], now), "Couldn’t reach docker.io");
   assert.equal(checkedText([{ service: "d", status: "unknown" }], now), "Couldn’t reach the registry");
   assert.equal(checkedText([current, { ...down, failure: "unreachable" }], now), "Couldn’t reach docker.io · last checked 2 hours ago");
-  assert.equal(checkedText([{ ...down, failure: "denied" }], now), "docker.io refused access · last checked 2 hours ago");
+  assert.equal(checkedText([{ ...down, failure: "denied" }], now), "docker.io refused access · checked 2 hours ago");
   assert.equal(
     checkedText([{ ...down, image: "docker.io/aeolun/homes:v2", failure: "not_found", checked_at: undefined }], now),
     "Tag v2 not found on docker.io",
   );
+  assert.equal(
+    checkedText([{ ...down, image: "docker.io/aeolun/homes:v2", failure: "not_found", checked_at: now - 300 }], now),
+    "Tag v2 not found on docker.io · checked 5 min ago",
+  );
+  // Different problems are counted; the same one twice is still named.
+  const missing = { ...down, image: "ghcr.io/example/queue:v2", registry: "ghcr.io", failure: "not_found" };
+  assert.equal(checkedText([current, down, missing], now), "2 images couldn’t be checked · checked 2 hours ago");
+  assert.equal(checkedText([down, { ...down, service: "e" }], now), "Couldn’t reach docker.io · last checked 2 hours ago");
+  assert.equal(checkFailed([current, down]), true);
+  assert.equal(checkFailed([current, { service: "c", status: "pinned" }]), false);
 });
 
 test("updates count only services behind", () => {

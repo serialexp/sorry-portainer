@@ -15,6 +15,7 @@ import {
   checkLoginForm,
   fleetLabel,
   hostLook,
+  keyParts,
   loginScope,
   registryOf,
   savedBanner,
@@ -206,22 +207,24 @@ test("after a save, the banner says what the test found", () => {
 test("each host's row on the page", () => {
   const row = (state, extra = {}) => ({ host: "local-a", online: state !== "offline", set_id: "s1", state, ...extra });
   assert.equal(hostLook(row("current", { at: iso(now - 180) }), false, now).detail, "Received 3 min ago.");
-  assert.equal(hostLook(row("current"), false, now).detail, "");
+  // Reported at connect, so no receipt time.
+  assert.equal(hostLook(row("current"), false, now).detail, "Confirmed by the agent.");
   assert.deepEqual(hostLook(row("sending"), false, now).busy, true);
-  const failedRow = row("failed", { error: "timeout", retry_at: iso(now + 40) });
+  // The push error is in the row's detail, not a tooltip.
+  const failedRow = row("failed", { error: "write /run/auth.json: no space left on device.", retry_at: iso(now + 40) });
   assert.deepEqual(hostLook(failedRow, false, now), {
     label: "Delivery failed",
-    detail: "The agent didn’t confirm the new set. Trying again in 40 s.",
+    detail: "The agent couldn’t save the logins: write /run/auth.json: no space left on device. Trying again in 40 s.",
     tone: "danger",
     busy: false,
     canRetry: true,
   });
   assert.equal(
     hostLook({ ...failedRow, retry_at: iso(now + 290) }, false, now).detail,
-    "The agent didn’t confirm the new set. Trying again in 5 min.",
+    "The agent couldn’t save the logins: write /run/auth.json: no space left on device. Trying again in 5 min.",
   );
   assert.equal(
-    hostLook({ ...failedRow, retry_at: iso(now - 1) }, false, now).detail,
+    hostLook({ ...failedRow, error: "", retry_at: iso(now - 1) }, false, now).detail,
     "The agent didn’t confirm the new set.",
   );
   assert.equal(hostLook(failedRow, true, now).canRetry, false);
@@ -237,7 +240,14 @@ test("each host's row on the page", () => {
     busy: false,
     canRetry: false,
   });
-  assert.equal(hostLook(row("missing"), true, now).detail, "It gets the current logins when you unlock.");
+  // Locked, holding the set from before the last change.
+  assert.deepEqual(hostLook(row("missing"), true, now), {
+    label: "Has older logins",
+    detail: "It still uses the logins from before your last change. It gets the current set when you unlock.",
+    tone: "warn",
+    busy: false,
+    canRetry: false,
+  });
   assert.equal(hostLook(row("missing"), false, now).label, "Sending…");
 });
 
@@ -252,6 +262,7 @@ test("the fleet pill counts hosts with the current set", () => {
     tone: "warn",
   });
   assert.equal(fleetLabel([r("current")]).text, "1 host up to date");
+  assert.deepEqual(fleetLabel([]), { text: "No hosts yet", tone: "ok" });
 });
 
 test("a refused image says why, once the master explained it", () => {
@@ -265,9 +276,11 @@ test("a refused image says why, once the master explained it", () => {
   };
   assert.equal(imageStatusLine(refused, now, "local-a").text, "No access");
   const notOnHost = { ...refused, login_key: "ghcr.io/myorg", login_state: "not_on_host" };
+  // Login states need action, so they use the problem tone.
+  assert.equal(imageStatusLine(refused, now, "local-a").tone, "problem");
   assert.deepEqual(imageStatusLine(notOnHost, now, "local-a"), {
     text: "Login not on this host yet",
-    tone: "muted",
+    tone: "problem",
     title:
       "A login for ghcr.io/myorg is saved, but local-a doesn’t have it yet (offline, delivery failed, or rebooted while the store was locked). Checked again once it arrives.",
   });
@@ -293,18 +306,29 @@ test("a refused image says why, once the master explained it", () => {
     "ghcr.io refused the login · checked 5 min ago",
   );
   assert.equal(checkedText([{ ...hub, checked_at: undefined }], now), "No login for docker.io");
-  assert.equal(checkedText([refused], now), "ghcr.io refused access · last checked 5 min ago");
+  assert.equal(checkedText([refused], now), "ghcr.io refused access · checked 5 min ago");
 });
 
-test("a stack waiting for a login that is saved but not on the host", () => {
+test("a stack waiting for a registry login says which, never the agent's reason", () => {
+  const waiting = { waiting_login: "ghcr.io/myorg/api", waiting_login_key: "ghcr.io/myorg" };
   assert.equal(
-    waitingLoginNote({ waiting_login_key: "ghcr.io/myorg", waiting_login_state: "not_on_host" }, "local-a"),
+    waitingLoginNote({ ...waiting, waiting_login_state: "not_on_host" }, "local-a"),
     "Waiting for a registry login: local-a doesn’t have the login for ghcr.io/myorg yet. The stack starts as soon as it arrives.",
   );
-  assert.equal(waitingLoginNote({ waiting_login_state: "none" }, "local-a"), undefined);
   assert.equal(
-    waitingLoginNote({ waiting_login_key: "ghcr.io/myorg", waiting_login_state: "refused" }, "local-a"),
-    undefined,
+    waitingLoginNote({ ...waiting, waiting_login_state: "refused" }, "local-a"),
+    "Waiting for a registry login: ghcr.io refused the saved login for ghcr.io/myorg. Replace it in Settings, and the stack starts once it works.",
   );
+  const none =
+    "Waiting for a registry login: there’s no saved login for docker.io. Add one in Settings, or check the image name if it’s meant to be public.";
+  assert.equal(waitingLoginNote({ waiting_login: "docker.io/myorg/app", waiting_login_state: "none" }, "local-a"), none);
+  // A master without a secret store gives no state: no login can be saved, so none.
+  assert.equal(waitingLoginNote({ waiting_login: "docker.io/myorg/app" }, "local-a"), none);
+  // Waiting for something other than a login: the agent's reason shows.
   assert.equal(waitingLoginNote({}, "local-a"), undefined);
+});
+
+test("a key wraps only after a slash", () => {
+  assert.deepEqual(keyParts("registry.example.net/platform-team/ci"), ["registry.example.net/", "platform-team/", "ci"]);
+  assert.deepEqual(keyParts("ghcr.io"), ["ghcr.io"]);
 });

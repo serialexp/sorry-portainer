@@ -178,7 +178,12 @@ export function registryChecked(status: ImageStatus): boolean {
   return status === "current" || status === "behind" || status === "unknown";
 }
 
-export type ImageStatusLine = { text: string; tone: "ok" | "warn" | "muted"; title: string };
+/**
+ * "problem" is a check that failed and needs someone to act (no login, a
+ * refused login, a missing tag, an unreachable registry); "muted" is a fact,
+ * like a pinned or local image.
+ */
+export type ImageStatusLine = { text: string; tone: "ok" | "warn" | "muted" | "problem"; title: string };
 
 /** The line for an image a registry refused, once the master said why; undefined without its answer. */
 function loginStatusLine(img: ServiceImage, hostID: string): ImageStatusLine | undefined {
@@ -188,7 +193,7 @@ function loginStatusLine(img: ServiceImage, hostID: string): ImageStatusLine | u
     case "none":
       return {
         text: "No login for this registry",
-        tone: "muted",
+        tone: "problem",
         title:
           `${registry} refused the request and there is no saved login for it. Add one in Registry logins` +
           (registry === "docker.io"
@@ -198,13 +203,13 @@ function loginStatusLine(img: ServiceImage, hostID: string): ImageStatusLine | u
     case "not_on_host":
       return {
         text: "Login not on this host yet",
-        tone: "muted",
+        tone: "problem",
         title: `A login for ${key} is saved, but ${hostID} doesn’t have it yet (offline, delivery failed, or rebooted while the store was locked). Checked again once it arrives.`,
       };
     case "refused":
       return {
         text: "Login refused",
-        tone: "muted",
+        tone: "problem",
         title: `${hostID} has the login for ${key}, but ${registry} refused it. The token may be expired or missing pull rights. Replace it in Registry logins.`,
       };
   }
@@ -230,14 +235,14 @@ export function imageStatusLine(img: ServiceImage, now: number, hostID = "this h
           return (
             loginStatusLine(img, hostID) ?? {
               text: "No access",
-              tone: "muted",
+              tone: "problem",
               title: img.error || "The registry refused access to the image",
             }
           );
         case "not_found":
-          return { text: "Tag not found", tone: "muted", title: img.error || "The registry has no such tag" };
+          return { text: "Tag not found", tone: "problem", title: img.error || "The registry has no such tag" };
         default:
-          return { text: "Couldn’t check", tone: "muted", title: img.error || "The registry could not be reached" };
+          return { text: "Couldn’t check", tone: "problem", title: img.error || "The registry could not be reached" };
       }
     case "pinned":
       return { text: "Pinned by digest", tone: "muted", title: "The image is named by digest, so it cannot change" };
@@ -249,24 +254,42 @@ export function imageStatusLine(img: ServiceImage, now: number, hostID = "this h
 }
 
 /**
- * The Services header's check line: when the images were checked, or the
- * first check that failed: a registry that refused access, a tag it does not
- * have, or one that could not be reached.
+ * The Services header's check line: when the images were checked, or what
+ * failed: a registry that refused access, a tag it does not have, or one that
+ * could not be reached. Images that failed in different ways are counted
+ * instead ("2 images couldn’t be checked").
  */
 export function checkedText(images: ServiceImage[], now: number): string {
-  const failed = images.find((img) => img.status === "unknown");
-  if (failed) {
-    const where = failed.registry || "the registry";
-    const login = failed.failure === "denied" ? loginCheckedText(failed, where) : "";
-    if (login) return failed.checked_at ? `${login} · checked ${timeAgo(now - failed.checked_at)}` : login;
-    let text = `Couldn’t reach ${where}`;
-    if (failed.failure === "denied") text = `${where} refused access`;
-    if (failed.failure === "not_found") text = `Tag ${imageTag(failed.image)} not found on ${where}`;
-    return failed.checked_at ? `${text} · last checked ${timeAgo(now - failed.checked_at)}` : text;
-  }
+  const failed = images.filter((img) => img.status === "unknown");
   const times = images.flatMap((img) => (img.checked_at ? [img.checked_at] : []));
-  if (!times.length) return "";
-  return `Images checked ${timeAgo(now - Math.min(...times))}`;
+  const checked = times.length ? timeAgo(now - Math.min(...times)) : "";
+  if (failed.length) {
+    const problems = new Set(failed.map(failureText));
+    if (problems.size > 1) {
+      const text = `${failed.length} images couldn’t be checked`;
+      return checked ? `${text} · checked ${checked}` : text;
+    }
+    const [img] = failed;
+    const text = failureText(img);
+    if (!img.checked_at) return text;
+    // An unreachable registry was not checked just now: say when it last was.
+    const when = img.failure === "denied" || img.failure === "not_found" ? "checked" : "last checked";
+    return `${text} · ${when} ${timeAgo(now - img.checked_at)}`;
+  }
+  return checked ? `Images checked ${checked}` : "";
+}
+
+/** Whether the check line names a failed check, which shows in the problem tone. */
+export function checkFailed(images: ServiceImage[]): boolean {
+  return images.some((img) => img.status === "unknown");
+}
+
+/** The header's words for one image whose check failed. */
+function failureText(img: ServiceImage): string {
+  const where = img.registry || "the registry";
+  if (img.failure === "denied") return loginCheckedText(img, where) || `${where} refused access`;
+  if (img.failure === "not_found") return `Tag ${imageTag(img.image)} not found on ${where}`;
+  return `Couldn’t reach ${where}`;
 }
 
 /** The header's words for a refused image the master explained; "" without its answer. */

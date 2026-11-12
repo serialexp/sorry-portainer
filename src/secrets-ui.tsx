@@ -332,7 +332,11 @@ export function StackStoreNotice() {
  * The unlock banner while the store is locked, or the pointer to the Hosts
  * page while it isn't set up, with what the page needs the store for.
  */
-export function StoreNotice(props: { locked: string; setup: string }) {
+/**
+ * The banner for a locked store, and the line for one not set up yet. A page
+ * that says more about a missing store itself leaves out `setup`.
+ */
+export function StoreNotice(props: { locked: string; setup?: string }) {
   const form = createUnlockForm();
   return (
     <Switch>
@@ -379,7 +383,7 @@ export function StoreNotice(props: { locked: string; setup: string }) {
           </Show>
         </form>
       </Match>
-      <Match when={secrets.store === "uninitialized"}>
+      <Match when={secrets.store === "uninitialized" && props.setup}>
         <div class="store-setup-line">
           <KeyIcon size={18} />
           <span>

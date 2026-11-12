@@ -13,6 +13,7 @@ import {
   RefreshIcon,
   StackIcon,
   StopIcon,
+  WarningIcon,
 } from "./icons";
 import {
   askUpdate,
@@ -26,6 +27,7 @@ import {
   tick,
 } from "./image-update-store";
 import {
+  checkFailed,
   checkedText,
   imageStatusLine,
   updateStepText,
@@ -87,7 +89,16 @@ function ServicesSection(props: { name: string; services: StackService[] }) {
           <Show when={updatesLabel(imageUpdates.services)}>
             {(label) => <span class="warn-chip dotted">{label()}</span>}
           </Show>
-          <span class="stack-services-checked" role="status">
+          <span
+            class="stack-services-checked"
+            classList={{
+              problem: !imageUpdates.checking && (!!imageUpdates.error || checkFailed(imageUpdates.services)),
+            }}
+            role="status"
+          >
+            <Show when={!imageUpdates.checking && (!!imageUpdates.error || checkFailed(imageUpdates.services))}>
+              <WarningIcon size={13} />
+            </Show>
             {checkLine()}
           </span>
           <button
@@ -131,9 +142,9 @@ function ServiceTable(props: { name: string; services: StackService[] }) {
 }
 
 /**
- * Why a stack that should be up isn't: the agent's reason, or, for a login
- * the master knows is saved but not on the host yet, the design's sentence
- * with a link to Registry logins.
+ * Why a stack that should be up isn't: the agent's reason, or, for a stack
+ * waiting for a registry login, the design's sentence with a link to
+ * Registry logins.
  */
 function WaitingNote(props: { stack: Stack; hostID: string }) {
   const login = () => waitingLoginNote(props.stack, props.hostID);
@@ -163,6 +174,9 @@ function ImageStatus(props: { service: string }) {
     <Show when={line()}>
       {(l) => (
         <span class={`image-status ${l().tone}`} title={l().title || undefined}>
+          <Show when={l().tone === "problem"}>
+            <WarningIcon size={13} />
+          </Show>
           {l().text}
         </span>
       )}

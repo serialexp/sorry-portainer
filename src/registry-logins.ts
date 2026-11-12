@@ -11,6 +11,11 @@ export function registryOf(key: string): string {
   return slash < 0 ? key : key.slice(0, slash);
 }
 
+/** A key split after each "/", so the list can let it wrap only there ("ghcr.io/", "myorg"). */
+export function keyParts(key: string): string[] {
+  return key.split("/").map((part, i, all) => (i < all.length - 1 ? `${part}/` : part));
+}
+
 /** "Whole registry" or "Namespace", under a key in the list. */
 export function scopeLabel(key: string): string {
   return key.includes("/") ? "Namespace" : "Whole registry";
@@ -182,7 +187,8 @@ export function hostLook(row: LoginHostStatus, locked: boolean, now: number): Ho
       const at = seconds(row.at);
       return {
         label: "Has the current logins",
-        detail: at === undefined ? "" : `Received ${timeAgo(now - at)}.`,
+        // A host that reported the current set when it connected has no receipt time.
+        detail: at === undefined ? "Confirmed by the agent." : `Received ${timeAgo(now - at)}.`,
         tone: "ok",
         busy: false,
         canRetry: false,
@@ -193,9 +199,12 @@ export function hostLook(row: LoginHostStatus, locked: boolean, now: number): Ho
     case "failed": {
       const retry = seconds(row.retry_at);
       const wait = retry === undefined ? 0 : Math.ceil(retry - now);
+      const reason = (row.error ?? "").trim().replace(/\.+$/, "");
       return {
         label: "Delivery failed",
-        detail: `The agent didn’t confirm the new set.${wait > 0 ? ` Trying again in ${waitText(wait)}.` : ""}`,
+        detail:
+          (reason ? `The agent couldn’t save the logins: ${reason}.` : "The agent didn’t confirm the new set.") +
+          (wait > 0 ? ` Trying again in ${waitText(wait)}.` : ""),
         tone: "danger",
         busy: false,
         canRetry: !locked,
@@ -215,11 +224,17 @@ export function hostLook(row: LoginHostStatus, locked: boolean, now: number): Ho
       // Online without the current set. While unlocked the master is about
       // to send it; while locked it can't until the store is unlocked.
       if (!locked) return sending;
+      if (row.set_id)
+        return {
+          label: "Has older logins",
+          detail: "It still uses the logins from before your last change. It gets the current set when you unlock.",
+          tone: "warn",
+          busy: false,
+          canRetry: false,
+        };
       return {
         label: "Missing the logins",
-        detail: row.set_id
-          ? "It gets the current logins when you unlock."
-          : "Rebooted while the secret store was locked, so it has none. It gets them when you unlock.",
+        detail: "Rebooted while the secret store was locked, so it has none. It gets them when you unlock.",
         tone: "warn",
         busy: false,
         canRetry: false,
@@ -230,20 +245,31 @@ export function hostLook(row: LoginHostStatus, locked: boolean, now: number): Ho
 /** The pill in the "On each host" header. */
 export function fleetLabel(rows: readonly LoginHostStatus[]): { text: string; tone: Tone } {
   const total = rows.length;
+  if (!total) return { text: "No hosts yet", tone: "ok" };
   const current = rows.filter((row) => row.state === "current").length;
   if (current === total)
     return { text: total === 1 ? "1 host up to date" : `All ${total} hosts up to date`, tone: "ok" };
   return { text: `${current} of ${total} hosts up to date`, tone: "warn" };
 }
 /**
- * The note on a stack waiting for a registry login, when the master knows
- * the login is saved but not on the host yet; undefined otherwise, and the
- * agent's own reason shows.
+ * The note on a stack waiting for a registry login (waiting_login is the
+ * repository a registry refused); undefined for a stack waiting for anything
+ * else, which shows the agent's own reason. A master that could not tell
+ * which login applies (it has no secret store) gives no state; no login can
+ * be saved there, so it reads as having none.
  */
 export function waitingLoginNote(
-  stack: { waiting_login_key?: string; waiting_login_state?: string },
+  stack: { waiting_login?: string; waiting_login_key?: string; waiting_login_state?: string },
   hostID: string,
 ): string | undefined {
-  if (stack.waiting_login_state !== "not_on_host" || !stack.waiting_login_key) return undefined;
-  return `Waiting for a registry login: ${hostID} doesn’t have the login for ${stack.waiting_login_key} yet. The stack starts as soon as it arrives.`;
+  if (!stack.waiting_login) return undefined;
+  const key = stack.waiting_login_key ?? "";
+  switch (key ? stack.waiting_login_state : "none") {
+    case "not_on_host":
+      return `Waiting for a registry login: ${hostID} doesn’t have the login for ${key} yet. The stack starts as soon as it arrives.`;
+    case "refused":
+      return `Waiting for a registry login: ${registryOf(key)} refused the saved login for ${key}. Replace it in Settings, and the stack starts once it works.`;
+    default:
+      return `Waiting for a registry login: there’s no saved login for ${registryOf(stack.waiting_login)}. Add one in Settings, or check the image name if it’s meant to be public.`;
+  }
 }
