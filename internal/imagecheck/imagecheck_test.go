@@ -231,6 +231,74 @@ func TestLatestCancelledBeforeAsking(t *testing.T) {
 	}
 }
 
+// waitFor polls cond until it holds; the deadline only keeps a broken
+// test from hanging.
+func waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("gave up waiting for %s", what)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// A check whose caller gives up mid-request (a closed page, a cancelled
+// relay call) learned nothing about the registry: it must not be cached as
+// "unreachable" for the TTL.
+func TestCancelledRequestIsNotCached(t *testing.T) {
+	fake := newFake()
+	fake.digests["docker.io/a/b:latest"] = "sha256:one"
+	fake.gate = make(chan struct{})
+	checker := New(fake, Options{})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan Remote)
+	go func() { done <- checker.Latest(ctx, []string{"docker.io/a/b:latest"}, false)["docker.io/a/b:latest"] }()
+	waitFor(t, "the request to start", func() bool { return fake.running.Load() == 1 })
+	cancel()
+	if got := <-done; got.Err == "" {
+		t.Fatalf("cancelled check = %+v, want the cancellation", got)
+	}
+	close(fake.gate)
+	got := checker.Latest(context.Background(), []string{"docker.io/a/b:latest"}, false)["docker.io/a/b:latest"]
+	if got.Digest != "sha256:one" || got.Err != "" || got.Failure != "" {
+		t.Fatalf("next check = %+v, want the registry's answer", got)
+	}
+	if n := fake.headCount("docker.io/a/b:latest"); n != 1 {
+		t.Fatalf("heads = %d, want 1 (the registry asked again)", n)
+	}
+}
+
+// A caller waiting on another's request does not inherit that caller's
+// cancellation: it asks the registry itself.
+func TestWaiterAsksAgainWhenTheRequestIsAbandoned(t *testing.T) {
+	fake := newFake()
+	fake.digests["docker.io/a/b:latest"] = "sha256:one"
+	fake.gate = make(chan struct{})
+	checker := New(fake, Options{})
+	ref := "docker.io/a/b:latest"
+	ownerCtx, cancelOwner := context.WithCancel(context.Background())
+	ownerDone := make(chan Remote)
+	go func() { ownerDone <- checker.Latest(ownerCtx, []string{ref}, false)[ref] }()
+	waitFor(t, "the request to start", func() bool { return fake.running.Load() == 1 })
+	waiterDone := make(chan Remote)
+	go func() { waiterDone <- checker.Latest(context.Background(), []string{ref}, true)[ref] }()
+	waitFor(t, "the second caller to wait", func() bool {
+		checker.mu.Lock()
+		defer checker.mu.Unlock()
+		return checker.inflight[ref] != nil && checker.inflight[ref].waiters == 1
+	})
+	cancelOwner()
+	if got := <-ownerDone; got.Err == "" {
+		t.Fatalf("owner = %+v, want the cancellation", got)
+	}
+	close(fake.gate)
+	if got := <-waiterDone; got.Digest != "sha256:one" || got.Err != "" {
+		t.Fatalf("waiter = %+v, want the registry's answer", got)
+	}
+}
+
 func TestEntriesAreBounded(t *testing.T) {
 	fake := newFake()
 	now := &clock{now: time.Unix(1000, 0)}

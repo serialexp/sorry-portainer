@@ -107,6 +107,11 @@ type call struct {
 	remote Remote
 	// generation is the Checker's generation when the request started.
 	generation uint64
+	// waiters counts the callers waiting for this request besides its own.
+	waiters int
+	// abandoned is set when the request's own caller gave up before the
+	// registry answered; remote is then meaningless and waiters ask again.
+	abandoned bool
 }
 
 // Checker caches registry answers per reference. It is safe for concurrent use.
@@ -227,12 +232,20 @@ func (c *Checker) failed(ref string, err error) Remote {
 
 // ask makes one HEAD request for ref, or waits for the one already running.
 func (c *Checker) ask(ctx context.Context, ref string) Remote {
-	c.mu.Lock()
-	if running := c.inflight[ref]; running != nil && running.generation == c.generation {
+	for {
+		c.mu.Lock()
+		running := c.inflight[ref]
+		if running == nil || running.generation != c.generation {
+			break // c.mu stays held for the request below.
+		}
+		running.waiters++
 		c.mu.Unlock()
 		select {
 		case <-running.done:
-			return running.remote
+			if !running.abandoned {
+				return running.remote
+			}
+			// Its caller gave up before the registry answered; ask again.
 		case <-ctx.Done():
 			return c.failed(ref, ctx.Err())
 		}
@@ -244,6 +257,21 @@ func (c *Checker) ask(ctx context.Context, ref string) Remote {
 	requestCtx, cancel := context.WithTimeout(ctx, c.options.Timeout)
 	digest, err := c.registry.Head(requestCtx, ref)
 	cancel()
+
+	if err != nil && ctx.Err() != nil {
+		// The caller gave up (a closed page, a cancelled relay call), not
+		// the registry: nothing is learned, so nothing is cached, and
+		// callers waiting on this request ask again. The per-request
+		// timeout is requestCtx's alone and still counts as unreachable.
+		c.mu.Lock()
+		current.abandoned = true
+		if c.inflight[ref] == current {
+			delete(c.inflight, ref)
+		}
+		c.mu.Unlock()
+		close(current.done)
+		return c.failed(ref, ctx.Err())
+	}
 
 	c.mu.Lock()
 	now := c.options.Now()
