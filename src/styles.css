@@ -2882,9 +2882,12 @@ h2 {
 .add-button.solid.login-add:disabled .icon {
   color: #6b756f;
 }
-/* Fits a 1200 px window; a narrower box stacks each row (below). */
+/* Fits a 1200 px window; a narrower box stacks each row (below). Every row
+   and the head are grids of their own, so the actions column has the board's
+   fixed width: an auto width follows each row's content (the head's
+   "Actions" label is narrower than the buttons) and shifts the fr columns. */
 .data-table.cols-logins {
-  --cols: minmax(160px, 1.5fr) minmax(96px, 1fr) 96px 140px auto;
+  --cols: minmax(160px, 1.5fr) minmax(96px, 1fr) 96px 140px 232px;
 }
 .logins-box {
   container-type: inline-size;
