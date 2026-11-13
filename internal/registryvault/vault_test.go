@@ -136,8 +136,8 @@ func TestARestartedAgentReadsItsFileBack(t *testing.T) {
 	if second.SetID() != "set-7" || !second.Has("ghcr.io") {
 		t.Fatalf("read back %q, has %v", second.SetID(), second.Has("ghcr.io"))
 	}
-	if len(*logged) != 0 {
-		t.Fatalf("logged %v", *logged)
+	if len(*logged) != 1 || !strings.HasPrefix((*logged)[0], "registry logins: read set set-7 from ") || strings.Contains((*logged)[0], "token\"") {
+		t.Fatalf("logged %v, want only the set read back", *logged)
 	}
 }
 
@@ -307,5 +307,83 @@ func TestSignInTestUsesAThrowawayFileAndOwnText(t *testing.T) {
 	}
 	if _, err := v.Test(context.Background(), login("GHCR.io", "bot", "x"), run("", nil)); err == nil {
 		t.Error("tested an invalid login")
+	}
+}
+
+func TestDockerHubUsernamesAreLowercasedForPodmanAndTheCheck(t *testing.T) {
+	v, logged := open(t, testDir(t))
+	request := set("set-1", login("docker.io", "Aeolun", "hub-token"), login("ghcr.io/myorg", "MyBot", "gh-token"))
+	if _, err := v.Sync(request); err != nil {
+		t.Fatal(err)
+	}
+	file := readAuthFile(t, v.Path())
+	if got := file.Auths["docker.io"].Auth; got != registries.BasicAuth("aeolun", []byte("hub-token")) {
+		t.Fatalf("docker hub auth %q, want the lowercase username", got)
+	}
+	if got := file.Auths["ghcr.io/myorg"].Auth; got != registries.BasicAuth("MyBot", []byte("gh-token")) {
+		t.Fatalf("ghcr auth %q, want the username as given", got)
+	}
+	if got := v.Describe("docker.io"); got != `docker.io (user "aeolun", password 9 bytes)` {
+		t.Fatalf("Describe = %q", got)
+	}
+	if got := v.Describe("quay.io"); got != "anonymous" {
+		t.Fatalf("Describe of no login = %q", got)
+	}
+	last := (*logged)[len(*logged)-1]
+	if !strings.Contains(last, "received set set-1") || !strings.Contains(last, `user "aeolun"`) || strings.Contains(last, "hub-token") {
+		t.Fatalf("logged %q", last)
+	}
+}
+
+// An agent that already holds a set with a capitalised Docker Hub username
+// gets no new push (the set ID is unchanged), so it fixes its file itself.
+func TestOpenRewritesAFileWithACapitalisedDockerHubUsername(t *testing.T) {
+	dir := testDir(t)
+	first, _ := open(t, dir)
+	path := first.Path()
+	legacy, err := json.Marshal(authFile{
+		Auths: map[string]authEntry{"docker.io": {Auth: registries.BasicAuth("Aeolun", []byte("hub-token"))}},
+		Meta:  &authMeta{SetID: "set-9"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, legacy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	second, logged := open(t, dir)
+	if second.SetID() != "set-9" || second.Describe("docker.io") != `docker.io (user "aeolun", password 9 bytes)` {
+		t.Fatalf("read back %q, %s", second.SetID(), second.Describe("docker.io"))
+	}
+	if got := readAuthFile(t, path).Auths["docker.io"].Auth; got != registries.BasicAuth("aeolun", []byte("hub-token")) {
+		t.Fatalf("file not rewritten: %q", got)
+	}
+	if len(*logged) != 2 || !strings.Contains((*logged)[0], "rewrote") {
+		t.Fatalf("logged %v", *logged)
+	}
+	// Once rewritten, a restart leaves it alone.
+	_, again := open(t, dir)
+	if len(*again) != 1 || strings.Contains((*again)[0], "rewrote") {
+		t.Fatalf("second restart logged %v", *again)
+	}
+}
+
+func TestSignInTestLowercasesDockerHubAndLogsWithoutThePassword(t *testing.T) {
+	v, logged := open(t, testDir(t))
+	var ranAs string
+	refused := func(ctx context.Context, authFile, key, username string, password []byte) (string, error) {
+		ranAs = username
+		return "Error: logging into \"docker.io\": requesting bearer token: 400 (Bad Request) for " + string(password), errors.New("exit status 125")
+	}
+	got, err := v.Test(context.Background(), login("docker.io", "Aeolun", "hub-token"), refused)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ranAs != "aeolun" || got.Failure != protocol.RegistryTestDenied {
+		t.Fatalf("ran as %q, got %+v", ranAs, got)
+	}
+	last := (*logged)[len(*logged)-1]
+	if !strings.Contains(last, "failed (denied)") || !strings.Contains(last, "400 (Bad Request)") || !strings.Contains(last, registries.Mask) || strings.Contains(last, "hub-token") {
+		t.Fatalf("logged %q", last)
 	}
 }

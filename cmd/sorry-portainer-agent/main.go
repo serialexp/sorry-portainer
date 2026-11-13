@@ -104,7 +104,14 @@ func main() {
 	manager := stacks.New(cfg.StateDir+"/stacks", cfg.Prefix, stacks.NewComposeExecutor(cfg.ComposeProvider))
 	manager.EnableSecrets(stacks.SecretSupport{HostID: cfg.HostID, Vault: vault, Containers: client})
 	manager.EnableRuntimeStatus(client)
-	checker := imagecheck.New(imagecheck.NewRemoteRegistry(logins), imagecheck.Options{})
+	checker := imagecheck.New(imagecheck.NewRemoteRegistry(logins), imagecheck.Options{
+		// A failure is cached for the checker's TTL, so this logs each
+		// image at most once per TTL. The whole error says what the
+		// registry answered; held passwords are scrubbed from it.
+		OnFailure: func(ref string, err error) {
+			log.Printf("image check %s with %s: %s", ref, logins.Describe(logins.LoginFor(ref)), logins.Scrubber().Scrub(err.Error()))
+		},
+	})
 	manager.EnableImageChecks(client, checker)
 	manager.EnableRegistryLogins(logins)
 	// A new login set makes earlier registry answers stale, and may be what

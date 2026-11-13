@@ -49,6 +49,7 @@ func (v *Vault) Test(ctx context.Context, login protocol.RegistryLogin, run Logi
 	if run == nil {
 		run = PodmanLogin
 	}
+	login.Username = registries.Username(login.Key, login.Username)
 	dirFD, err := v.openDir()
 	if err != nil {
 		return protocol.RegistryTestResult{}, err
@@ -76,16 +77,20 @@ func (v *Vault) Test(ctx context.Context, login protocol.RegistryLogin, run Logi
 	defer cancel()
 	output, err := run(testCtx, filepath.Join(v.dir, name), login.Key, login.Username, login.Password)
 	if err == nil {
+		v.options.Logf("registry logins: test of %s signed in", registries.Describe(login))
 		return protocol.RegistryTestResult{OK: true}, nil
 	}
 	if ctx.Err() != nil {
 		return protocol.RegistryTestResult{}, ctx.Err()
 	}
 	registry := registries.RegistryOf(login.Key)
+	result := classify(registry, output)
 	if errors.Is(testCtx.Err(), context.DeadlineExceeded) {
-		return protocol.RegistryTestResult{Failure: protocol.RegistryTestUnreachable, Message: fmt.Sprintf("%s didn’t answer within %s", registry, TestTimeout)}, nil
+		result = protocol.RegistryTestResult{Failure: protocol.RegistryTestUnreachable, Message: fmt.Sprintf("%s didn’t answer within %s", registry, TestTimeout)}
 	}
-	return classify(registry, output), nil
+	scrubbed := registries.NewScrubber([]protocol.RegistryLogin{login}).Scrub(strings.TrimSpace(output))
+	v.options.Logf("registry logins: test of %s failed (%s): %v; podman said: %s", registries.Describe(login), result.Failure, err, scrubbed)
+	return result, nil
 }
 
 // classify reads what kind of failure Podman's output describes.

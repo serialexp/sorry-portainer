@@ -188,6 +188,7 @@ func (s *Store) AddLogin(key, username string, password []byte, now time.Time) (
 	if err != nil {
 		return Login{}, err
 	}
+	username = registries.Username(key, username)
 	if err := registries.ValidCredentials(username, password); err != nil {
 		return Login{}, err
 	}
@@ -246,6 +247,7 @@ func (s *Store) ReplaceLogin(key, username string, password []byte, now time.Tim
 		defer clear(kept)
 		password = kept
 	}
+	username = registries.Username(key, username)
 	if err := registries.ValidCredentials(username, password); err != nil {
 		return Login{}, err
 	}
@@ -311,6 +313,10 @@ func (s *Store) Logins() ([]Login, error) {
 	out := make([]Login, len(files))
 	for i := range files {
 		out[i] = files[i].Login
+		// A login saved before Docker Hub usernames were lowercased is shown
+		// and sent lowercased; its file keeps the old spelling, which its
+		// sealed password is bound to.
+		out[i].Username = registries.Username(out[i].Key, out[i].Username)
 	}
 	return out, nil
 }
@@ -368,7 +374,7 @@ func (s *Store) LoginSet() (protocol.RegistrySync, error) {
 			ClearLoginSet(set)
 			return protocol.RegistrySync{}, fmt.Errorf("registry login %s does not decrypt: %w", file.Key, err)
 		}
-		set.Logins = append(set.Logins, protocol.RegistryLogin{Key: file.Key, Username: file.Username, Password: password})
+		set.Logins = append(set.Logins, protocol.RegistryLogin{Key: file.Key, Username: registries.Username(file.Key, file.Username), Password: password})
 	}
 	return set, nil
 }
@@ -398,7 +404,7 @@ func (s *Store) LoginForTest(key string) (protocol.RegistryLogin, time.Time, err
 	if err != nil {
 		return protocol.RegistryLogin{}, time.Time{}, fmt.Errorf("registry login %s does not decrypt: %w", key, err)
 	}
-	return protocol.RegistryLogin{Key: file.Key, Username: file.Username, Password: password}, file.UpdatedAt, nil
+	return protocol.RegistryLogin{Key: file.Key, Username: registries.Username(file.Key, file.Username), Password: password}, file.UpdatedAt, nil
 }
 
 // RevealLogin decrypts one login's password for showing to the operator,

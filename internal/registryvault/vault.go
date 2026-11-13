@@ -91,7 +91,16 @@ func Open(dir, hostID string, options Options) (*Vault, error) {
 	case err != nil:
 		v.options.Logf("registry logins: ignoring %s: %v", v.Path(), err)
 	default:
+		// A file written before Docker Hub usernames were lowercased is
+		// rewritten once, so Podman reads the spelling Docker Hub accepts.
+		if normalize(set) {
+			if err := v.write(dirFD, set); err != nil {
+				return nil, fmt.Errorf("write %s: %w", v.Path(), err)
+			}
+			v.options.Logf("registry logins: rewrote %s with lowercase Docker Hub usernames", v.Path())
+		}
 		v.install(set)
+		v.options.Logf("registry logins: read set %s from %s: %s", set.SetID, v.Path(), describeSet(set))
 		return v, nil
 	}
 	if err := v.write(dirFD, protocol.RegistrySync{}); err != nil {
@@ -171,6 +180,7 @@ func (v *Vault) Sync(request protocol.RegistrySync) (protocol.RegistrySynced, er
 	if err := registries.Check(request.Logins); err != nil {
 		return protocol.RegistrySynced{}, err
 	}
+	normalize(request)
 	v.syncMu.Lock()
 	defer v.syncMu.Unlock()
 	dirFD, err := v.openDir()
@@ -182,10 +192,47 @@ func (v *Vault) Sync(request protocol.RegistrySync) (protocol.RegistrySynced, er
 		return protocol.RegistrySynced{}, fmt.Errorf("write %s: %w", v.Path(), err)
 	}
 	callbacks := v.install(request)
+	v.options.Logf("registry logins: received set %s: %s", request.SetID, describeSet(request))
 	for _, fn := range callbacks {
 		fn()
 	}
 	return protocol.RegistrySynced{SetID: request.SetID}, nil
+}
+
+// normalize gives every username the spelling it is sent in
+// (registries.Username), and reports whether one changed.
+func normalize(set protocol.RegistrySync) bool {
+	changed := false
+	for i, login := range set.Logins {
+		if username := registries.Username(login.Key, login.Username); username != login.Username {
+			set.Logins[i].Username, changed = username, true
+		}
+	}
+	return changed
+}
+
+// describeSet sums a set up for the log, without passwords.
+func describeSet(set protocol.RegistrySync) string {
+	if len(set.Logins) == 0 {
+		return "no logins"
+	}
+	parts := make([]string, len(set.Logins))
+	for i, login := range set.Logins {
+		parts[i] = registries.Describe(login)
+	}
+	return strings.Join(parts, "; ")
+}
+
+// Describe sums up the held login for key for a log line, without its
+// password; "anonymous" when there is none.
+func (v *Vault) Describe(key string) string {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	login, ok := v.logins[key]
+	if !ok {
+		return "anonymous"
+	}
+	return registries.Describe(login)
 }
 
 // install swaps the in-memory set and returns the commit callbacks.

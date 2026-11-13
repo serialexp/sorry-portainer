@@ -166,6 +166,7 @@ func TestFailuresAreClassifiedByTheRegistrysStatus(t *testing.T) {
 	}{
 		{&transport.Error{StatusCode: http.StatusUnauthorized}, Denied},
 		{&transport.Error{StatusCode: http.StatusForbidden}, Denied},
+		{&transport.Error{StatusCode: http.StatusBadRequest}, Denied},
 		{&transport.Error{StatusCode: http.StatusNotFound}, NotFound},
 		{&transport.Error{StatusCode: http.StatusBadGateway}, Unreachable},
 		{fmt.Errorf("HEAD: %w", &transport.Error{StatusCode: http.StatusUnauthorized}), Denied},
@@ -473,4 +474,38 @@ func imageAt(t *testing.T, created time.Time) v1.Image {
 		t.Fatal(err)
 	}
 	return image
+}
+
+// OnFailure hears each failed request with the whole error, once per
+// request (a cached failure is not reported again), and never a request its
+// caller gave up on.
+func TestOnFailureGetsTheWholeErrorOncePerRequest(t *testing.T) {
+	fake := newFake()
+	refused := fmt.Errorf("GET https://auth.docker.io/token: %w", &transport.Error{StatusCode: http.StatusBadRequest, Errors: []transport.Diagnostic{{Message: "malformed HTTP Authorization header"}}})
+	fake.errs["docker.io/a/b:latest"] = refused
+	var heard []string
+	checker := New(fake, Options{OnFailure: func(ref string, err error) { heard = append(heard, ref+": "+err.Error()) }})
+	for range 2 {
+		got := checker.Latest(context.Background(), []string{"docker.io/a/b:latest"}, false)["docker.io/a/b:latest"]
+		if got.Failure != Denied || strings.Contains(got.Err, "malformed") {
+			t.Fatalf("check = %+v, want denied with the status only", got)
+		}
+	}
+	if len(heard) != 1 || !strings.Contains(heard[0], "malformed HTTP Authorization header") || !strings.HasPrefix(heard[0], "docker.io/a/b:latest: ") {
+		t.Fatalf("heard %q, want the whole error once", heard)
+	}
+
+	cancelled := newFake()
+	cancelled.gate = make(chan struct{})
+	heard = nil
+	checker = New(cancelled, Options{OnFailure: func(ref string, err error) { heard = append(heard, ref) }})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { checker.Latest(ctx, []string{"docker.io/c/d:latest"}, false); close(done) }()
+	waitFor(t, "the request to start", func() bool { return cancelled.running.Load() == 1 })
+	cancel()
+	<-done
+	if len(heard) != 0 {
+		t.Fatalf("heard %q for a cancelled request", heard)
+	}
 }

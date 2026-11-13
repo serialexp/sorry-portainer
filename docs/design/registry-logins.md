@@ -1,8 +1,8 @@
 # Registry logins — Design
 
-Status: partial — phases 1 and 2 and the design agent's answers landed (phase 1 tested live, phase 2 in the browser); not released
+Status: partial — phases 1 and 2 and the design agent's answers released in v0.2.11; the Docker Hub username fix and diagnostic logs landed, not yet released
 Owner: Bart
-Last updated: 2026-11-12
+Last updated: 2026-11-13
 
 ## Implementation status
 
@@ -163,7 +163,9 @@ Tick items as they land and move them to Done.
     missing tag, "last checked" otherwise, and "N images couldn’t be
     checked" when the failures differ;
   - the table's columns are `minmax(160px,1.5fr) minmax(96px,1fr) 96px 140px
-    auto` with no minimum width; below 820 px (a container query on the
+    232px` with no minimum width (first built with `auto` for the actions,
+    which sized each row by its own buttons, so the head did not line up
+    with the rows; the board has the fixed 232 px); below 820 px (a container query on the
     list) each row stacks with Show/Replace/Delete on their own line. A key
     wraps only after a "/" (each segment is an inline block followed by
     `<wbr>`); a segment wider than the column breaks inside as the last
@@ -173,8 +175,33 @@ Tick items as they land and move them to Done.
   on the dev master (locked host rows, the "no saved login" note and the
   problem tone on a stack whose ghcr.io image is refused). Host rows with an
   older set or a failed push were not reproduced; they are unit-tested.
+- [x] **Docker Hub usernames are lowercased (extended beyond the original
+  plan, 2026-11-13).** On jp1 a login saved as `Aeolun` passed the save test
+  (`podman login` accepts any capitalisation) and then every pull and image
+  check failed, public images included: Docker Hub's token service answers a
+  capitalised username with 400 "malformed HTTP Authorization header" where a
+  lowercase one gets the expected 401. `registries.Username` lowercases a
+  Docker Hub username (other registries keep it as typed). The store applies
+  it on Add and Replace and on everything it reads out, leaving an old file's
+  spelling in place because the sealed password is bound to it. Because the
+  master pushes only on a new set ID, the agent applies it too: on Sync, in
+  the sign-in test, and at start, where a file with a capitalised name is
+  rewritten once. A 400 now counts as a refused login, in the image check
+  and in Podman's output.
+- [x] **Diagnostic logs on the agent (2026-11-13).** Without passwords: the
+  set read at start and each set received (key, user, password length and
+  whether it has whitespace around it), each sign-in test's outcome with
+  Podman's output scrubbed, and each failed image check with the whole
+  registry error (the cached `Remote.Err` keeps only the status) and the
+  login used. A failure is cached for the check's TTL, so an image is logged
+  at most once per 15 minutes.
 
 ### Outstanding
+
+- [ ] **The save test should take the pull's path.** `podman login` signs in
+  differently from a pull's scoped token request, which is how a login can
+  pass the test and fail every pull. Test with a scoped token request (a
+  manifest HEAD of an image under the key) as well.
 
 - [ ] **Defer — logins per host.** Bart chose one set for all hosts.
 - [ ] **Defer — insecure (HTTP) registries.** Logins are sent over HTTPS only

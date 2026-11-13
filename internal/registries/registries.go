@@ -98,6 +98,30 @@ func validRegistry(registry string) bool {
 	return err == nil
 }
 
+// Username is how a login's username is stored and sent. Docker Hub IDs are
+// lowercase only, but its sign-in accepts any capitalisation, while its token
+// service answers a capitalised name with 400 "malformed HTTP Authorization
+// header" (a login saved as "Aeolun" passed `podman login` and then failed
+// every pull). So a Docker Hub username is lowercased; others are kept as
+// typed, since other registries may tell case apart.
+func Username(key, username string) string {
+	if RegistryOf(key) == DockerHub {
+		return strings.ToLower(username)
+	}
+	return username
+}
+
+// Describe sums a login up for a log line without its password: the key, the
+// username, the password's length, and whether it has whitespace around it
+// (a pasted token often does).
+func Describe(login protocol.RegistryLogin) string {
+	note := ""
+	if trimmed := strings.TrimSpace(string(login.Password)); len(trimmed) != len(login.Password) {
+		note = ", with whitespace around it"
+	}
+	return fmt.Sprintf("%s (user %q, password %d bytes%s)", login.Key, login.Username, len(login.Password), note)
+}
+
 // RegistryOf is the registry part of a stored key.
 func RegistryOf(key string) string {
 	registry, _, _ := strings.Cut(key, "/")
@@ -252,7 +276,10 @@ func (s *Scrubber) Scrub(text string) string {
 // sign-in: no login, a wrong one, or one without access. "denied" is matched
 // only as a registry error code (": denied", "denied: …"), never inside a
 // local "permission denied".
-var refusals = []string{"unauthorized", "invalid username/password", "incorrect username or password", "authentication required", " 401", " 403", "forbidden", ": denied", "denied:", "access to the resource is denied"}
+var refusals = []string{"unauthorized", "invalid username/password", "incorrect username or password", "authentication required", " 401", " 403", "forbidden", ": denied", "denied:", "access to the resource is denied",
+	// Docker Hub's token service answers a login it can't use with 400
+	// ("Requesting bearer token: … 400 (Bad Request)").
+	"400 (bad request)", "400 bad request"}
 
 // Refused reports whether Podman's output says a registry refused the
 // request for want of a login that works.

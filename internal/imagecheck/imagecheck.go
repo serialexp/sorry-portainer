@@ -52,7 +52,8 @@ type Failure string
 const (
 	// Denied: the registry refused the credentials, or asked for some
 	// (HTTP 401 or 403). Docker Hub also answers 401 for a repository that
-	// does not exist.
+	// does not exist, and its token service answers 400 for a wrong
+	// password given with a capitalised username.
 	Denied Failure = "denied"
 	// NotFound: the registry has no such tag (HTTP 404).
 	NotFound Failure = "not_found"
@@ -65,7 +66,7 @@ func failureOf(err error) Failure {
 	var answered *transport.Error
 	if errors.As(err, &answered) {
 		switch answered.StatusCode {
-		case http.StatusUnauthorized, http.StatusForbidden:
+		case http.StatusUnauthorized, http.StatusForbidden, http.StatusBadRequest:
 			return Denied
 		case http.StatusNotFound:
 			return NotFound
@@ -93,6 +94,12 @@ type Options struct {
 	// Timeout bounds each registry request.
 	Timeout time.Duration
 	Now     func() time.Time
+	// OnFailure, when set, is told about every request the registry (or
+	// the network) failed, with the whole error: Remote.Err keeps only the
+	// HTTP status, which is too little to diagnose a refused login. It is
+	// not called for a request its caller gave up on. It runs outside the
+	// checker's lock, on the requesting goroutine.
+	OnFailure func(ref string, err error)
 }
 
 type entry struct {
@@ -294,6 +301,9 @@ func (c *Checker) ask(ctx context.Context, ref string) Remote {
 	}
 	c.mu.Unlock()
 	close(current.done)
+	if err != nil && c.options.OnFailure != nil {
+		c.options.OnFailure(ref, err)
+	}
 	return current.remote
 }
 

@@ -180,16 +180,41 @@ func TestRefused(t *testing.T) {
 		"Error: reading manifest main in ghcr.io/a/b: denied":                                                                    true,
 		"denied: denied":                        true,
 		"unauthorized: authentication required": true,
-		"invalid username/password: unauthorized: incorrect username or password": true,
-		"received unexpected HTTP status: 403 Forbidden":                          true,
-		"Error: open /home/u/.local/share/containers: permission denied":          false,
-		"mkdir /run/user/1000/libpod: permission denied: x":                       false,
-		"dial tcp 10.0.0.1:443: i/o timeout":                                      false,
-		"x509: certificate signed by unknown authority":                           false,
+		"invalid username/password: unauthorized: incorrect username or password":             true,
+		"received unexpected HTTP status: 403 Forbidden":                                      true,
+		"Error: requesting bearer token: invalid status code from registry 400 (Bad Request)": true,
+		"Error: open /home/u/.local/share/containers: permission denied":                      false,
+		"mkdir /run/user/1000/libpod: permission denied: x":                                   false,
+		"dial tcp 10.0.0.1:443: i/o timeout":                                                  false,
+		"x509: certificate signed by unknown authority":                                       false,
 	}
 	for output, want := range cases {
 		if got := Refused(output); got != want {
 			t.Errorf("Refused(%q) = %v, want %v", output, got, want)
 		}
+	}
+}
+
+func TestUsernameLowercasesOnlyDockerHub(t *testing.T) {
+	for _, c := range []struct{ key, username, want string }{
+		{"docker.io", "Aeolun", "aeolun"},
+		{"docker.io/myorg", "MyBot", "mybot"},
+		{"ghcr.io/myorg", "MyBot", "MyBot"},
+		{"registry.example.com:5000", "Admin", "Admin"},
+	} {
+		if got := Username(c.key, c.username); got != c.want {
+			t.Errorf("Username(%q, %q) = %q, want %q", c.key, c.username, got, c.want)
+		}
+	}
+}
+
+func TestDescribeLeavesThePasswordOut(t *testing.T) {
+	got := Describe(protocol.RegistryLogin{Key: "docker.io", Username: "aeolun", Password: []byte("dckr_pat_secret")})
+	if got != `docker.io (user "aeolun", password 15 bytes)` {
+		t.Fatalf("Describe = %q", got)
+	}
+	padded := Describe(protocol.RegistryLogin{Key: "ghcr.io", Username: "bot", Password: []byte(" token\n")})
+	if !strings.Contains(padded, "7 bytes, with whitespace around it") || strings.Contains(padded, "token") {
+		t.Fatalf("Describe = %q", padded)
 	}
 }

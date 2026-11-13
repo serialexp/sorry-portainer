@@ -218,3 +218,63 @@ func TestRecordLoginTestKeepsOnlyTheCurrentVersion(t *testing.T) {
 		t.Fatalf("a stale test was kept: %+v", logins[0].LastTest)
 	}
 }
+
+func TestDockerHubUsernamesAreStoredLowercase(t *testing.T) {
+	s, _ := unlocked(t)
+	added, err := s.AddLogin("docker.io", "Aeolun", []byte("hub-token"), t0)
+	if err != nil || added.Username != "aeolun" {
+		t.Fatalf("add = %+v, %v", added, err)
+	}
+	other, err := s.AddLogin("ghcr.io/myorg", "MyBot", []byte("gh-token"), t0)
+	if err != nil || other.Username != "MyBot" {
+		t.Fatalf("add ghcr = %+v, %v", other, err)
+	}
+	replaced, err := s.ReplaceLogin("docker.io", "AeoLun", nil, t0.Add(time.Minute))
+	if err != nil || replaced.Username != "aeolun" {
+		t.Fatalf("replace = %+v, %v", replaced, err)
+	}
+	got, _, err := s.LoginForTest("docker.io")
+	if err != nil || got.Username != "aeolun" || string(got.Password) != "hub-token" {
+		t.Fatalf("test login = %+v, %v", got, err)
+	}
+}
+
+// A login saved before the rule keeps its file (the sealed password is bound
+// to the username as written), but is read out, and sent, lowercase.
+func TestACapitalisedDockerHubLoginOnFileIsReadLowercase(t *testing.T) {
+	s, _ := unlocked(t)
+	aead, err := s.cipher()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := seal(aead, []byte("hub-token"), loginAAD("docker.io", "Aeolun"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.writeMu.Lock()
+	err = s.writeLoginLocked(loginFile{Login: Login{Key: "docker.io", Username: "Aeolun", UpdatedAt: t0}, PasswordSealed: sealed})
+	s.writeMu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	logins, err := s.Logins()
+	if err != nil || len(logins) != 1 || logins[0].Username != "aeolun" {
+		t.Fatalf("logins = %+v, %v", logins, err)
+	}
+	set, err := s.LoginSet()
+	if err != nil || len(set.Logins) != 1 || set.Logins[0].Username != "aeolun" || string(set.Logins[0].Password) != "hub-token" {
+		t.Fatalf("set = %+v, %v", set, err)
+	}
+	got, _, err := s.LoginForTest("docker.io")
+	if err != nil || got.Username != "aeolun" || string(got.Password) != "hub-token" {
+		t.Fatalf("test login = %+v, %v", got, err)
+	}
+	// Replacing it with an empty password reopens the old seal and reseals
+	// under the lowercase name.
+	if _, err := s.ReplaceLogin("docker.io", "Aeolun", nil, t0.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if got, _, err := s.LoginForTest("docker.io"); err != nil || string(got.Password) != "hub-token" {
+		t.Fatalf("after replace = %+v, %v", got, err)
+	}
+}
